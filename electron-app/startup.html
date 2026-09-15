@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Local Assets Studio</title>
+  <style>
+    :root { color-scheme: dark; font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f1110; color: #eef1ea; -webkit-app-region: drag; }
+    main { width: min(520px, calc(100vw - 48px)); text-align: center; }
+    .mark { width: 44px; height: 44px; margin: 0 auto 20px; border-radius: 12px; background: conic-gradient(from 200deg, #ffb35c, #ff7a59, #ffb35c); animation: spin 2.4s linear infinite; }
+    h1 { margin: 0 0 8px; font-size: 21px; font-weight: 600; }
+    p { margin: 0; color: #a9b0a3; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+    .error .mark { animation: none; background: #3a2422; }
+    .error p { color: #ff9f97; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #171a15; border: 1px solid rgba(238, 242, 231, .10); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+    button { -webkit-app-region: no-drag; margin-top: 20px; height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: #ffb35c; color: #1b1206; font: inherit; font-weight: 600; cursor: pointer; }
+    button[hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .mark { animation: none; } }
+  </style>
+</head>
+<body>
+  <main id="startup">
+    <div class="mark" aria-hidden="true"></div>
+    <h1 id="title">엔진을 시작하는 중</h1>
+    <p id="message">로컬 생성 엔진을 준비하고 있습니다.</p>
+    <button id="retry" type="button" hidden>다시 시도</button>
+  </main>
+  <script src="startup.js"></script>
+</body>
+</html>

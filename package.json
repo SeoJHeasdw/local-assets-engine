@@ -1,0 +1,29 @@
+{
+  "name": "local-assets-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Electron studio for the javis 2D/3D game asset engine",
+  "main": "electron-app/main.mjs",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron electron-app/main.mjs",
+    "app": "env -u ELECTRON_RUN_AS_NODE electron electron-app/main.mjs",
+    "engine": ".venv/bin/python -m local_assets_engine serve",
+    "doctor": ".venv/bin/python -m local_assets_engine doctor",
+    "bench": ".venv/bin/python -m local_assets_engine bench",
+    "test": "npm run test:app && npm run test:python",
+    "test:app": "node --test tests/electron/*.test.mjs",
+    "test:python": ".venv/bin/python -m pytest -q",
+    "check": "npm run check:architecture && npm test",
+    "check:architecture": "node scripts/check_architecture.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@google/model-viewer": "4.3.1"
+  },
+  "devDependencies": {
+    "electron": "44.3.0"
+  }
+}

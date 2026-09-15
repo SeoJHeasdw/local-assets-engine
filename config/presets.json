@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "imageModel": {
+    "id": "z-image-turbo",
+    "label": "Z-Image Turbo",
+    "command": "mflux-generate-z-image-turbo",
+    "repo": "Tongyi-MAI/Z-Image-Turbo",
+    "license": "Apache-2.0",
+    "steps": null,
+    "quantize": null
+  },
+  "backgroundRemoval": {
+    "repo": "ZhengPeng7/BiRefNet",
+    "revision": "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4",
+    "license": "MIT"
+  },
+  "mesh": {
+    "repo": "microsoft/TRELLIS.2-4B",
+    "license": "MIT",
+    "pipelineTypes": ["512", "1024", "1024_cascade"],
+    "textureSizes": [512, 1024, 2048],
+    "defaults": {
+      "pipelineType": "512",
+      "textureSize": 1024,
+      "targetFaces": 30000,
+      "sizeMeters": 1.0
+    }
+  },
+  "presets": [
+    {
+      "id": "item-icon",
+      "kind": "2d",
+      "label": "아이템 아이콘",
+      "hint": "무기·포션·보석 같은 인벤토리 아이콘",
+      "prompt": "{subject}, game item icon, single object centered, clean readable silhouette, soft studio lighting, plain light gray background, no text, no border",
+      "width": 1024,
+      "height": 1024,
+      "removeBackground": true,
+      "canvas": { "width": 512, "height": 512, "padding": 0.06 }
+    },
+    {
+      "id": "character-sprite",
+      "kind": "2d",
+      "label": "캐릭터 스프라이트",
+      "hint": "전신이 보이는 정면 캐릭터",
+      "prompt": "{subject}, full body game character, front view, standing pose, entire body visible from head to feet, plain light gray background, no text",
+      "width": 768,
+      "height": 1024,
+      "removeBackground": true,
+      "canvas": { "width": 768, "height": 1024, "padding": 0.04 }
+    },
+    {
+      "id": "pixel-art",
+      "kind": "2d",
+      "label": "픽셀 아트",
+      "hint": "작은 해상도로 줄이고 색 수를 제한",
+      "prompt": "{subject}, pixel art game sprite, 16-bit retro style, limited color palette, crisp hard edges, single subject centered, plain light gray background",
+      "width": 1024,
+      "height": 1024,
+      "removeBackground": true,
+      "canvas": { "width": 512, "height": 512, "padding": 0.04 },
+      "pixelate": { "size": 64, "colors": 24 }
+    },
+    {
+      "id": "ui-element",
+      "kind": "2d",
+      "label": "UI 요소",
+      "hint": "버튼·프레임·배지",
+      "prompt": "{subject}, game UI element, polished flat style, centered, plain light gray background, no text, no letters",
+      "width": 1024,
+      "height": 1024,
+      "removeBackground": true,
+      "canvas": { "width": 512, "height": 512, "padding": 0.04 }
+    },
+    {
+      "id": "background",
+      "kind": "2d",
+      "label": "배경",
+      "hint": "캐릭터 없는 가로 배경",
+      "prompt": "{subject}, game background art, wide environment scene, detailed, cohesive lighting, no characters, no text",
+      "width": 1344,
+      "height": 768,
+      "removeBackground": false
+    },
+    {
+      "id": "prop-3d",
+      "kind": "3d",
+      "label": "3D 소품",
+      "hint": "컨셉 이미지를 만든 뒤 3D 메시로 변환",
+      "prompt": "{subject}, single 3D game prop, entire object visible, three-quarter view, centered, soft even lighting, plain white background, no shadow, no text",
+      "width": 1024,
+      "height": 1024,
+      "removeBackground": true,
+      "canvas": { "width": 1024, "height": 1024, "padding": 0.08 }
+    }
+  ]
+}

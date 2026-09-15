@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' blob: data:; worker-src 'self' blob:">
+  <title>Local Assets Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="/vendor/model-viewer.min.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <nav class="sidebar" aria-label="화면">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div><strong>Assets Studio</strong><small>javis · 로컬 생성</small></div>
+      </div>
+      <button class="nav-item is-active" type="button" data-view="create">만들기</button>
+      <button class="nav-item" type="button" data-view="library">보관함 <span class="nav-count" id="review-count"></span></button>
+      <button class="nav-item" type="button" data-view="system">환경</button>
+      <div class="sidebar-foot" id="engine-state"><span class="pulse"></span>엔진 연결 중</div>
+    </nav>
+
+    <main class="content">
+      <section class="view" id="view-create">
+        <div class="create-grid">
+          <form class="composer" id="composer" novalidate>
+            <header class="view-head">
+              <h1>만들기</h1>
+              <p>설명을 적으면 후보를 만들고, 고른 후보는 3D로 바꿀 수 있습니다.</p>
+            </header>
+
+            <div class="segmented" id="kind-switch" role="tablist" aria-label="에셋 종류">
+              <button type="button" data-kind="2d" class="is-active" role="tab">2D 에셋</button>
+              <button type="button" data-kind="3d" role="tab">3D 에셋</button>
+            </div>
+
+            <div class="segmented small" id="source-switch" hidden aria-label="3D 입력">
+              <button type="button" data-source="text" class="is-active">설명으로</button>
+              <button type="button" data-source="image">이미지로</button>
+            </div>
+
+            <div class="field" id="preset-field">
+              <span class="label">종류</span>
+              <div class="chips" id="preset-chips"></div>
+              <p class="hint" id="preset-hint"></p>
+            </div>
+
+            <label class="field" id="subject-field">
+              <span class="label">무엇을 만들까요?</span>
+              <textarea id="subject" rows="3" placeholder="예: 푸른 불꽃이 감도는 마법 검"></textarea>
+            </label>
+
+            <label class="field" id="style-field">
+              <span class="label">스타일 <em>선택</em></span>
+              <input id="style" autocomplete="off" placeholder="예: hand-painted, warm palette">
+            </label>
+
+            <div class="field dropzone" id="image-field" hidden>
+              <button class="secondary" type="button" id="pick-image">이미지 고르기</button>
+              <p>또는 PNG·JPG·WEBP 파일을 여기로 끌어다 놓기</p>
+              <div id="image-preview"></div>
+            </div>
+
+            <div class="options">
+              <label class="field" id="count-field">
+                <span class="label">후보 수</span>
+                <select id="count"><option>1</option><option>2</option><option selected>4</option><option>8</option></select>
+              </label>
+              <label class="field">
+                <span class="label">시드</span>
+                <input id="seed" inputmode="numeric" autocomplete="off" placeholder="자동">
+              </label>
+              <label class="field mesh-option" hidden>
+                <span class="label">3D 품질</span>
+                <select id="pipeline">
+                  <option value="512" selected>빠름 (512)</option>
+                  <option value="1024">정밀 (1024)</option>
+                  <option value="1024_cascade">최고 (1024 cascade)</option>
+                </select>
+              </label>
+              <label class="field mesh-option" hidden>
+                <span class="label">텍스처</span>
+                <select id="texture"><option>512</option><option selected>1024</option><option>2048</option></select>
+              </label>
+              <label class="field mesh-option" hidden>
+                <span class="label">면 수 상한</span>
+                <select id="faces">
+                  <option value="10000">1만</option>
+                  <option value="30000" selected>3만</option>
+                  <option value="100000">10만</option>
+                  <option value="0">줄이지 않음</option>
+                </select>
+              </label>
+            </div>
+
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+            <button class="primary" type="submit" id="submit">후보 만들기</button>
+            <p class="hint" id="submit-hint"></p>
+          </form>
+
+          <section class="feed" aria-label="작업">
+            <header class="feed-head"><h2>작업</h2><span id="queue-summary"></span></header>
+            <div class="job-list" id="job-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-library" hidden>
+        <header class="view-head row">
+          <div><h1>보관함</h1><p>만든 에셋을 보고 승인하거나 거절합니다.</p></div>
+          <div class="segmented small" id="library-filter">
+            <button type="button" data-filter="pending" class="is-active">검토 대기</button>
+            <button type="button" data-filter="approved">승인됨</button>
+            <button type="button" data-filter="rejected">거절됨</button>
+            <button type="button" data-filter="all">전체</button>
+          </div>
+        </header>
+        <div class="asset-grid" id="library-grid"></div>
+      </section>
+
+      <section class="view" id="view-system" hidden>
+        <header class="view-head row">
+          <div><h1>환경</h1><p>이 Mac에서 지금 만들 수 있는 것과 빠진 준비물</p></div>
+          <button class="secondary" type="button" id="doctor-refresh">다시 검사</button>
+        </header>
+        <div id="doctor"></div>
+        <h2 class="section-title">측정 기록</h2>
+        <p class="hint">단계별 소요 시간과 최대 메모리입니다. 장비를 바꿀지 판단하는 근거로 씁니다.</p>
+        <div id="bench"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="asset-dialog" id="asset-dialog">
+    <div id="asset-detail"></div>
+  </dialog>
+</body>
+</html>
