@@ -1,0 +1,17 @@
+[project]
+name = "local-assets-engine"
+version = "0.1.0"
+description = "Local 2D/3D game asset generation engine for Apple Silicon"
+requires-python = ">=3.13"
+dependencies = [
+    "bpy==5.2.2",
+    "fast-simplification>=0.2.0",
+    "geopandas>=1.1.4",
+    "numpy>=2.5.3",
+    "pillow>=12.3.0",
+    "pymeshlab>=2025.7.post1",
+    "pyproj>=3.8.0",
+    "shapely>=2.1.2",
+    "trimesh>=5.1.0",
+    "xatlas>=0.0.11",
+]
