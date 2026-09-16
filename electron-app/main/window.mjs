@@ -1,7 +1,7 @@
 import nativeFs from "node:fs/promises";
 import { PRELOAD, STARTUP_PAGE } from "./paths.mjs";
 
-export function createWindowService({ BrowserWindow, app, state, fs = nativeFs, env = process.env }) {
+export function createWindowService({ BrowserWindow, app, state, session = null, fs = nativeFs, env = process.env }) {
   function createWindow() {
     const window = new BrowserWindow({
       width: 1440,
@@ -27,9 +27,12 @@ export function createWindowService({ BrowserWindow, app, state, fs = nativeFs, 
     return state.mainWindow?.loadFile(STARTUP_PAGE, { query: { message } });
   }
 
-  function showStudio(url) {
+  async function showStudio(url) {
     const window = state.mainWindow;
     if (!window) return undefined;
+    // 화면은 엔진이 저장소에서 바로 내보낸다. 예전 화면이 창 캐시에 남아 있으면
+    // 고친 화면이 나오지 않으므로 띄울 때마다 비운다.
+    await session?.defaultSession?.clearCache();
     const view = env.ASSETS_STUDIO_SCREENSHOT_VIEW;
     const screenshot = env.ASSETS_STUDIO_SCREENSHOT;
     if (screenshot) {

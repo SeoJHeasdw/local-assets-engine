@@ -21,6 +21,13 @@ def test_mesh_and_post_rows_carry_their_own_settings():
     assert variant(job, stage("cutout", 1)) == ""
 
 
+def test_previz_rows_separate_the_renderers():
+    job = {"params": {"renderer": "eevee", "width": 960, "height": 540, "shots": [{}, {}]}}
+    assert variant(job, stage("previz", 1)) == "eevee · 960x540 · 샷 2"
+    cheap = {"params": {"renderer": "workbench", "width": 960, "height": 540, "shots": [{}, {}]}}
+    assert variant(cheap, stage("previz", 1)) != variant(job, stage("previz", 1))
+
+
 def test_rows_summarise_time_and_peak_memory(tmp_path):
     store = JobStore(tmp_path)
     params = {"imageModel": "flux2-klein-4b", "width": 1024, "height": 1024, "count": 2}

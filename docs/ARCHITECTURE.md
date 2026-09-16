@@ -11,7 +11,7 @@
 | `src/local_assets_engine/measure.py` | 단계 프로세스 실행, 출력 스트리밍, 진행률 해석, `/usr/bin/time -l` 측정 |
 | `src/local_assets_engine/jobs.py` | `job.json` 원자적 기록, 재시작 복구, 파일 경로 검증 |
 | `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`) |
-| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender |
+| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
@@ -82,6 +82,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
 | `image-to-3d` | `imagePath`(절대 경로) 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048, `targetFaces` 0~1,000,000(0은 줄이지 않음), `sizeMeters`, `meshSeed` | `512`, 1024, 30000, 1.0 |
+| `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
+| 배치 항목 | `source: {jobId, assetId}`(완성된 메시) 또는 `path`(GLB·glTF 절대 경로), `id`, `position` [x, y, z] 미터, `yaw` 도, `scale` | 원점, 0도, 1.0 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
 
@@ -122,9 +124,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
 | `owner` | 실행 중인 작업에만 있다. `{pid, heartbeat}`로 시작 복구가 남의 작업을 닫지 않게 한다 |
-| `assets[].kind` / `role` | `image`·`mesh` / `candidate`(2D 후보), `concept`(3D용 컨셉), `final`(메시) |
+| `assets[].kind` / `role` | `image`·`mesh`·`shot` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D용 컨셉), `final`(메시) |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
 | 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
+| 샷 `meta` | 아래 프리비즈 계약 참고 |
 
 - 러너와 API가 같은 기록을 고치므로 모든 쓰기는 `JobStore.update`로 다시 읽은 뒤 임시
   파일에 쓰고 교체한다.
@@ -141,6 +144,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `mesh` | `engines/trellis-mac/.venv/bin/python workers/trellis_runner.py` | generate.py 출력 표식과 샘플러 막대 3개 |
 | `post` | `python -m local_assets_engine.tools.blender_post` | `@@progress` JSON 줄 |
 | `optimize` | `gltfpack -i asset.glb -o asset.opt.glb` | 없음. gltfpack이 없으면 `skipped` |
+| `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
 
 - 이미지 생성과 3D 생성은 GPU 혼잡 신호(`kIOGPUCommandBufferCallbackErrorTimeout`,
   `Command buffer execution failed`, `Insufficient Memory`)로 끊기면 10초 뒤 한 번 다시
@@ -159,3 +163,35 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
   원점에 두고 가장 긴 변을 `sizeMeters`로 맞춰 GLB(+Y 위)로 내보낸다.
 - 결과 파일은 `mesh/raw.glb`(TRELLIS 원본), `mesh/asset.glb`(정리본),
   `mesh/asset.opt.glb`(gltfpack), `mesh/asset.stats.json`이다.
+
+## 프리비즈 계약
+
+프리비즈의 산출물은 그림이 아니라 **샷 값**이다. 그림은 사람이 승인할 수 있게 만든다.
+
+- 레시피가 `previz/plan.json`(배치·샷 규칙)을 쓰고, 도구가 `previz/shots.json`(풀린 카메라
+  값과 파일 목록)을 쓴다. 승인 상태는 `job.json`의 에셋에만 있다.
+- 샷 프리셋은 `config/presets.json`의 `previz.shotPresets`다. 장르는 코드가 아니라 이 목록이며
+  컷 길이·렌즈·움직임·구도 규칙을 정한다. `focus: "hero"`는 장면의 첫 에셋을 가리킨다.
+- 프레이밍은 미터가 아니라 **피사체 단위**로 적는다. `distance: 1.0`이 피사체가 화면을 꽉
+  채우는 거리이고 `2.0`은 그 두 배다. 그래서 같은 프리셋을 찻잔과 탑에 함께 쓸 수 있다.
+  `azimuth` 0도는 피사체 정면(−Y), `height`·`targetHeight`는 피사체 높이의 배수다.
+  `...End`가 붙은 값이 있으면 그 사이를 움직이고, `ease`(`inout`·`linear`)로 가감속한다.
+
+| 샷 `meta` 필드 | 값 |
+| --- | --- |
+| `shot`, `label`, `purpose`, `move`, `order` | 샷 id, 이름, 연출 의도, 움직임 이름, 컷 순서 |
+| `focus` | 이 샷이 겨냥한 장면 에셋 id 또는 `scene` |
+| `seconds`, `fps`, `frames`, `ease` | 컷 길이와 프리비즈가 실제로 뽑은 프레임 수 |
+| `lens`, `lensEnd`, `sensorWidth` | 렌즈(mm)와 센서 폭. 줌이 없으면 두 렌즈 값이 같다 |
+| `start`, `end` | `{position, target, lens}`. 미터 단위 월드 좌표(Blender Z 위) |
+| `framing` | 프리셋이 준 상대 규칙 원본 |
+| `depthRange` | 깊이 맵의 near·far(m). 이 값이 없으면 깊이 그림을 해석할 수 없다 |
+| `renderer`, `resolution`, `clay`, `renderSeconds` | 어떤 스케치로 승인했는지와 그 비용 |
+| `files` | `animatic`(mp4), `key`(대표 프레임), `color`·`depth`·`line` 목록 |
+| `pathFile` | 프레임별 카메라 값이 든 `previz/shots.json` 경로 |
+
+- 프레임별 카메라 값은 `job.json`을 불리므로 `shots.json`에만 둔다. `job.json`은 시작·끝만 든다.
+- 깊이는 `depthRange`로 정규화한 그림이고 샷 안에서 축척이 고정된다. 윤곽선은 그 깊이에
+  소벨을 걸어 얻는다. 둘 다 나중 영상 모델의 조건 입력으로 쓸 수 있게 남긴다.
+- 파일은 `previz/shots/<샷 id>/`에 모인다. `aux: "keys"`는 처음·중간·끝 프레임만,
+  `"all"`은 모든 프레임의 깊이·윤곽을 남긴다.

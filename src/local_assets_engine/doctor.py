@@ -113,6 +113,8 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         # 대체 굽기를 고친 뒤로 Metal은 품질 전제가 아니라 선명도 향상 수단이다.
         "meshTexture": checks.get("trellisMetal", {}).get("ok", False),
         "gameReady": ready("gltfpack"),
+        # 프리비즈는 Blender만 쓴다. 이미지·3D 모델이 없어도 샷을 잡을 수 있다.
+        "previz": ready("bpy"),
     }
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -128,6 +130,7 @@ CAPABILITY_LABELS = {
     "mesh3d": "3D 에셋 생성",
     "meshTexture": "3D 텍스처 Metal 가속 (선택)",
     "gameReady": "게임용 GLB 최적화",
+    "previz": "프리비즈 샷 렌더",
 }
 
 

@@ -22,6 +22,10 @@ def variant(job: dict[str, Any], stage: dict[str, Any]) -> str:
         return f"{params.get('pipelineType')} · tex {params.get('textureSize')}"
     if stage["name"] == "post":
         return f"faces {params.get('targetFaces')}"
+    if stage["name"] == "previz":
+        # 렌더러 선택이 프리비즈 비용을 가른다. 섞으면 비교할 수 없다.
+        shots = len(params.get("shots") or [])
+        return f"{params.get('renderer')} · {params.get('width')}x{params.get('height')} · 샷 {shots}"
     return ""
 
 

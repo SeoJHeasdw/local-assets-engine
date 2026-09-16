@@ -1,6 +1,7 @@
 import {
   JOB_STATE_LABELS, RECIPE_LABELS, REVIEW_LABELS, STAGE_STATE_LABELS,
-  buildJobRequest, elapsedSeconds, escapeHtml, fileUrl, formatBytes, formatDuration, isActive,
+  buildJobRequest, buildPrevizRequest, elapsedSeconds, escapeHtml, fileUrl, formatBytes,
+  formatDuration, isActive,
 } from "../shared/format.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -13,6 +14,7 @@ const CAPABILITY_LABELS = {
   mesh3d: "3D 에셋 생성",
   meshTexture: "3D 텍스처 Metal 가속 (선택)",
   gameReady: "게임용 GLB 최적화",
+  previz: "프리비즈 샷 렌더",
 };
 const PIXEL_FILE = /px(@preview)?\.png$/;
 
@@ -28,6 +30,7 @@ const state = {
   doctor: null,
   libraryFilter: "pending",
   view: "create",
+  previz: { meshes: [], placed: [], presetId: null, jobId: null, cuts: new Map() },
 };
 
 async function api(path, { method = "GET", body } = {}) {
@@ -50,6 +53,7 @@ function showView(view) {
   for (const button of $$(".nav-item")) button.classList.toggle("is-active", button.dataset.view === view);
   for (const section of $$(".view")) section.hidden = section.id !== `view-${view}`;
   if (view === "library") refreshLibrary();
+  if (view === "previz") refreshPreviz();
   if (view === "system") refreshSystem();
 }
 
@@ -178,7 +182,9 @@ function stageHtml(stage) {
 function thumbHtml(jobId, asset) {
   const src = asset.preview ? fileUrl(jobId, asset.preview) : "";
   const warn = asset.meta?.error ? "물체 없음" : asset.meta?.checks?.touchesEdge ? "가장자리 닿음" : "";
-  const tag = asset.kind === "mesh" ? "3D" : asset.role === "concept" ? "컨셉" : "";
+  const tag = asset.kind === "mesh" ? "3D"
+    : asset.kind === "shot" ? asset.meta?.shot || "샷"
+    : asset.role === "concept" ? "컨셉" : "";
   return `<button class="thumb${asset.review === "rejected" ? " is-rejected" : ""}" type="button"
       data-action="open" data-job="${escapeHtml(jobId)}" data-asset="${escapeHtml(asset.id)}"
       title="${escapeHtml(REVIEW_LABELS[asset.review] || "")}">
@@ -290,8 +296,13 @@ let pollTimer = null;
 function schedulePoll() {
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
+    const working = state.jobs.some((job) => job.recipe === "previz" && isActive(job));
     await refreshJobs();
     await refreshHealth();
+    // 프리비즈 작업이 끝나면 컷 목록이 그 자리에서 채워져야 한다.
+    if (state.view === "previz" && (working || state.jobs.some((job) => job.recipe === "previz" && isActive(job)))) {
+      await refreshPreviz();
+    }
     schedulePoll();
   }, state.jobs.some(isActive) ? 1000 : 4000);
 }
@@ -307,6 +318,15 @@ function detailHtml(job, asset) {
       ? `<model-viewer src="${fileUrl(job.id, asset.file)}" camera-controls auto-rotate shadow-intensity="0.7"
           exposure="1.05" environment-image="neutral" interaction-prompt="none" alt="${escapeHtml(job.title)}"></model-viewer>`
       : `<div><img src="${fileUrl(job.id, asset.preview)}" alt=""><p class="notice">3D 미리보기를 쓰려면 npm install 이 필요합니다.</p></div>`;
+  } else if (asset.kind === "shot") {
+    const aux = ["depth", "line"].flatMap((name) => (meta.files?.[name] || []).slice(1, 2));
+    stage = `<div class="shot-stage">
+      ${asset.file.endsWith(".mp4")
+        ? `<video src="${fileUrl(job.id, asset.file)}" controls loop autoplay muted playsinline></video>`
+        : `<img src="${fileUrl(job.id, asset.preview || asset.file)}" alt="">`}
+      ${aux.length ? `<div class="shot-aux">${aux.map((file) =>
+        `<img src="${fileUrl(job.id, file)}" alt="" loading="lazy">`).join("")}</div>` : ""}
+    </div>`;
   } else {
     stage = `<img src="${fileUrl(job.id, asset.preview || asset.file)}" alt="" class="${PIXEL_FILE.test(asset.file) ? "pixel" : ""}">`;
   }
@@ -325,6 +345,18 @@ function detailHtml(job, asset) {
     if (meta.checks?.coverage != null) add("물체 면적", `${Math.round(meta.checks.coverage * 100)}%`);
     if (meta.checks?.touchesEdge) add("자동 검사", "원본에서 물체가 가장자리에 닿음 (잘렸을 수 있음)");
     add("자동 검사", meta.error);
+  } else if (asset.kind === "shot") {
+    const point = (value) => value?.position?.map((number) => number.toFixed(2)).join(", ");
+    add("컷", `${meta.label || ""} · ${meta.purpose || ""}`);
+    add("길이", `${meta.seconds}초 · ${meta.frames}프레임 · ${meta.fps}fps`);
+    add("움직임", meta.move);
+    add("렌즈", meta.lens === meta.lensEnd ? `${meta.lens}mm` : `${meta.lens} → ${meta.lensEnd}mm`);
+    add("카메라 시작", point(meta.start), true);
+    add("카메라 끝", point(meta.end), true);
+    add("바라보는 곳", meta.start?.target?.map((number) => number.toFixed(2)).join(", "), true);
+    add("깊이 범위 (m)", meta.depthRange?.map((value) => value.toFixed(2)).join(" ~ "), true);
+    add("렌더", `${meta.renderer} · ${meta.resolution?.join("×")}${meta.clay ? " · 점토" : ""}`);
+    add("렌더 시간", formatDuration(meta.renderSeconds));
   } else {
     const stats = meta.stats || {};
     if (stats.facesOut != null) add("면 수", `${stats.facesOut.toLocaleString()} (원본 ${stats.facesIn.toLocaleString()})`);
@@ -345,6 +377,9 @@ function detailHtml(job, asset) {
     reviewButton("rejected", "거절", "reject"),
     asset.kind === "image"
       ? `<button class="secondary" type="button" data-action="to3d" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">3D로 만들기</button>`
+      : "",
+    asset.kind === "mesh"
+      ? `<button class="secondary" type="button" data-action="previz" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">프리비즈 만들기</button>`
       : "",
     bridge
       ? `<button class="ghost" type="button" data-action="reveal" data-job="${escapeHtml(job.id)}" data-file="${escapeHtml(asset.file)}">Finder에서 보기</button>`
@@ -399,6 +434,7 @@ async function setReview(button) {
     setDetailMessage(status === "pending" ? "검토 대기로 되돌렸습니다." : `${REVIEW_LABELS[status]}으로 표시했습니다.`);
     refreshJobs();
     if (state.view === "library") refreshLibrary();
+    if (state.view === "previz") refreshPreviz();
   } catch (error) {
     setDetailMessage(error.message);
   }
@@ -421,6 +457,195 @@ async function makeMesh(jobId, assetId) {
     refreshJobs();
   } catch (error) {
     setDetailMessage(error.message);
+  }
+}
+
+// ---- 프리비즈 ---------------------------------------------------------------
+
+function shotPresets() {
+  return state.presets?.previz?.shotPresets || [];
+}
+
+function currentShotPreset() {
+  return shotPresets().find((preset) => preset.id === state.previz.presetId) || shotPresets()[0] || null;
+}
+
+// 위에서 본 배치. 좌표를 값으로만 적으면 무엇이 어디 놓였는지 알 수 없다.
+function sceneMapHtml(placed) {
+  const size = 100;
+  // 놓인 것들이 지도를 꽉 채우면 간격을 읽을 수 없다. 둘레에 1.5m 여유를 둔다.
+  const reach = Math.max(3, ...placed.map((item) => Math.abs(Number(item.x) || 0) + 1.5),
+    ...placed.map((item) => Math.abs(Number(item.y) || 0) + 1.5));
+  const scale = size / 2 / reach;
+  const grid = [];
+  for (let meter = -Math.ceil(reach); meter <= Math.ceil(reach); meter += 1) {
+    const at = size / 2 + meter * scale;
+    const axis = meter === 0 ? ' class="axis"' : "";
+    grid.push(`<line x1="${at}" y1="0" x2="${at}" y2="${size}"${axis}></line>`,
+      `<line x1="0" y1="${at}" x2="${size}" y2="${at}"${axis}></line>`);
+  }
+  const dots = placed.map((item, index) => {
+    const x = size / 2 + (Number(item.x) || 0) * scale;
+    // 화면 위쪽이 +Y다. 샷 프리셋의 기본 시선이 −Y에서 들어오므로 카메라는 아래쪽이다.
+    const y = size / 2 - (Number(item.y) || 0) * scale;
+    const radius = Math.min(size / 6, Math.max(2, 0.5 * (Number(item.scale) || 1) * scale));
+    const yaw = ((Number(item.yaw) || 0) - 90) * (Math.PI / 180);
+    return `<g class="dot${index === 0 ? " hero" : ""}">
+      <circle cx="${x}" cy="${y}" r="${radius}"></circle>
+      <line x1="${x}" y1="${y}" x2="${x + Math.cos(yaw) * radius * 1.8}"
+        y2="${y + Math.sin(yaw) * radius * 1.8}"></line>
+      <text x="${x}" y="${y - radius - 2}">${index === 0 ? "주인공" : `#${index + 1}`}</text></g>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${size} ${size}" role="img" aria-label="장면 배치">
+    <g class="grid">${grid.join("")}</g>${dots}
+    <text class="camera-note" x="${size / 2}" y="${size - 2}">▲ 카메라가 들어오는 쪽</text></svg>`;
+}
+
+function placedRowHtml(item, index) {
+  const cell = (field, label) => `<label class="cell"><span>${label}</span>
+    <input inputmode="decimal" data-previz-field="${field}" data-index="${index}" value="${escapeHtml(item[field])}"></label>`;
+  return `<div class="placed-row">
+    ${item.preview ? `<img src="${fileUrl(item.jobId, item.preview)}" alt="">` : `<span class="placed-blank"></span>`}
+    <div class="placed-main">
+      <strong>${escapeHtml(item.label)}</strong>
+      <span class="placed-tag">${index === 0 ? "주인공" : `#${index + 1}`}</span>
+    </div>
+    <button class="ghost is-danger" type="button" data-action="previz-remove" data-index="${index}">제거</button>
+    <div class="placed-cells">${cell("x", "x (m)")}${cell("y", "y (m)")}${cell("yaw", "회전 (°)")}${cell("scale", "크기")}</div>
+  </div>`;
+}
+
+function renderPrevizForm() {
+  const { meshes, placed } = state.previz;
+  const picker = $("#previz-mesh");
+  picker.innerHTML = meshes.length
+    ? meshes.map((asset) => `<option value="${escapeHtml(asset.jobId)}:${escapeHtml(asset.id)}">
+        ${escapeHtml(asset.jobTitle)}${asset.review === "approved" ? " · 승인됨" : ""}</option>`).join("")
+    : `<option value="">아직 3D 에셋이 없습니다</option>`;
+  picker.disabled = !meshes.length;
+  $("#previz-add").disabled = !meshes.length;
+
+  $("#previz-placed").innerHTML = placed.length ? placed.map(placedRowHtml).join("")
+    : meshes.length
+      ? `<p class="hint">3D 에셋을 골라 추가하세요. 첫 에셋이 주인공이 되고, 샷 프리셋의 <em>hero</em> 컷이 그것을 겨냥합니다.</p>`
+      : `<p class="hint">먼저 <strong>만들기</strong>에서 3D 에셋을 만들어 주세요. 완성된 메시가 프리비즈 장면의 재료입니다.</p>`;
+  $("#previz-map-field").hidden = !placed.length;
+  if (placed.length) $("#previz-map").innerHTML = sceneMapHtml(placed);
+
+  const preset = currentShotPreset();
+  state.previz.presetId = preset?.id || null;
+  $("#shot-preset-chips").innerHTML = shotPresets().map((item) => `<button type="button"
+      class="chip${item.id === state.previz.presetId ? " is-active" : ""}" data-shot-preset="${escapeHtml(item.id)}">
+    ${escapeHtml(item.label)}</button>`).join("");
+  $("#shot-preset-hint").textContent = preset?.hint || "";
+
+  const cuts = preset?.shots || [];
+  const seconds = cuts.reduce((sum, shot) => sum + Number(shot.seconds || 0), 0);
+  const frames = Math.round(seconds * Number($("#previz-fps").value || 12));
+  $("#previz-cost").textContent = cuts.length
+    ? `${cuts.length}컷 · ${seconds.toFixed(1)}초 · 렌더 약 ${frames}프레임`
+    : "";
+  $("#previz-submit").disabled = !placed.length || !cuts.length;
+}
+
+function cutHtml(asset) {
+  const meta = asset.meta || {};
+  const values = [meta.move, meta.lens ? `${Math.round(meta.lens)}mm` : "",
+    meta.seconds ? `${meta.seconds}초` : "", meta.frames ? `${meta.frames}프레임` : ""].filter(Boolean).join(" · ");
+  const review = (status, label, className) => `<button class="ghost ${className}${asset.review === status ? " is-on" : ""}"
+      type="button" data-action="review" data-job="${escapeHtml(asset.jobId)}" data-asset="${escapeHtml(asset.id)}"
+      data-target="${status}">${label}</button>`;
+  return `<article class="cut${asset.review === "rejected" ? " is-rejected" : ""}">
+    <button class="cut-thumb" type="button" data-action="open"
+        data-job="${escapeHtml(asset.jobId)}" data-asset="${escapeHtml(asset.id)}">
+      <img src="${fileUrl(asset.jobId, asset.preview || asset.file)}" alt="" loading="lazy">
+      <span class="tag">${escapeHtml(meta.shot || "")}</span>
+    </button>
+    <div class="cut-body">
+      <div class="cut-title">
+        <strong>${escapeHtml(meta.label || meta.shot || asset.id)}</strong>
+        <span class="cut-order">${meta.order ? `${meta.order}번째 컷` : ""}</span>
+      </div>
+      <p class="cut-purpose">${escapeHtml(meta.purpose || "")}</p>
+      <div class="cut-values">${escapeHtml(values)}</div>
+      <div class="cut-review">${review("approved", "승인", "approve")}${review("rejected", "거절", "reject")}</div>
+    </div>
+  </article>`;
+}
+
+function renderPrevizCuts() {
+  const { cuts, jobId } = state.previz;
+  const picker = $("#previz-job");
+  picker.hidden = cuts.size < 2;
+  picker.innerHTML = [...cuts.entries()].map(([id, group]) =>
+    `<option value="${escapeHtml(id)}"${id === jobId ? " selected" : ""}>${escapeHtml(group.title)}</option>`).join("");
+  const working = state.jobs.filter((job) => job.recipe === "previz" && isActive(job))
+    .map((job) => `<article class="job is-active">${jobCardHtml(job)}</article>`).join("");
+  const group = cuts.get(jobId);
+  const shots = group ? group.shots.map(cutHtml).join("") : "";
+  $("#previz-cuts").innerHTML = working + shots || `<div class="empty">
+    아직 만든 샷이 없습니다. 장면을 꾸리고 "샷 만들기"를 누르세요.</div>`;
+}
+
+async function refreshPreviz() {
+  try {
+    const [meshes, shots] = await Promise.all([api("/api/assets?kind=mesh"), api("/api/assets?kind=shot")]);
+    state.previz.meshes = meshes.assets;
+    const cuts = new Map();
+    for (const shot of shots.assets) {
+      if (!cuts.has(shot.jobId)) cuts.set(shot.jobId, { title: shot.jobTitle, shots: [] });
+      cuts.get(shot.jobId).shots.push(shot);
+    }
+    for (const group of cuts.values()) group.shots.sort((a, b) => (a.meta?.order || 0) - (b.meta?.order || 0));
+    state.previz.cuts = cuts;
+    if (!cuts.has(state.previz.jobId)) state.previz.jobId = cuts.keys().next().value || null;
+    renderPrevizForm();
+    renderPrevizCuts();
+  } catch (error) {
+    $("#previz-cuts").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function addPlaced(jobId, assetId) {
+  const { meshes, placed } = state.previz;
+  if (placed.some((item) => item.jobId === jobId && item.assetId === assetId)) return;
+  const asset = meshes.find((item) => item.jobId === jobId && item.id === assetId);
+  // 두 번째부터는 겹치지 않게 옆으로 놓는다. 그 뒤 위치는 사람이 고친다.
+  placed.push({
+    jobId, assetId, label: asset?.jobTitle || assetId, preview: asset?.preview,
+    x: placed.length ? (placed.length * 1.2).toFixed(1) : "0", y: "0", yaw: "0", scale: "1",
+  });
+  renderPrevizForm();
+}
+
+async function addToPrevizScene(jobId, assetId) {
+  $("#asset-dialog").close();
+  showView("previz");
+  await refreshPreviz();
+  addPlaced(jobId, assetId);
+}
+
+async function submitPreviz(event) {
+  event.preventDefault();
+  const button = $("#previz-submit");
+  const error = $("#previz-error");
+  error.hidden = true;
+  try {
+    const request = buildPrevizRequest({
+      assets: state.previz.placed, preset: state.previz.presetId,
+      renderer: $("#previz-renderer").value, resolution: $("#previz-resolution").value,
+      fps: $("#previz-fps").value, aux: $("#previz-aux").value,
+      clay: $("#previz-clay").checked, animatic: $("#previz-animatic").checked,
+    });
+    button.disabled = true;
+    await api("/api/jobs", { method: "POST", body: request });
+    await refreshJobs();
+    await refreshPreviz();
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -520,6 +745,29 @@ function wireEvents() {
     state.libraryFilter = button.dataset.filter;
     refreshLibrary();
   });
+  $("#previz-form").addEventListener("submit", submitPreviz);
+  $("#previz-add").addEventListener("click", () => {
+    const [jobId, assetId] = String($("#previz-mesh").value || "").split(":");
+    if (jobId && assetId) addPlaced(jobId, assetId);
+  });
+  $("#previz-placed").addEventListener("input", (event) => {
+    const input = event.target.closest("[data-previz-field]");
+    if (!input) return;
+    // 입력 중에 폼을 다시 그리면 글자를 치던 칸이 초점을 잃는다. 지도만 고친다.
+    state.previz.placed[Number(input.dataset.index)][input.dataset.previzField] = input.value;
+    $("#previz-map").innerHTML = sceneMapHtml(state.previz.placed);
+  });
+  $("#shot-preset-chips").addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-shot-preset]");
+    if (!chip) return;
+    state.previz.presetId = chip.dataset.shotPreset;
+    renderPrevizForm();
+  });
+  $("#previz-fps").addEventListener("change", renderPrevizForm);
+  $("#previz-job").addEventListener("change", (event) => {
+    state.previz.jobId = event.target.value;
+    renderPrevizCuts();
+  });
   $("#doctor-refresh").addEventListener("click", refreshSystem);
   // 닫을 때 비워야 3D 뷰어가 뒤에서 계속 그리지 않는다.
   $("#asset-dialog").addEventListener("close", () => { $("#asset-detail").innerHTML = ""; });
@@ -552,6 +800,11 @@ function wireEvents() {
     if (action === "open") openAsset(job, asset);
     else if (action === "review") setReview(target);
     else if (action === "to3d") makeMesh(job, asset);
+    else if (action === "previz") addToPrevizScene(job, asset);
+    else if (action === "previz-remove") {
+      state.previz.placed.splice(Number(target.dataset.index), 1);
+      renderPrevizForm();
+    }
     else if (action === "reveal") bridge?.reveal(job, target.dataset.file);
     else if (action === "close") $("#asset-dialog").close();
     else if (action === "cancel") {

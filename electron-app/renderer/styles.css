@@ -196,6 +196,70 @@ button.ghost:hover { background: var(--raised); color: var(--text); }
 button.is-danger { color: var(--danger); }
 .form-error { margin: 0; padding: var(--s3); border-radius: var(--r-md); background: var(--danger-soft); color: var(--danger); font-size: var(--fs-sm); }
 
+/* ---- 프리비즈 ---- */
+.picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s2); }
+.placed { display: flex; flex-direction: column; gap: var(--s2); }
+.placed-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--s2) var(--s3); align-items: center;
+  padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+}
+.placed-row img, .placed-blank {
+  width: 40px; height: 40px; border-radius: var(--r-sm); object-fit: cover;
+  background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 10px 10px;
+}
+.placed-main { min-width: 0; }
+.placed-main strong { display: block; overflow: hidden; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.placed-tag { color: var(--text-3); font-size: var(--fs-micro); }
+.placed-cells { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
+.cell { display: flex; flex-direction: column; gap: 2px; }
+.cell span { color: var(--text-3); font-size: var(--fs-micro); }
+.cell input { height: var(--h-sm); padding: 0 var(--s2); font-family: var(--mono); font-size: var(--fs-xs); }
+.scene-map {
+  width: min(100%, 300px); aspect-ratio: 1; padding: var(--s2);
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--well);
+}
+.scene-map svg { display: block; width: 100%; height: 100%; }
+.scene-map .grid line { stroke: var(--line); stroke-width: .4; }
+.scene-map .grid line.axis { stroke: var(--line-2); stroke-width: .8; }
+.scene-map .dot circle { fill: var(--text-4); }
+.scene-map .dot line { stroke: var(--text-2); stroke-width: .8; }
+.scene-map .dot.hero circle { fill: var(--accent); }
+.scene-map .dot.hero line { stroke: var(--ink); }
+.scene-map text { fill: var(--text-3); font-size: 3.4px; text-anchor: middle; }
+.scene-map .camera-note { fill: var(--text-4); font-size: 3px; }
+.toggles { display: flex; flex-wrap: wrap; gap: var(--s4); }
+.toggle { display: inline-flex; gap: var(--s2); align-items: center; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
+.toggle input { flex: none; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
+select.quiet {
+  width: auto; max-width: 280px; height: var(--h-sm); border-color: transparent;
+  background: var(--raised); font-size: var(--fs-xs);
+}
+
+.cuts { display: flex; flex-direction: column; gap: var(--s3); }
+.cut {
+  display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: var(--s4); align-items: stretch;
+  padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface);
+}
+.cut.is-rejected { opacity: .55; }
+.cut-thumb {
+  position: relative; padding: 0; overflow: hidden; aspect-ratio: 16 / 9; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--well);
+  transition: border-color var(--motion), transform var(--motion);
+}
+.cut-thumb:hover { border-color: var(--accent-edge); transform: translateY(-1px); }
+/* 넓은 컷이 잘리면 구도를 판단할 수 없다. 프레임 전체를 보여 준다. */
+.cut-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.cut-body { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+.cut-title { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); }
+.cut-title strong { font-size: var(--fs-md); font-weight: 600; }
+.cut-order { flex: none; color: var(--text-4); font-size: var(--fs-micro); }
+.cut-purpose { margin: 0; color: var(--text-3); font-size: var(--fs-sm); }
+.cut-values { color: var(--text-2); font-family: var(--mono); font-size: var(--fs-xs); }
+.cut-review { display: flex; gap: var(--s2); margin-top: auto; }
+.cut-review button { border-color: var(--line); }
+.cut-review .is-on.approve { border-color: var(--ok-edge); background: var(--ok-soft); color: var(--ok); }
+.cut-review .is-on.reject { border-color: var(--danger-edge); background: var(--danger-soft); color: var(--danger); }
+
 /* ---- 작업 목록 ---- */
 .feed-head { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 0 var(--s4); }
 .feed-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
@@ -271,6 +335,15 @@ button.is-danger { color: var(--danger); }
 .detail-stage img { max-width: 100%; max-height: 74vh; object-fit: contain; }
 .detail-stage img.pixel { width: min(100%, 512px); image-rendering: pixelated; }
 .detail-stage model-viewer { width: 100%; height: 100%; min-height: 560px; background: transparent; }
+/* 샷은 투명한 그림이 아니다. 격자 배경을 덮어 프레임만 보이게 한다. */
+.shot-stage {
+  display: flex; flex-direction: column; gap: var(--s3); align-items: center; justify-content: center;
+  width: 100%; height: 100%; padding: var(--s4); background: var(--well);
+}
+.shot-stage > img { max-width: 100%; max-height: 64vh; border-radius: var(--r-md); }
+.shot-stage video { max-width: 100%; max-height: 64vh; border-radius: var(--r-md); background: #000; }
+.shot-aux { display: flex; gap: var(--s2); }
+.shot-aux img { width: 200px; border-radius: var(--r-sm); }
 .detail-side { display: flex; flex-direction: column; gap: var(--s4); max-height: calc(100vh - 66px); padding: var(--s5); overflow: auto; border-left: 1px solid var(--line); }
 .detail-side h3 { margin: 0; padding-right: 36px; font-size: var(--fs-xl); font-weight: 600; line-height: 1.3; }
 .meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px var(--s3); margin: 0; font-size: var(--fs-sm); }

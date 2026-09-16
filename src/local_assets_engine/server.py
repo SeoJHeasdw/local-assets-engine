@@ -54,6 +54,15 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
             return JSONResponse({"detail": "다른 출처의 요청은 받지 않습니다."}, status_code=403)
         return await call_next(request)
 
+    @app.middleware("http")
+    async def fresh_screen(request: Request, call_next):
+        response = await call_next(request)
+        # 화면은 저장소의 파일 그대로여야 한다. 앱 창이 예전 화면을 캐시에서 꺼내 쓰면
+        # 고친 화면이 나오지 않는다. 작업 결과 파일과 벤더 스크립트는 변하지 않으므로 둔다.
+        if not request.url.path.startswith(("/files/", "/vendor/")):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         # CLI가 돌리는 작업도 화면에 보여야 한다. 이 엔진이 시작하지 않은 작업이라도

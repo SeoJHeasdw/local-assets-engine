@@ -36,6 +36,113 @@
       "sizeMeters": 1.0
     }
   },
+  "previz": {
+    "renderers": ["eevee", "workbench", "cycles"],
+    "auxModes": ["keys", "all", "none"],
+    "defaults": {
+      "renderer": "eevee",
+      "width": 960,
+      "height": 540,
+      "fps": 12,
+      "samples": 16,
+      "aux": "keys",
+      "animatic": true,
+      "ground": true,
+      "clay": true
+    },
+    "shotPresets": [
+      {
+        "id": "game-trailer",
+        "label": "게임 트레일러",
+        "hint": "6컷 15초 · 전경 → 공개 → 앙각 → 디테일 → 하강 → 후퇴",
+        "look": {},
+        "shots": [
+          {
+            "id": "s01",
+            "label": "전경 소개",
+            "purpose": "장소와 크기를 보여 준다",
+            "move": "dolly-in",
+            "focus": "scene",
+            "lens": 28,
+            "seconds": 2.5,
+            "framing": {
+              "distance": 3.2, "distanceEnd": 2.6,
+              "azimuth": -35, "height": 1.15, "targetHeight": 0.5
+            }
+          },
+          {
+            "id": "s02",
+            "label": "주인공 공개",
+            "purpose": "대상을 돌며 형태를 보여 준다",
+            "move": "orbit",
+            "focus": "hero",
+            "lens": 50,
+            "seconds": 3.0,
+            "framing": {
+              "distance": 1.7,
+              "azimuth": -55, "azimuthEnd": 5,
+              "height": 0.8, "targetHeight": 0.55
+            }
+          },
+          {
+            "id": "s03",
+            "label": "앙각 강조",
+            "purpose": "낮은 눈높이로 위압감을 준다",
+            "move": "push-in",
+            "focus": "hero",
+            "lens": 28,
+            "seconds": 2.0,
+            "framing": {
+              "distance": 1.5, "distanceEnd": 1.3,
+              "azimuth": 15, "height": 0.12, "targetHeight": 0.8
+            }
+          },
+          {
+            "id": "s04",
+            "label": "디테일 접근",
+            "purpose": "질감·장식을 가까이 본다",
+            "move": "push-in",
+            "focus": "hero",
+            "lens": 85,
+            "seconds": 2.0,
+            "framing": {
+              "distance": 1.1, "distanceEnd": 0.8,
+              "azimuth": 25, "height": 0.7, "targetHeight": 0.6,
+              "targetOffset": [0.1, 0]
+            }
+          },
+          {
+            "id": "s05",
+            "label": "하강 이동",
+            "purpose": "위에서 눈높이로 내려온다",
+            "move": "crane-down",
+            "focus": "hero",
+            "lens": 35,
+            "seconds": 2.5,
+            "framing": {
+              "distance": 2.2, "distanceEnd": 1.9,
+              "azimuth": -20, "azimuthEnd": -5,
+              "height": 2.4, "heightEnd": 0.55,
+              "targetHeight": 0.55
+            }
+          },
+          {
+            "id": "s06",
+            "label": "후퇴 마무리",
+            "purpose": "물러나며 전체를 남긴다",
+            "move": "dolly-out",
+            "focus": "scene",
+            "lens": 24,
+            "seconds": 3.0,
+            "framing": {
+              "distance": 2.2, "distanceEnd": 4.0,
+              "azimuth": 20, "height": 0.85, "targetHeight": 0.45
+            }
+          }
+        ]
+      }
+    ]
+  },
   "presets": [
     {
       "id": "item-icon",

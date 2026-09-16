@@ -16,6 +16,7 @@
         <div><strong>Assets Studio</strong><small>javis · 로컬 생성</small></div>
       </div>
       <button class="nav-item is-active" type="button" data-view="create">만들기</button>
+      <button class="nav-item" type="button" data-view="previz">프리비즈</button>
       <button class="nav-item" type="button" data-view="library">보관함 <span class="nav-count" id="review-count"></span></button>
       <button class="nav-item" type="button" data-view="system">환경</button>
       <div class="sidebar-foot" id="engine-state"><span class="pulse"></span>엔진 연결 중</div>
@@ -102,6 +103,85 @@
           <section class="feed" aria-label="작업">
             <header class="feed-head"><h2>작업</h2><span id="queue-summary"></span></header>
             <div class="job-list" id="job-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-previz" hidden>
+        <div class="create-grid">
+          <form class="composer" id="previz-form" novalidate>
+            <header class="view-head">
+              <h1>프리비즈</h1>
+              <p>뼈대 장면으로 연출을 먼저 확정합니다. 결과는 그림이 아니라 카메라 값입니다.</p>
+            </header>
+
+            <div class="field">
+              <span class="label">장면에 놓을 3D 에셋</span>
+              <div class="picker">
+                <select id="previz-mesh"></select>
+                <button class="secondary" type="button" id="previz-add">추가</button>
+              </div>
+              <div class="placed" id="previz-placed"></div>
+            </div>
+
+            <div class="field" id="previz-map-field" hidden>
+              <span class="label">배치 <em>위에서 본 모습 · 한 칸 1m</em></span>
+              <div class="scene-map" id="previz-map"></div>
+            </div>
+
+            <div class="field">
+              <span class="label">샷 프리셋</span>
+              <div class="chips" id="shot-preset-chips"></div>
+              <p class="hint" id="shot-preset-hint"></p>
+            </div>
+
+            <div class="options">
+              <label class="field">
+                <span class="label">렌더러</span>
+                <select id="previz-renderer">
+                  <option value="eevee" selected>EEVEE (그림자·격자)</option>
+                  <option value="workbench">Workbench (가장 빠름)</option>
+                  <option value="cycles">Cycles (느림)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">해상도</span>
+                <select id="previz-resolution">
+                  <option value="640x360">640×360</option>
+                  <option value="960x540" selected>960×540</option>
+                  <option value="1280x720">1280×720</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">초당 프레임</span>
+                <select id="previz-fps"><option value="12" selected>12</option><option value="24">24</option></select>
+              </label>
+              <label class="field">
+                <span class="label">깊이·윤곽</span>
+                <select id="previz-aux">
+                  <option value="keys" selected>대표 프레임만</option>
+                  <option value="all">모든 프레임</option>
+                  <option value="none">만들지 않음</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="toggles">
+              <label class="toggle"><input type="checkbox" id="previz-clay" checked> 점토 재질로 형태만 보기</label>
+              <label class="toggle"><input type="checkbox" id="previz-animatic" checked> 애니매틱 영상 만들기</label>
+            </div>
+
+            <p class="form-error" id="previz-error" role="alert" hidden></p>
+            <button class="primary" type="submit" id="previz-submit">샷 만들기</button>
+            <p class="hint" id="previz-cost"></p>
+          </form>
+
+          <section class="feed" aria-label="컷">
+            <header class="feed-head">
+              <h2>컷 순서</h2>
+              <select id="previz-job" class="quiet" aria-label="프리비즈 작업"></select>
+            </header>
+            <div id="previz-cuts" class="cuts"></div>
           </section>
         </div>
       </section>

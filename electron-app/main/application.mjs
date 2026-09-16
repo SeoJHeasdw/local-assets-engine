@@ -4,7 +4,7 @@ import { ENGINE_PYTHON, ROOT } from "./paths.mjs";
 import { createWindowService } from "./window.mjs";
 
 // Electron 객체는 여기서만 들어온다. 서비스는 Node 테스트에서도 그대로 돌 수 있다.
-export function createStudio({ app, BrowserWindow, dialog, ipcMain, shell, engine = null }) {
+export function createStudio({ app, BrowserWindow, dialog, ipcMain, shell, session = null, engine = null }) {
   const state = { mainWindow: null, engineUrl: null, engineOwned: false, outputDir: null, busyJob: null };
   let healthTimer = null;
   const engineService = engine || createEngineService({
@@ -13,7 +13,7 @@ export function createStudio({ app, BrowserWindow, dialog, ipcMain, shell, engin
     port: Number(process.env.LOCAL_ASSETS_PORT) || DEFAULT_PORT,
     log: (text) => process.stdout.write(`[engine] ${text}`),
   });
-  const { createWindow, showStartup, showStudio } = createWindowService({ BrowserWindow, app, state });
+  const { createWindow, showStartup, showStudio } = createWindowService({ BrowserWindow, app, state, session });
 
   let connecting = null;
   function connect() {

@@ -63,6 +63,16 @@ def test_job_lifecycle_review_listing_and_files(api):
     assert client.get(f"/files/{job_id}/..%2F..%2Fsecret").status_code == 404
 
 
+def test_the_screen_is_never_served_from_the_app_cache(api):
+    client, runner = api
+    # 앱 창이 예전 화면을 캐시에서 꺼내 쓰면 고친 화면이 나오지 않는다.
+    assert client.get("/api/presets").headers["cache-control"] == "no-store"
+    job_id = client.post("/api/jobs", json={"recipe": "fake", "params": {"subject": "검"}}).json()["id"]
+    runner.run_job(job_id)
+    # 작업 결과 파일은 한번 만들어지면 바뀌지 않으므로 캐시를 막지 않는다.
+    assert "cache-control" not in client.get(f"/files/{job_id}/a.png").headers
+
+
 def test_invalid_requests_return_clear_errors(api):
     client, _runner = api
     assert client.post("/api/jobs", json={"recipe": "fake", "params": {}}).status_code == 400
