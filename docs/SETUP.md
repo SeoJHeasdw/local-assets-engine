@@ -12,6 +12,25 @@
 | Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 2026-09-16 밤에 내려받기 시작 |
 | Hugging Face 로그인, DINOv3 승인 | 안 됨 → **3D 생성 불가** |
 
+## 0. 가중치 내려받기가 끊길 때
+
+2026-09-16 밤에는 회선이 불안정해 큰 파일이 여러 번 끊겼다(DNS 실패, 연결 초기화,
+xet 클라이언트 오류). 받다 만 파일은 이어받을 수 있으니 같은 명령을 다시 실행한다.
+
+```bash
+# xet 대신 일반 HTTP로 받고, 끊기면 다시 시도한다
+for i in $(seq 1 40); do HF_HUB_DISABLE_XET=1 hf download microsoft/TRELLIS.2-4B && break; sleep 15; done
+```
+
+`--include`는 값을 하나만 받는다. 여러 개를 붙이면 파일 이름으로 해석돼 아무것도
+받지 않고 성공으로 끝나므로, 특정 파일만 받을 때는 파일 경로를 그대로 적는다.
+
+```bash
+hf download Tongyi-MAI/Z-Image-Turbo transformer/diffusion_pytorch_model-00001-of-00003.safetensors
+```
+
+`npm run doctor`의 가중치 항목은 `blobs/*.incomplete`가 남아 있으면 미완료로 본다.
+
 ## 1. Hugging Face 로그인과 DINOv3 승인 (3D에 필수)
 
 TRELLIS.2는 입력 이미지를 DINOv3로 읽는다. DINOv3는 수동 승인 게이트 모델이라

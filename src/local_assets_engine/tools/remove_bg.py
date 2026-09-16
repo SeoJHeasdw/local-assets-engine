@@ -36,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         args.repo, revision=args.revision, trust_remote_code=True,
     )
     model.to(device).eval()
+    # 가중치가 fp16으로 저장돼 있으면 입력도 같은 자료형이어야 한다.
+    weight_dtype = next(model.parameters()).dtype
     transform = transforms.Compose([
         transforms.Resize((args.resolution, args.resolution)),
         transforms.ToTensor(),
@@ -44,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for index, item in enumerate(items, start=1):
         image = Image.open(item["input"]).convert("RGB")
-        batch = transform(image).unsqueeze(0).to(device)
+        batch = transform(image).unsqueeze(0).to(device=device, dtype=weight_dtype)
         with torch.no_grad():
             prediction = model(batch)[-1].sigmoid().float().cpu()[0].squeeze()
         mask = transforms.ToPILImage()(prediction).resize(image.size, Image.Resampling.BILINEAR)
