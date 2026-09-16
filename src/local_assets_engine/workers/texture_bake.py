@@ -19,14 +19,18 @@ import time
 
 import numpy as np
 
-DEFAULT_MAX_DIST_VOXELS = 4.0
-DEFAULT_NEIGHBORS = 12
+# 범위를 넓히면 구멍은 줄지만 이웃한 재질(나무와 철 띠)의 색이 섞여 탈색된다.
+# 구멍은 이제 가장 가까운 유효 텍셀로 메우므로, 범위는 좁고 가중치는 가파르게 둔다.
+DEFAULT_MAX_DIST_VOXELS = 2.5
+DEFAULT_NEIGHBORS = 6
+DEFAULT_POWER = 2.0
 
 
-def sample_voxels(distances, indices, attrs, voxel_size, max_dist_voxels=DEFAULT_MAX_DIST_VOXELS):
-    """Inverse-distance weighted colour per texel, ignoring voxels that are too far."""
+def sample_voxels(distances, indices, attrs, voxel_size,
+                  max_dist_voxels=DEFAULT_MAX_DIST_VOXELS, power=DEFAULT_POWER):
+    """Distance weighted colour per texel, ignoring voxels that are too far."""
     eps = voxel_size * 0.1
-    weights = 1.0 / (distances + eps)
+    weights = 1.0 / np.power(distances + eps, power)
     weights[distances > voxel_size * max_dist_voxels] = 0.0
     total = weights.sum(axis=1, keepdims=True)
     has_neighbor = (total > 0).reshape(-1)

@@ -9,8 +9,8 @@ def test_far_voxels_do_not_colour_a_texel():
     attrs = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     sampled, has_neighbor = sample_voxels(distances, indices, attrs, voxel_size=0.1)
     assert has_neighbor.tolist() == [True, False]
-    # 가까운 복셀이 더 크게 반영된다.
-    assert sampled[0][0] > sampled[0][1]
+    # 가까운 복셀이 뚜렷하게 앞선다. 섞이면 재질 경계에서 색이 탈색된다.
+    assert sampled[0][0] > 0.7 > sampled[0][1]
     assert sampled[1].tolist() == [0.0, 0.0, 0.0]
 
 
