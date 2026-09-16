@@ -1,10 +1,10 @@
 {
   "version": 1,
   "imageModel": {
-    "id": "z-image-turbo",
-    "label": "Z-Image Turbo",
-    "command": "mflux-generate-z-image-turbo",
-    "repo": "Tongyi-MAI/Z-Image-Turbo",
+    "id": "flux2-klein-4b",
+    "label": "FLUX.2 klein 4B",
+    "command": "mflux-generate-flux2",
+    "repo": "black-forest-labs/FLUX.2-klein-4B",
     "license": "Apache-2.0",
     "steps": null,
     "quantize": 8,
@@ -19,8 +19,16 @@
   "mesh": {
     "repo": "microsoft/TRELLIS.2-4B",
     "license": "MIT",
-    "pipelineTypes": ["512", "1024", "1024_cascade"],
-    "textureSizes": [512, 1024, 2048],
+    "pipelineTypes": [
+      "512",
+      "1024",
+      "1024_cascade"
+    ],
+    "textureSizes": [
+      512,
+      1024,
+      2048
+    ],
     "defaults": {
       "pipelineType": "512",
       "textureSize": 1024,
@@ -38,7 +46,11 @@
       "width": 1024,
       "height": 1024,
       "removeBackground": true,
-      "canvas": { "width": 512, "height": 512, "padding": 0.06 }
+      "canvas": {
+        "width": 512,
+        "height": 512,
+        "padding": 0.06
+      }
     },
     {
       "id": "character-sprite",
@@ -49,7 +61,11 @@
       "width": 768,
       "height": 1024,
       "removeBackground": true,
-      "canvas": { "width": 768, "height": 1024, "padding": 0.04 }
+      "canvas": {
+        "width": 768,
+        "height": 1024,
+        "padding": 0.04
+      }
     },
     {
       "id": "pixel-art",
@@ -60,8 +76,15 @@
       "width": 1024,
       "height": 1024,
       "removeBackground": true,
-      "canvas": { "width": 512, "height": 512, "padding": 0.04 },
-      "pixelate": { "size": 64, "colors": 24 }
+      "canvas": {
+        "width": 512,
+        "height": 512,
+        "padding": 0.04
+      },
+      "pixelate": {
+        "size": 64,
+        "colors": 24
+      }
     },
     {
       "id": "ui-element",
@@ -72,7 +95,11 @@
       "width": 1024,
       "height": 1024,
       "removeBackground": true,
-      "canvas": { "width": 512, "height": 512, "padding": 0.04 }
+      "canvas": {
+        "width": 512,
+        "height": 512,
+        "padding": 0.04
+      }
     },
     {
       "id": "background",
@@ -93,7 +120,11 @@
       "width": 1024,
       "height": 1024,
       "removeBackground": true,
-      "canvas": { "width": 1024, "height": 1024, "padding": 0.08 }
+      "canvas": {
+        "width": 1024,
+        "height": 1024,
+        "padding": 0.08
+      }
     }
   ]
 }
