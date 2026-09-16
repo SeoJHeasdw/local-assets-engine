@@ -91,9 +91,9 @@ Metal 래스터라이저를 쓰면 재질 경계가 더 선명해질 여지는 �
 
 | 후보 | 라이선스 | 게이트 | 저장소 크기 | 최종 수정 | mflux 명령 | 메모 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | 2026-01-30 | `mflux-generate-z-image-turbo` | 현재 기본값. 적은 스텝으로 빠르고, 36GB에서는 8비트로 쓴다 |
+| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | 2026-01-30 | `mflux-generate-z-image-turbo` | 예전 기본값. 가중치를 받아 두었으므로 되돌리기 쉽다 |
 | Z-Image (비-Turbo) | Apache-2.0 | 없음 | 20.5GB | 2026-01-28 | `mflux-generate-z-image` | 스텝이 많아 느린 대신 품질 여지가 있다 |
-| FLUX.2 klein 4B | Apache-2.0 | 없음 | 23.7GB | 2026-02-24 | `mflux-generate-flux2` + `--model flux2-klein-4b` | 후보 중 가장 최신이고 가볍다. 9B판은 라이선스가 달라 확인 전 사용 금지 |
+| FLUX.2 klein 4B | Apache-2.0 | 없음 | 23.7GB | 2026-02-24 | `mflux-generate-flux2` | **현재 기본값**(2026-09-16 채택). 이 명령의 기본 모델이라 인자가 필요 없다. 9B판은 라이선스가 달라 확인 전 사용 금지 |
 | Qwen-Image-2512 | Apache-2.0 | 없음 | 57.7GB | 2025-12-31 | `mflux-generate-qwen` | 이미지 안 글자에 강하다고 알려짐. 가장 무거워 이 기기에는 부담 |
 | FLUX.1 schnell | Apache-2.0 | 자동 승인 | 57.8GB | 2024-08-16 | `mflux-generate` + `--model schnell` | 오래된 세대 |
 
