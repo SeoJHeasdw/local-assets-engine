@@ -139,6 +139,13 @@ class JobStore:
             closed += 1
         return closed
 
+    def running_job_id(self) -> str | None:
+        """The job a live process is working on, whichever engine started it."""
+        for job in self.list(limit=50):
+            if job["state"] in ("running", "cancelling") and owner_alive(job.get("owner")):
+                return job["id"]
+        return None
+
     def resolve_file(self, job_id: str, relative: str) -> Path:
         base = self.job_dir(job_id).resolve()
         target = (base / relative).resolve()

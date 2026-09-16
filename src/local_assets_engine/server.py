@@ -56,7 +56,10 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": __version__, "currentJob": runner.current_job_id,
+        # CLI가 돌리는 작업도 화면에 보여야 한다. 이 엔진이 시작하지 않은 작업이라도
+        # 프로세스가 살아 있으면 진행 중으로 읽는다.
+        return {"ok": True, "version": __version__,
+                "currentJob": runner.current_job_id or store.running_job_id(),
                 "outputDir": str(output_dir())}
 
     @app.get("/api/doctor")

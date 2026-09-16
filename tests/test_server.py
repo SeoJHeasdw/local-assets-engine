@@ -1,7 +1,9 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
-from local_assets_engine.jobs import JobStore
+from local_assets_engine.jobs import JobStore, now_iso
 from local_assets_engine.presets import PresetError
 from local_assets_engine.recipes.base import Recipe
 from local_assets_engine.runner import Runner
@@ -36,6 +38,14 @@ def test_health_and_non_local_requests_are_rejected(api):
         headers={"origin": "https://evil.example"},
     )
     assert response.status_code == 403
+
+
+def test_health_reports_a_job_another_process_is_running(api):
+    client, runner = api
+    job = runner.store.create("fake", {"subject": "x"}, "x")
+    runner.store.update(job["id"], lambda record: record.update(
+        state="running", owner={"pid": os.getpid(), "heartbeat": now_iso()}))
+    assert client.get("/api/health").json()["currentJob"] == job["id"]
 
 
 def test_job_lifecycle_review_listing_and_files(api):
