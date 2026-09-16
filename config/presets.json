@@ -7,7 +7,7 @@
     "repo": "Tongyi-MAI/Z-Image-Turbo",
     "license": "Apache-2.0",
     "steps": null,
-    "quantize": null
+    "quantize": 8
   },
   "backgroundRemoval": {
     "repo": "ZhengPeng7/BiRefNet",

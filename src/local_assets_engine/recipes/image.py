@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 DEFAULT_PRESET = "item-icon"
 MAX_CANDIDATES = 8
 PIXEL_PREVIEW_PX = 512
+SEED_SUFFIX = re.compile(r"_seed_(\d+)\.png$")
 
 
 def prepare_image_params(
@@ -62,12 +64,34 @@ def run_background_removal(ctx: "JobContext", manifest: Path) -> None:
         stage.run(args, cwd=ctx.dir)
 
 
+def match_generated_files(raw_dir: Path, seeds: list[int]) -> list[Path]:
+    """Find the file the image model wrote for each seed.
+
+    mflux appends `_seed_<n>` to the output name, so names are discovered, not
+    assumed: the sidecar metadata is authoritative and the suffix is a fallback.
+    """
+    by_seed: dict[int, Path] = {}
+    for metadata in sorted(raw_dir.glob("*.metadata.json")):
+        image = metadata.with_name(f"{metadata.name.removesuffix('.metadata.json')}.png")
+        if not image.exists():
+            continue
+        try:
+            by_seed.setdefault(int(json.loads(metadata.read_text("utf-8"))["seed"]), image)
+        except (KeyError, TypeError, ValueError):
+            continue
+    for image in sorted(raw_dir.glob("*.png")):
+        if match := SEED_SUFFIX.search(image.name):
+            by_seed.setdefault(int(match.group(1)), image)
+    if missing := [seed for seed in seeds if seed not in by_seed]:
+        raise RuntimeError(f"이미지 파일이 만들어지지 않았습니다: 시드 {', '.join(map(str, missing))}")
+    return [by_seed[seed] for seed in seeds]
+
+
 def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "candidate") -> list[dict[str, Any]]:
     model = ctx.presets["imageModel"]
     seeds = p["seeds"]
     raw_dir = ctx.dir / "raw"
     raw_dir.mkdir(exist_ok=True)
-    raws = [raw_dir / f"seed-{seed}.png" for seed in seeds]
 
     with ctx.stage("generate", "이미지 생성") as stage:
         stage.progress(0, f"{model['label']} · 후보 {len(seeds)}장", force=True)
@@ -75,16 +99,14 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
             engine_bin(model["command"]), "--prompt", p["prompt"],
             "--width", str(p["width"]), "--height", str(p["height"]),
             "--seed", *[str(seed) for seed in seeds],
-            "--output", str(raw_dir / "seed-{seed}.png"), "--metadata",
+            "--output", str(raw_dir / "candidate.png"), "--metadata",
         ]
         if model.get("steps"):
             args += ["--steps", str(model["steps"])]
         if model.get("quantize"):
             args += ["--quantize", str(model["quantize"])]
         stage.run(args, cwd=ctx.dir, units=len(seeds))
-        missing = [path.name for path in raws if not path.exists()]
-        if missing:
-            raise RuntimeError(f"이미지 파일이 만들어지지 않았습니다: {', '.join(missing)}")
+        raws = match_generated_files(raw_dir, seeds)
 
     sources = raws
     if p["removeBackground"]:

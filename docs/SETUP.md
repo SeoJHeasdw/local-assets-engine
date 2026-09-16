@@ -86,7 +86,7 @@ TRELLIS.2는 입력 이미지를 DINOv3로 읽는다. DINOv3는 수동 승인 �
 
 | 후보 | HF 라이선스 표기 | 게이트 | 저장소 크기 | mflux 명령 | 메모 |
 | --- | --- | --- | --- | --- | --- |
-| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | `mflux-generate-z-image-turbo` | 현재 기본값. 적은 스텝으로 빠름 |
+| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | `mflux-generate-z-image-turbo` | 현재 기본값. 36GB에서는 8비트 양자화로 쓴다(양자화 없이 1024px 생성 시 최대 37.9GB로 스왑) |
 | Qwen-Image | Apache-2.0 | 없음 | 57.7GB | `mflux-generate-qwen` | 이미지 안 글자에 강하다고 알려짐. 36GB에서는 양자화(`quantize`)가 필요할 것으로 추정 |
 | FLUX.1 schnell | Apache-2.0 | 자동 승인 | 57.8GB | `mflux-generate` + `--model schnell` | HF 로그인 후 약관 동의 필요 |
 | FLUX.2 klein 4B·9B | 확인 필요 | 확인 필요 | 확인 필요 | `mflux-generate-flux2` | 크기별 라이선스가 다르다는 보고가 있음. 원문 확인 전 사용 금지 |
