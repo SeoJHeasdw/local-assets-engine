@@ -17,7 +17,33 @@ from typing import Any, Callable
 
 ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
 REVIEW_STATES = frozenset({"pending", "approved", "rejected"})
+# 하트비트는 진행률을 쓸 때마다(≤0.5초) 갱신된다. 이보다 오래 멈춘 기록은 죽은 것으로 본다.
+OWNER_STALE_AFTER_S = 180
 _JOB_ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
+
+
+def owner_alive(owner: dict[str, Any] | None) -> bool:
+    """True while the process that started the job is still running it.
+
+    앱과 CLI가 각자 엔진을 띄울 수 있다. 다른 프로세스가 돌리는 중인 작업을
+    시작 복구가 닫아 버리면, 멀쩡히 돌던 생성이 남의 재시작에 끊긴다.
+    """
+    if not owner:
+        return False
+    try:
+        os.kill(int(owner["pid"]), 0)
+    except (KeyError, TypeError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    heartbeat = owner.get("heartbeat")
+    if not heartbeat:
+        return False
+    try:
+        age = (datetime.now().astimezone() - datetime.fromisoformat(heartbeat)).total_seconds()
+    except (TypeError, ValueError):
+        return False
+    return age < OWNER_STALE_AFTER_S
 
 
 class JobNotFound(KeyError):
@@ -97,7 +123,7 @@ class JobStore:
         # 대기 작업을 저절로 다시 돌리면 사용자가 모르는 사이 GPU를 오래 점유한다.
         closed = 0
         for job in self.list(limit=10_000):
-            if job["state"] not in ACTIVE_STATES:
+            if job["state"] not in ACTIVE_STATES or owner_alive(job.get("owner")):
                 continue
 
             def close(record: dict[str, Any], was_running: bool = job["state"] != "queued") -> None:

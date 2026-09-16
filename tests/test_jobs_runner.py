@@ -110,6 +110,28 @@ def test_recover_interrupted_closes_open_jobs_without_restarting(tmp_path):
     assert store.load(done["id"])["state"] == "done"
 
 
+def test_recover_interrupted_leaves_a_job_another_process_is_running(tmp_path):
+    import os
+
+    from local_assets_engine.jobs import now_iso
+
+    store = JobStore(tmp_path)
+    mine = store.create("fake", {}, "live")
+    store.update(mine["id"], lambda job: job.update(
+        state="running", owner={"pid": os.getpid(), "heartbeat": now_iso()}))
+    stale = store.create("fake", {}, "stale")
+    store.update(stale["id"], lambda job: job.update(
+        state="running", owner={"pid": os.getpid(), "heartbeat": "2020-01-01T00:00:00+09:00"}))
+    dead = store.create("fake", {}, "dead")
+    store.update(dead["id"], lambda job: job.update(
+        state="running", owner={"pid": 99_999_999, "heartbeat": now_iso()}))
+
+    assert store.recover_interrupted() == 2
+    assert store.load(mine["id"])["state"] == "running"
+    assert store.load(stale["id"])["state"] == "failed"
+    assert store.load(dead["id"])["state"] == "failed"
+
+
 def test_resolve_file_blocks_traversal(tmp_path):
     store = JobStore(tmp_path / "jobs")
     job = store.create("fake", {}, "t")

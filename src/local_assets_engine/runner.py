@@ -7,6 +7,7 @@ Each stage records wall time and the peak memory footprint of its processes.
 from __future__ import annotations
 
 import collections
+import os
 import queue
 import threading
 import time
@@ -169,7 +170,13 @@ class JobContext:
         self.mutate(add)
 
     def mutate(self, fn: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-        return self.store.update(self.job_id, fn)
+        def apply(job: dict[str, Any]) -> None:
+            fn(job)
+            # 기록을 쓸 때마다 살아 있음을 남긴다. 다른 엔진이 시작해도 닫히지 않는다.
+            if job.get("state") == "running" and isinstance(job.get("owner"), dict):
+                job["owner"]["heartbeat"] = now_iso()
+
+        return self.store.update(self.job_id, apply)
 
     def check_cancel(self) -> None:
         if self.cancel.is_set():
@@ -274,7 +281,10 @@ class Runner:
         with self._lock:
             self._cancels[job_id] = cancel
             self.current_job_id = job_id
-        self.store.update(job_id, lambda record: record.update(state="running", startedAt=now_iso()))
+        self.store.update(job_id, lambda record: record.update(
+            state="running", startedAt=now_iso(),
+            owner={"pid": os.getpid(), "heartbeat": now_iso()},
+        ))
         ctx = JobContext(self.store, job_id, self.presets_loader(), cancel)
         state, error = "done", None
         try:

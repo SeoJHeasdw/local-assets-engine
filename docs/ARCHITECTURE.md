@@ -38,6 +38,10 @@ javis · CLI   ──HTTP───▶        │
   실행되므로 그 프로세스 그룹에 SIGTERM을, 3초 뒤에도 남으면 SIGKILL을 보낸다.
 - 엔진이 시작할 때 `queued`로 남은 작업은 `cancelled`, `running`으로 남은 작업은
   `failed`로 닫는다. 어느 쪽도 다시 실행하지 않는다.
+- 단, 다른 프로세스가 지금 돌리고 있는 작업은 닫지 않는다. 작업을 시작할 때 `owner`에
+  프로세스 번호를 적고 기록을 쓸 때마다 `heartbeat`를 갱신하므로, 그 프로세스가 살아
+  있고 하트비트가 3분 안쪽이면 남의 작업으로 보고 건너뛴다. 앱과 CLI가 각자 엔진을
+  띄울 수 있어서, 이 검사가 없으면 앱을 여는 것만으로 CLI가 돌리던 생성이 끊긴다.
 - 모델은 서버 프로세스에 올리지 않는다. 레시피는 torch·bpy를 import하지 않고, 모델은
   단계 프로세스 안에서만 불러온다.
 
@@ -117,6 +121,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | --- | --- |
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
+| `owner` | 실행 중인 작업에만 있다. `{pid, heartbeat}`로 시작 복구가 남의 작업을 닫지 않게 한다 |
 | `assets[].kind` / `role` | `image`·`mesh` / `candidate`(2D 후보), `concept`(3D용 컨셉), `final`(메시) |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
 | 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
