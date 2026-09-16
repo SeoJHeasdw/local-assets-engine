@@ -76,6 +76,61 @@ def test_only_absolute_mesh_files_are_accepted_from_disk(tmp_path):
     assert normalized["assets"][0]["file"] == str(outside) and "scene" in title
 
 
+def spans(parts):
+    return [max(part["at"][axis] + part["size"][axis] / 2 for part in parts)
+            - min(part["at"][axis] - part["size"][axis] / 2 for part in parts) for axis in range(3)]
+
+
+def test_stand_ins_block_out_a_scene_before_any_asset_is_generated(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    normalized, title = PREVIZ.prepare(
+        {"assets": [{"standin": "person", "yaw": 30}, {"standin": "wall", "position": [0, 3, 0]}]},
+        load_presets(), store,
+    )
+    assert title == "프리비즈 · 게임 트레일러 · 사람 대역"
+    person, wall = normalized["assets"]
+    assert (person["id"], person["standin"], person["file"], person["source"]) == ("hero", "person", None, None)
+    assert (person["size"], person["yaw"], wall["position"]) == ([0.55, 0.29, 1.75], 30.0, [0.0, 3.0, 0.0])
+    assert spans(person["parts"]) == pytest.approx(person["size"], abs=1e-3)
+
+
+def test_a_resized_stand_in_stretches_its_parts_to_the_new_size(tmp_path):
+    # 지도는 size로 카메라를 계산하고 엔진은 만든 도형의 경계를 잰다. 늘인 뒤에도 둘이 같아야 한다.
+    store, job_id = mesh_job(tmp_path)
+    normalized, _ = PREVIZ.prepare({"assets": [
+        {"source": {"jobId": job_id, "assetId": "a02"}},
+        {"standin": "car", "size": [2.5, 8, "3.2"]},
+    ]}, load_presets(), store)
+    chest, truck = normalized["assets"]
+    assert "parts" not in chest and chest["file"].endswith("asset.glb")
+    assert truck["size"] == [2.5, 8.0, 3.2]
+    assert spans(truck["parts"]) == pytest.approx([2.5, 8.0, 3.2], abs=1e-3)
+
+
+def test_unknown_or_malformed_stand_ins_are_rejected(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    for entry, match in (
+        ({"standin": "dragon"}, "대역"), ({"standin": "wall", "size": [4, 0.2]}, "size"),
+        ({"standin": "wall", "size": [0, 0.2, 2.5]}, "size"), ("person", "형식"),
+    ):
+        with pytest.raises(PresetError, match=match):
+            PREVIZ.prepare({"assets": [entry]}, load_presets(), store)
+
+
+def test_a_stand_in_whose_parts_do_not_fill_its_size_is_caught_when_the_config_loads(tmp_path):
+    broken = tmp_path / "presets.json"
+    crate = {"id": "crate", "size": [1, 1, 1], "parts": [{"shape": "box", "at": [0, 0, 0.5], "size": [1, 1, 1]}]}
+    base = {"presets": [], "previz": {"shotPresets": [], "standins": [crate]}}
+    broken.write_text(json.dumps(base), "utf-8")
+    assert load_presets(broken)["previz"]["standins"][0]["id"] == "crate"
+    for change, match in (({"size": [1, 1, 2]}, "범위"), ({"parts": [{**crate["parts"][0], "shape": "cone"}]}, "도형"),
+                          ({"parts": [{**crate["parts"][0], "at": [0, 0]}]}, "숫자")):
+        base["previz"]["standins"] = [{**crate, **change}]
+        broken.write_text(json.dumps(base), "utf-8")
+        with pytest.raises(PresetError, match=match):
+            load_presets(broken)
+
+
 def test_cuts_rearranged_in_the_app_replace_the_preset(tmp_path):
     shots = [
         {"id": "s02", "label": "주인공 공개", "move": "orbit", "focus": "hero", "lens": 50, "seconds": 3,
@@ -112,6 +167,7 @@ def test_shot_presets_in_the_repository_are_usable(tmp_path):
     # 컷마다 길이·렌즈·프레이밍이 있어야 카메라 값으로 풀린다.
     for shot in trailer["shots"]:
         assert shot["seconds"] > 0 and shot["lens"] > 0 and shot["framing"]["distance"] > 0
+    assert {standin["id"] for standin in presets["previz"]["standins"]} >= {"person", "car", "wall", "building"}
 
 
 def test_a_broken_shot_preset_is_caught_when_the_config_loads(tmp_path):

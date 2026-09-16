@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import {
-  aimFromPoint, buildPrevizRequest, cameraAt, draftFromPreset, fitDistance, moveItem, nextShotId,
+  aimFromPoint, buildPrevizRequest, cameraAt, draftFromPreset, fitDistance, freeSpot, moveItem, nextShotId,
   sceneSubjects, setSeconds, totalSeconds,
 } from "../../electron-app/shared/previz.mjs";
+
+const presets = JSON.parse(fs.readFileSync(new URL("../../config/presets.json", import.meta.url), "utf8"));
+const standin = (id, extra) => ({ standin: id, dimensions: presets.previz.standins.find((kind) => kind.id === id).size, yaw: 0, ...extra });
+const trailerShot = (id) => presets.previz.shotPresets[0].shots.find((shot) => shot.id === id);
 
 const chest = { jobId: "20260916-144943-2668", assetId: "a02", x: 0, y: 0, yaw: 0, scale: 1, dimensions: [0.916, 0.9864, 1.0] };
 const orbit = {
@@ -27,6 +32,24 @@ test("the map puts cameras where the engine rendered them", () => {
   near(cameraAt(crane, subjects, 0).position, [-1.3005, -3.5732, 2.4]);
   near(cameraAt(crane, subjects, 1).position, [-0.2862, -3.2715, 0.55]);
   near(cameraAt(orbit, subjects, 0).target, [0, 0, 0.55]);
+});
+
+test("stand-ins put cameras where the engine rendered them", () => {
+  // 기대값은 이 배치(사람 30°·차·늘린 벽·상자 GLB·건물 15°)로 엔진이 실제 기록한 shots.json의 값이다.
+  // 카탈로그 치수를 설정 파일에서 읽으므로 부품과 size가 어긋나도 여기서 드러난다.
+  const subjects = sceneSubjects([
+    standin("person", { x: 0, y: 0, yaw: 30 }),
+    standin("car", { x: 2.5, y: 1, yaw: -90 }),
+    { ...standin("wall", { x: 0, y: 3 }), dimensions: [8, 0.2, 3] },
+    { ...chest, x: -1.5, y: 0.5, dimensions: [0.914, 0.9842, 1.0] },
+    standin("building", { x: 6, y: 12, yaw: 15 }),
+  ]);
+  near([subjects.hero.width, subjects.hero.height], [0.6213, 1.75]);
+  near([subjects.asset5.width, subjects.scene.width, ...subjects.scene.center], [12.2474, 18.3868, 4.0619, 8.9303]);
+  near(cameraAt(trailerShot("s02"), subjects, 0).position, [-6.0172, -4.2133, 1.4]);
+  near(cameraAt(trailerShot("s02"), subjects, 1).position, [0.6402, -7.3177, 1.4]);
+  near(cameraAt(trailerShot("s05"), subjects, 1).position, [-0.5009, -5.725, 0.9625]);
+  near(cameraAt(trailerShot("s06"), subjects, 1).position, [23.519, -44.5277, 10.2]);
 });
 
 test("distance 1.0 is the distance at which the subject fills the frame", () => {
@@ -79,6 +102,25 @@ test("an untouched preset is not sent as an edit", () => {
   const edited = buildPrevizRequest({ placed: [chest], cuts, preset, settings });
   assert.deepEqual(edited.params.shots.map((cut) => cut.id), ["s05", "s02"]);
   assert.equal(edited.params.width, 960);
+});
+
+test("a stand-in is sent as its size in meters, and a scene of stand-ins alone is enough", () => {
+  const preset = { id: "game-trailer", shots: [orbit] };
+  const wall = { ...standin("wall", { x: 1, y: 3, yaw: 90 }), dimensions: [12, 0.2, 3] };
+  const request = buildPrevizRequest({ placed: [standin("person", { x: 0, y: 0 }), wall], cuts: [orbit], preset });
+  assert.deepEqual(request.params.assets, [
+    { id: "hero", standin: "person", size: [0.55, 0.29, 1.75], position: [0, 0, 0], yaw: 0 },
+    { id: "asset2", standin: "wall", size: [12, 0.2, 3], position: [1, 3, 0], yaw: 90 },
+  ]);
+  assert.throws(() => buildPrevizRequest({ placed: [{ ...wall, dimensions: [12, 0, 3] }], cuts: [orbit], preset }), /1번째 대역의 깊이/);
+});
+
+test("something placed without a drop point steps aside from what is already there", () => {
+  assert.deepEqual(freeSpot([], [1, 1, 1]), [0, 0]);
+  const spot = freeSpot([chest], [10, 10, 12]);
+  // 상자(가로 0.916m) 오른쪽 끝에서 간격 0.3m를 두고 건물 왼쪽 끝이 시작한다.
+  assert.ok(spot[0] - 5 >= 0.458 + 0.3 && spot[0] - 5 < 0.458 + 0.3 + 0.5, String(spot));
+  assert.deepEqual(freeSpot([{ ...chest, y: 20 }], [1, 1, 1]), [0, 0]);
 });
 
 test("the request is refused before it reaches the engine when the scene is incomplete", () => {

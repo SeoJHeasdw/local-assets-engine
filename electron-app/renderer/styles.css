@@ -86,8 +86,35 @@ button, input, select, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 :focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
 
+/* ---- 스크롤바 ---- */
+/* 기본 막대는 밝은 홈이 늘 보여 어두운 화면에서 튄다. 홈은 비우고 얇고 둥근 막대만 둔다. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent; border-radius: var(--r-full);
+  background-color: rgba(238, 242, 231, .14); background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(238, 242, 231, .3); }
+::-webkit-scrollbar-thumb:active { background-color: var(--accent-edge); }
+
+/* ---- 너비 조절 손잡이 ---- */
+.resizer {
+  position: absolute; top: 0; bottom: 0; z-index: 4; width: 9px; margin-left: -5px;
+  cursor: col-resize; touch-action: none; -webkit-app-region: no-drag;
+}
+.resizer::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+  background: transparent; transition: background var(--motion), box-shadow var(--motion);
+}
+/* 가장자리를 스치기만 해도 번쩍이지 않게 잠깐 머문 뒤에 선을 켠다. */
+.resizer:hover::after { background: var(--accent-edge); transition-delay: 150ms; }
+.resizer.is-dragging::after, .resizer:focus-visible::after { background: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); transition-delay: 0ms; }
+.resizer:focus-visible { outline: none; }
+body.is-resizing { cursor: col-resize; user-select: none; }
+
 /* ---- 뼈대 ---- */
-.shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; }
+.shell { position: relative; display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; }
+#sidebar-resizer { left: var(--sidebar-w); }
 .sidebar {
   display: flex; flex-direction: column; gap: var(--s1);
   padding: 44px var(--s3) var(--s4);
@@ -231,12 +258,22 @@ button.is-danger { color: var(--danger); }
   background: var(--accent-soft); transition: width 400ms ease;
 }
 
-.pv-body { position: relative; display: grid; grid-template-columns: 340px minmax(0, 1fr); flex: 1; min-height: 0; }
+.pv-body { position: relative; display: grid; grid-template-columns: var(--pv-panel-w, 340px) minmax(0, 1fr); flex: 1; min-height: 0; }
 .pv-body.is-panel-closed { grid-template-columns: 0 minmax(0, 1fr); }
-.pv-panel { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; border-right: 1px solid var(--line); background: var(--bg); }
+.pv-panel {
+  min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+  border-right: 1px solid var(--line); background: var(--bg);
+}
+/* 편집 패널은 내용이 빽빽하다. 막대는 패널에 마우스가 있을 때만 또렷하게 보인다. */
+.pv-panel::-webkit-scrollbar-thumb { background-color: rgba(238, 242, 231, .05); }
+.pv-panel:hover::-webkit-scrollbar-thumb { background-color: rgba(238, 242, 231, .18); }
+.pv-panel::-webkit-scrollbar-thumb:hover { background-color: rgba(238, 242, 231, .32); }
+.pv-panel::-webkit-scrollbar-thumb:active { background-color: var(--accent-edge); }
 .pv-body.is-panel-closed .pv-panel { visibility: hidden; border: 0; }
+.pv-resizer { left: var(--pv-panel-w, 340px); }
+.pv-body.is-panel-closed .pv-resizer { display: none; }
 .pv-panel-toggle {
-  position: absolute; top: 50%; left: 340px; z-index: 5; display: grid; place-items: center;
+  position: absolute; top: 50%; left: var(--pv-panel-w, 340px); z-index: 5; display: grid; place-items: center;
   width: 18px; height: 56px; padding: 0; margin-left: -9px; transform: translateY(-50%);
   border: 1px solid var(--line-2); border-radius: var(--r-full); background: var(--raised);
   color: var(--text-2); cursor: pointer; transition: background var(--motion), color var(--motion);
@@ -286,6 +323,11 @@ button.is-danger { color: var(--danger); }
   background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 10px 10px;
 }
 .pv-tray-name { overflow: hidden; font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+.pv-tray.is-standins { grid-auto-columns: minmax(64px, 1fr); }
+/* 실루엣의 비율(사람은 세로로 길다)이 칸 높이를 바꾸지 않게 그림을 흐름에서 뺀다. */
+.pv-standin-icon { position: relative; display: block; width: 100%; aspect-ratio: 1; border-radius: var(--r-sm); background: var(--well); }
+.pv-standin-icon svg { position: absolute; inset: 13%; width: 74%; height: 74%; fill: #8e9aa8; transition: fill var(--motion); }
+.pv-tray-item.is-standin:hover .pv-standin-icon svg { fill: #b9c4d0; }
 .pv-tray-count {
   position: absolute; top: 7px; right: 7px; min-width: 18px; height: 18px; padding: 0 4px;
   border-radius: var(--r-full); background: var(--accent); color: var(--ink);
@@ -311,7 +353,10 @@ button.is-danger { color: var(--danger); }
 .pv-grid line.axis { stroke: rgba(238, 242, 231, .2); }
 .pv-asset rect { fill: #4b5147; stroke: rgba(238, 242, 231, .4); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: move; }
 .pv-asset.hero rect { fill: rgba(255, 179, 92, .5); stroke: var(--accent); }
-.pv-asset.is-selected rect { stroke: #fff; stroke-width: 2; }
+/* 대역은 아직 만들지 않은 자리라 점선으로 구분한다. */
+.pv-asset.is-standin rect { fill: #39414a; stroke: rgba(176, 192, 210, .6); stroke-dasharray: 4 3; }
+.pv-asset.hero.is-standin rect { fill: rgba(255, 179, 92, .26); stroke: var(--accent); }
+.pv-asset.is-selected rect, .pv-asset.hero.is-standin.is-selected rect { stroke: #fff; stroke-width: 2; }
 .pv-front { stroke: rgba(0, 0, 0, .6); stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 .pv-asset text { fill: var(--text-2); font-size: calc(var(--unit) * 5px); text-anchor: middle; pointer-events: none; }
 .pv-rotate { fill: #fff; stroke: #111; stroke-width: 1; vector-effect: non-scaling-stroke; cursor: grab; }
@@ -329,6 +374,7 @@ button.is-danger { color: var(--danger); }
 .pv-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .pv-legend .dot { width: 9px; height: 9px; border-radius: 2px; background: #4b5147; }
 .pv-legend .dot.hero { background: var(--accent); }
+.pv-legend .dot.standin { background: #39414a; outline: 1px dashed rgba(176, 192, 210, .8); outline-offset: -1px; }
 .pv-legend .cam { color: var(--accent); font-size: 10px; font-style: normal; }
 .pv-legend-tip { margin-left: auto; color: var(--text-2); text-decoration: underline dotted; cursor: help; }
 .pv-asset-hint { margin-top: -4px; }
@@ -336,11 +382,13 @@ button.is-danger { color: var(--danger); }
 .pv-asset-card { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
 .pv-asset-head { display: flex; align-items: center; gap: var(--s2); }
 .pv-asset-head img { width: 34px; height: 34px; flex: none; border-radius: var(--r-sm); object-fit: contain; background: var(--well); }
+.pv-asset-head .pv-standin-icon { width: 34px; height: 34px; flex: none; }
 .pv-asset-head > div { flex: 1; min-width: 0; }
 .pv-asset-head strong { display: block; overflow: hidden; font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
 .pv-asset-head span { color: var(--text-3); font-size: var(--fs-micro); }
 .pv-asset-head .ghost { height: 28px; padding: 0 var(--s2); font-size: var(--fs-xs); }
 .pv-nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); margin-top: var(--s2); }
+.pv-nums.is-standin { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .pv-num { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pv-num span { color: var(--text-3); font-size: var(--fs-micro); }
 .pv-num input { height: 30px; padding: 0 6px; font-family: var(--mono); font-size: var(--fs-xs); }
@@ -455,16 +503,17 @@ button.is-danger { color: var(--danger); }
 .pv-seg.is-rejected img { opacity: .22; }
 .pv-playhead { position: absolute; top: -5px; bottom: -5px; left: 0; width: 2px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); pointer-events: none; transition: left 120ms linear; }
 
+/* 편집 패널을 넓혀 영상 영역이 좁아지면 설명이 한 글자씩 쪼개지지 않고 그림 줄 아래로 내려간다. */
 .pv-inspector {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--s4);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s4);
   padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface);
 }
-.pv-aux-row { display: flex; gap: var(--s2); }
+.pv-aux-row { display: flex; flex: none; gap: var(--s2); }
 .pv-aux { position: relative; width: 100px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-sm); background: #000; cursor: zoom-in; }
 .pv-aux:hover { border-color: var(--line-2); }
 .pv-aux img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
 .pv-aux span { position: absolute; bottom: 4px; left: 4px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, .72); color: var(--text-2); font-size: 10px; }
-.pv-inspect-body { min-width: 0; }
+.pv-inspect-body { flex: 1 1 260px; min-width: 0; }
 .pv-inspect-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .pv-inspect-title strong { font-size: var(--fs-md); }
 .pv-inspect-title small { color: var(--text-3); font-size: var(--fs-xs); }
@@ -473,7 +522,7 @@ button.is-danger { color: var(--danger); }
 .pv-coords { display: grid; grid-template-columns: auto 1fr; gap: 1px var(--s2); margin: 6px 0 0; font-size: var(--fs-micro); }
 .pv-coords dt { color: var(--text-4); }
 .pv-coords dd { margin: 0; color: var(--text-3); font-family: var(--mono); }
-.pv-inspect-actions { display: flex; flex-direction: column; gap: 6px; }
+.pv-inspect-actions { display: flex; flex: none; flex-direction: column; gap: 6px; }
 .pv-review {
   min-width: 96px; height: 34px; border: 1px solid var(--line-2); border-radius: var(--r-md);
   background: var(--raised); color: var(--text); font-weight: 600; cursor: pointer;

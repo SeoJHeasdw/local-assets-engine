@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     plan = json.loads(args.plan.read_text("utf-8"))
 
     import bpy
+    import bmesh  # bpy를 먼저 불러와야 Blender 모듈 경로가 잡힌다.
     from mathutils import Matrix, Quaternion, Vector
 
     width, height = int(plan["width"]), int(plan["height"])
@@ -81,10 +82,47 @@ def main(argv: list[str] | None = None) -> int:
         return (Vector((min(c.x for c in corners), min(c.y for c in corners), min(c.z for c in corners))),
                 Vector((max(c.x for c in corners), max(c.y for c in corners), max(c.z for c in corners))))
 
+    standin_material = bpy.data.materials.new("standin")
+    standin_color = (*look.get("standinColor", [0.36, 0.40, 0.46]), 1.0)
+    standin_material.diffuse_color = standin_color
+    standin_material.use_nodes = True
+    standin_material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = standin_color
+    standin_material.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.75
+    unit_rotation = {"x": Matrix.Rotation(math.pi / 2, 4, "Y"), "y": Matrix.Rotation(math.pi / 2, 4, "X")}
+
+    def build_standin(entry: dict[str, Any]) -> None:
+        """Gray stand-in from primitives, as one mesh so its bounds are exactly the size the map uses."""
+        shape = bmesh.new()
+        for part in entry["parts"]:
+            if part["shape"] == "box":
+                verts = bmesh.ops.create_cube(shape, size=1.0)["verts"]
+            elif part["shape"] == "sphere":
+                verts = bmesh.ops.create_uvsphere(shape, u_segments=24, v_segments=12, radius=0.5)["verts"]
+            else:
+                verts = bmesh.ops.create_cone(shape, cap_ends=True, segments=24, radius1=0.5, radius2=0.5, depth=1.0)["verts"]
+            # 단위 도형(한 변 1)을 축에 맞춰 눕힌 뒤 부품 치수로 늘인다. 분할 수가 4의 배수라 경계가 치수와 같다.
+            fit = (Matrix.Translation(Vector(part["at"])) @ Matrix.Diagonal((*part["size"], 1.0))
+                   @ unit_rotation.get(part.get("axis", "z"), Matrix.Identity(4)))
+            bmesh.ops.transform(shape, matrix=fit, verts=verts)
+            if part["shape"] != "box":
+                for face in {face for vert in verts for face in vert.link_faces}:
+                    face.smooth = True
+        mesh = bpy.data.meshes.new(f"standin-{entry['standin']}")
+        shape.to_mesh(mesh)
+        shape.free()
+        mesh.set_sharp_from_angle(angle=math.radians(35.0))
+        mesh.materials.append(standin_material)
+        scene.collection.objects.link(bpy.data.objects.new(f"standin-{entry['standin']}-{entry['id']}", mesh))
+
     placed: dict[str, list[Any]] = {}
+    standins: set[str] = set()
     for entry in plan["assets"]:
         before = set(scene.objects)
-        bpy.ops.import_scene.gltf(filepath=str(entry["file"]))
+        if entry.get("parts"):
+            build_standin(entry)
+            standins.add(str(entry["id"]))
+        else:
+            bpy.ops.import_scene.gltf(filepath=str(entry["file"]))
         imported = [obj for obj in scene.objects if obj not in before]
         low, high = world_bounds(imported)
         pivot = bpy.data.objects.new(f"place-{entry['id']}", None)
@@ -123,7 +161,10 @@ def main(argv: list[str] | None = None) -> int:
         clay_material.use_nodes = True
         clay_material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.62, 0.60, 0.57, 1.0)
         clay_material.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.6
-        for objects in placed.values():
+        for name, objects in placed.items():
+            # 대역은 점토와 다른 회색으로 남긴다. 어떤 것이 아직 만들지 않은 자리인지 영상에서 보인다.
+            if name in standins:
+                continue
             for obj in objects:
                 if obj.type == "MESH":
                     obj.data.materials.clear()
@@ -199,8 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         scene.render.engine = "BLENDER_WORKBENCH"
         shading = scene.display.shading
         shading.light = "STUDIO"
-        shading.color_type = "SINGLE" if clay else "TEXTURE"
-        shading.single_color = (0.62, 0.60, 0.57)
+        # 한 가지 색(SINGLE)으로 칠하면 대역과 점토가 구분되지 않는다. 재질 표시 색을 쓴다.
+        shading.color_type = "MATERIAL" if clay else "TEXTURE"
         shading.show_shadows = True
         shading.shadow_intensity = 0.45
         shading.show_cavity = True

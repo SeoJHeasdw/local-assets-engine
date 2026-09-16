@@ -22,6 +22,7 @@
       <button class="nav-item" type="button" data-view="system">환경</button>
       <div class="sidebar-foot" id="engine-state"><span class="pulse"></span>엔진 연결 중</div>
     </nav>
+    <div class="resizer" id="sidebar-resizer" aria-label="사이드바 너비 (끌어서 조절, 두 번 누르면 기본)"></div>
 
     <main class="content">
       <section class="view" id="view-create">
@@ -131,18 +132,23 @@
               <div class="pv-section-body">
                 <div class="pv-row-label">
                   <span class="label">3D 에셋</span>
-                  <span class="pv-help" data-tip="에셋을 지도로 끌어다 놓거나, 눌러서 가운데에 놓습니다. 처음 놓은 에셋이 주인공이 됩니다.">?</span>
+                  <span class="pv-help" data-tip="에셋을 지도로 끌어다 놓거나, 눌러서 가운데에 놓습니다. 처음 놓은 것이 주인공이 됩니다.">?</span>
                 </div>
                 <div class="pv-tray" id="pv-tray"></div>
+                <div class="pv-row-label">
+                  <span class="label">대역 <em>회색 기본 도형</em></span>
+                  <span class="pv-help" data-tip="아직 만들지 않은 사람·차·벽·건물 자리를 채웁니다. 실제 치수라 크기·동선·카메라 높이를 판단할 수 있고, 렌더 비용은 거의 없습니다. 대역만으로도 샷을 만들 수 있습니다. 목록은 config/presets.json에서 늘립니다.">?</span>
+                </div>
+                <div class="pv-tray is-standins" id="pv-standins"></div>
                 <div class="pv-row-label">
                   <span class="label">배치 <em>위에서 본 모습 · 한 칸 1m</em></span>
                   <button class="pv-icon" type="button" id="pv-fit" data-tip="모든 에셋과 카메라가 보이게 맞춤">⤢</button>
                 </div>
                 <div class="pv-map" id="pv-map"></div>
                 <div class="pv-legend">
-                  <span><i class="dot hero"></i>주인공</span><span><i class="dot"></i>에셋</span>
+                  <span><i class="dot hero"></i>주인공</span><span><i class="dot"></i>에셋</span><span><i class="dot standin"></i>대역</span>
                   <span><i class="cam"></i>카메라 시작</span><span><i class="cam end"></i>끝</span>
-                  <span class="pv-legend-tip" data-tip="에셋을 끌어 옮기고, 선택한 에셋의 둥근 손잡이를 끌어 돌립니다. 선택한 컷의 카메라 삼각형을 끌면 방향과 거리가 바뀝니다. 휠로 확대·축소합니다.">조작법</span>
+                  <span class="pv-legend-tip" data-tip="에셋을 끌어 옮기고, 선택한 에셋의 둥근 손잡이를 끌어 돌립니다. 손잡이 쪽이 정면입니다. 선택한 컷의 카메라 삼각형을 끌면 방향과 거리가 바뀝니다. 휠로 확대·축소합니다.">조작법</span>
                 </div>
                 <div id="pv-asset"></div>
               </div>
@@ -210,6 +216,7 @@
             </section>
           </aside>
 
+          <div class="resizer pv-resizer" id="pv-resizer" aria-controls="pv-panel" aria-label="편집 패널 너비 (끌어서 조절, 두 번 누르면 기본)"></div>
           <button class="pv-panel-toggle" type="button" id="pv-panel-toggle" aria-controls="pv-panel" aria-expanded="true" data-tip="편집 패널 접기">‹</button>
 
           <div class="pv-stage" aria-label="프리비즈 영상">

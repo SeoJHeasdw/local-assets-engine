@@ -9,10 +9,35 @@ from typing import Any
 from .paths import PRESETS_PATH
 
 KINDS = ("2d", "3d")
+STANDIN_SHAPES = ("box", "cylinder", "sphere")
+STANDIN_AXES = ("x", "y", "z")
 
 
 class PresetError(ValueError):
     """Invalid preset file or a request that no preset can satisfy."""
+
+
+def _check_standin(standin: dict[str, Any]) -> None:
+    standin_id = standin["id"]
+    parts = standin.get("parts") or []
+    try:
+        size = [float(value) for value in standin["size"]]
+        boxes = [([float(value) for value in part["at"]], [float(value) for value in part["size"]]) for part in parts]
+    except (KeyError, TypeError, ValueError) as error:
+        raise PresetError(f"{standin_id}: size와 부품의 at·size는 숫자 세 개여야 합니다.") from error
+    if not parts or len(size) != 3 or any(len(at) != 3 or len(extent) != 3 for at, extent in boxes):
+        raise PresetError(f"{standin_id}: size와 부품의 at·size는 숫자 세 개여야 합니다.")
+    if min(size) <= 0 or any(min(extent) <= 0 for _, extent in boxes):
+        raise PresetError(f"{standin_id}: 치수는 0보다 커야 합니다.")
+    for part in parts:
+        if part.get("shape") not in STANDIN_SHAPES or part.get("axis", "z") not in STANDIN_AXES:
+            raise PresetError(f"{standin_id}: 부품 도형은 {STANDIN_SHAPES}, 축은 {STANDIN_AXES} 중 하나여야 합니다.")
+    # 앱 지도는 size로 카메라 자리를 계산하고 엔진은 만든 도형의 경계를 잰다. 둘이 어긋나면
+    # 지도에서 잡은 카메라와 렌더 결과가 달라진다.
+    spans = [max(at[axis] + extent[axis] / 2 for at, extent in boxes)
+             - min(at[axis] - extent[axis] / 2 for at, extent in boxes) for axis in range(3)]
+    if any(abs(span - declared) > 1e-3 for span, declared in zip(spans, size)):
+        raise PresetError(f"{standin_id}: 부품이 차지하는 범위 {[round(span, 3) for span in spans]}가 size {size}와 다릅니다.")
 
 
 def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
@@ -44,6 +69,13 @@ def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
         for shot in shots:
             if not shot.get("id") or float(shot.get("seconds", 0)) <= 0:
                 raise PresetError(f"{preset_id}: 샷에는 id와 0보다 큰 seconds가 필요합니다.")
+    seen.clear()
+    for standin in data.get("previz", {}).get("standins", []):
+        standin_id = standin.get("id")
+        if not standin_id or standin_id in seen:
+            raise PresetError(f"대역 id가 비었거나 중복됩니다: {standin_id!r}")
+        seen.add(standin_id)
+        _check_standin(standin)
     return data
 
 
@@ -61,6 +93,13 @@ def find_shot_preset(data: dict[str, Any], preset_id: str) -> dict[str, Any]:
         if preset["id"] == preset_id:
             return preset
     raise PresetError(f"알 수 없는 샷 프리셋입니다: {preset_id}")
+
+
+def find_standin(data: dict[str, Any], standin_id: str) -> dict[str, Any]:
+    for standin in data.get("previz", {}).get("standins", []):
+        if standin["id"] == standin_id:
+            return standin
+    raise PresetError(f"알 수 없는 대역입니다: {standin_id}")
 
 
 def build_prompt(preset: dict[str, Any], subject: str, style: str = "") -> str:

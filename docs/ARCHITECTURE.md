@@ -88,7 +88,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048, `targetFaces` 0~1,000,000(0은 줄이지 않음), `sizeMeters`, `meshSeed` | `512`, 1024, 30000, 1.0 |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
-| 배치 항목 | `source: {jobId, assetId}`(완성된 메시) 또는 `path`(GLB·glTF 절대 경로), `id`, `position` [x, y, z] 미터, `yaw` 도, `scale` | 원점, 0도, 1.0 |
+| 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
 
@@ -179,7 +179,13 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
   `shots`를 보내지 않아 기록의 `edited`가 거짓이다. 화면의 지도 카메라 계산(`electron-app/shared/previz.mjs`)은
   엔진의 식과 같아야 하며, 같은 에셋·프리셋으로 엔진이 기록한 좌표와 맞는지 테스트가 지킨다.
 - 샷 프리셋은 `config/presets.json`의 `previz.shotPresets`다. 장르는 코드가 아니라 이 목록이며
-  컷 길이·렌즈·움직임·구도 규칙을 정한다. `focus: "hero"`는 장면의 첫 에셋을 가리킨다.
+  컷 길이·렌즈·움직임·구도 규칙을 정한다. `focus: "hero"`는 장면의 첫 배치(에셋이나 대역)를 가리킨다.
+- 대역은 `previz.standins`다. 부품(`box`·`cylinder`·`sphere`, 원기둥은 `axis`)을 카탈로그 치수 기준
+  미터(`at`은 부품 중심, `size`는 부품 경계)로 적고, 부품 전체의 경계가 `size`와 같아야 한다. 설정을
+  읽을 때 검사한다. 앱 지도는 `size`로, 엔진은 만든 도형의 경계로 피사체를 재기 때문이다. 정면은 −Y다.
+- 레시피는 요청 치수에 맞춰 부품을 축마다 늘여 `params.assets[].parts`에 남기고, 도구는 대역 하나를
+  메시 하나로 만든 뒤 GLB와 같이 바닥 중심을 배치 좌표에 맞춘다. 메시를 나누면 돌렸을 때 경계가 지도의
+  회전 경계와 달라진다. 대역은 점토 설정과 관계없이 `look.standinColor`(기본 차가운 회색)로 칠한다.
 - 프레이밍은 미터가 아니라 **피사체 단위**로 적는다. `distance: 1.0`이 피사체가 화면을 꽉
   채우는 거리이고 `2.0`은 그 두 배다. 그래서 같은 프리셋을 찻잔과 탑에 함께 쓸 수 있다.
   `azimuth` 0도는 피사체 정면(−Y), `height`·`targetHeight`는 피사체 높이의 배수다.

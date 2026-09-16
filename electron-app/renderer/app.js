@@ -3,6 +3,7 @@ import {
   buildJobRequest, elapsedSeconds, escapeHtml, fileUrl, formatBytes, formatDuration, isActive,
 } from "../shared/format.mjs";
 import { createPreviz } from "./previz.js";
+import { installResizer } from "./resize.js";
 import { installTooltips } from "./tooltip.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -615,6 +616,10 @@ async function addToPrevizScene(jobId, assetId) {
 
 async function init() {
   installTooltips($("#tooltip"));
+  installResizer($("#sidebar-resizer"), {
+    storageKey: "assets-studio.sidebar-width", min: 180, max: 360, fallback: 220,
+    apply: (width) => document.documentElement.style.setProperty("--sidebar-w", `${width}px`),
+  });
   wireEvents();
   try {
     state.presets = await api("/api/presets");

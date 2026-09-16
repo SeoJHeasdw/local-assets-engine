@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..jobs import JobNotFound
-from ..presets import PresetError, find_shot_preset
+from ..presets import PresetError, find_shot_preset, find_standin
 from .base import Recipe, bool_param, choice_param, int_param
 
 if TYPE_CHECKING:
@@ -45,10 +45,35 @@ def _number(value: Any, name: str, low: float, high: float, default: float) -> f
     return number
 
 
-def _placement(raw: dict[str, Any], index: int, store: "JobStore") -> dict[str, Any]:
-    """One asset in the scene: a finished mesh job or a GLB file on disk."""
+def _standin(raw: dict[str, Any], presets: dict[str, Any]) -> dict[str, Any]:
+    """A gray stand-in from the catalog, stretched per axis to the size asked for."""
+    kind = find_standin(presets, str(raw["standin"]))
+    given = raw.get("size") or kind["size"]
+    if not isinstance(given, list) or len(given) != 3:
+        raise PresetError("대역 size는 [가로, 깊이, 높이] 세 값이어야 합니다.")
+    size = [_number(value, "대역 size", 0.05, 500.0, float(base)) for value, base in zip(given, kind["size"])]
+    stretch = [new / float(base) for new, base in zip(size, kind["size"])]
+    # 부품은 카탈로그 치수 기준 미터다. 늘인 결과를 기록에 남겨 카탈로그가 바뀌어도 다시 그릴 수 있다.
+    parts = [{
+        "shape": part["shape"], "axis": part.get("axis", "z"),
+        "at": [round(float(value) * factor, 4) for value, factor in zip(part["at"], stretch)],
+        "size": [round(float(value) * factor, 4) for value, factor in zip(part["size"], stretch)],
+    } for part in kind["parts"]]
+    return {"standin": kind["id"], "label": f"{kind['label']} 대역", "size": size, "parts": parts}
+
+
+def _placement(raw: Any, index: int, store: "JobStore", presets: dict[str, Any]) -> dict[str, Any]:
+    """One thing in the scene: a finished mesh job, a GLB file on disk, or a stand-in."""
+    if not isinstance(raw, dict):
+        raise PresetError("배치 항목 형식이 올바르지 않습니다.")
     source = raw.get("source")
-    if source:
+    standin: dict[str, Any] = {}
+    file: Path | None = None
+    reference: dict[str, str] | None = None
+    if raw.get("standin"):
+        standin = _standin(raw, presets)
+        label = standin.pop("label")
+    elif source:
         job_id, asset_id = str(source.get("jobId")), str(source.get("assetId"))
         try:
             job = store.load(job_id)
@@ -57,13 +82,13 @@ def _placement(raw: dict[str, Any], index: int, store: "JobStore") -> dict[str, 
         except (JobNotFound, StopIteration) as error:
             raise PresetError("장면에 놓을 3D 에셋을 찾을 수 없습니다.") from error
         label = str(job.get("params", {}).get("subject") or job.get("title") or asset_id)
-        reference: dict[str, str] | None = {"jobId": job_id, "assetId": asset_id}
+        reference = {"jobId": job_id, "assetId": asset_id}
     else:
         given = str(raw.get("path") or "")
         file = Path(given).expanduser()
         if not given or not file.is_absolute() or not file.is_file() or file.suffix.lower() not in MESH_SUFFIXES:
             raise PresetError("GLB·glTF 파일의 절대 경로가 필요합니다.")
-        label, reference = file.stem, None
+        label = file.stem
     position = raw.get("position") or (0.0, 0.0, 0.0)
     if len(position) != 3:
         raise PresetError("position은 [x, y, z] 세 값이어야 합니다.")
@@ -73,8 +98,9 @@ def _placement(raw: dict[str, Any], index: int, store: "JobStore") -> dict[str, 
     return {
         "id": asset_id,
         "label": label,
-        "file": str(file),
+        "file": str(file) if file else None,
         "source": reference,
+        **standin,
         "position": [_number(value, "position", -1000.0, 1000.0, 0.0) for value in position],
         "yaw": _number(raw.get("yaw"), "yaw", -360.0, 360.0, 0.0),
         "scale": _number(raw.get("scale"), "scale", 0.01, 100.0, 1.0),
@@ -132,10 +158,12 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore")
     if not entries and (params.get("source") or params.get("path")):
         entries = [{"source": params.get("source"), "path": params.get("path")}]
     if not entries:
-        raise PresetError("장면에 놓을 3D 에셋이 필요합니다.")
+        raise PresetError("장면에 놓을 3D 에셋이나 대역이 필요합니다.")
+    if not isinstance(entries, list):
+        raise PresetError("assets는 배치 항목의 목록이어야 합니다.")
     if len(entries) > MAX_ASSETS:
-        raise PresetError(f"한 장면에 에셋은 {MAX_ASSETS}개까지 놓을 수 있습니다.")
-    assets = [_placement(entry, index, store) for index, entry in enumerate(entries)]
+        raise PresetError(f"한 장면에 에셋과 대역은 합쳐서 {MAX_ASSETS}개까지 놓을 수 있습니다.")
+    assets = [_placement(entry, index, store, presets) for index, entry in enumerate(entries)]
     if len({asset["id"] for asset in assets}) != len(assets):
         raise PresetError("에셋 id가 중복됩니다.")
 
@@ -187,7 +215,7 @@ def _run(ctx: "JobContext") -> None:
         key: p[key] for key in
         ("renderer", "width", "height", "fps", "samples", "aux", "animatic", "ground", "look", "shots")
     }
-    plan["assets"] = [{key: asset[key] for key in ("id", "file", "position", "yaw", "scale")}
+    plan["assets"] = [{key: asset.get(key) for key in ("id", "file", "standin", "parts", "position", "yaw", "scale")}
                       for asset in p["assets"]]
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), "utf-8")
 

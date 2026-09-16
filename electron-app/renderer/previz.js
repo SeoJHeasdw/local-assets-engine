@@ -1,11 +1,16 @@
 import { REVIEW_LABELS, currentStage, escapeHtml, fileUrl, formatDuration, isActive } from "../shared/format.mjs";
 import {
-  ASPECT, aimFromPoint, assetId, buildPrevizRequest, cameraAt, draftFromPreset, footprint, isMoving,
-  moveItem, nextShotId, sceneSubjects, setSeconds, totalSeconds,
+  ASPECT, SIZE_LABELS, aimFromPoint, assetId, buildPrevizRequest, cameraAt, draftFromPreset, footprint, freeSpot,
+  isMoving, moveItem, nextShotId, sceneSubjects, setSeconds, totalSeconds,
 } from "../shared/previz.mjs";
+import { installResizer } from "./resize.js";
 
 const DRAFT_KEY = "assets-studio.previz.draft";
 const LAYOUT_KEY = "assets-studio.previz.layout";
+const PANEL_WIDTH_KEY = "assets-studio.previz.panel-width";
+const PANEL_WIDTH = { min: 300, max: 640, fallback: 340 };
+// 편집 패널을 넓혀도 가운데 영상은 이보다 좁아지지 않는다.
+const STAGE_MIN_WIDTH = 480;
 const MOVES = ["static", "dolly-in", "dolly-out", "push-in", "orbit", "pan", "crane-up", "crane-down"];
 const FIELDS = [
   { key: "lens", label: "렌즈", unit: "mm", min: 14, max: 135, step: 1, tip: "숫자가 작을수록 넓게, 클수록 좁고 가깝게 보입니다." },
@@ -30,6 +35,35 @@ const storage = {
 function timecode(seconds) {
   const value = Math.max(0, Number(seconds) || 0);
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${(value % 60).toFixed(1).padStart(4, "0")}`;
+}
+
+// 대역 부품을 앞에서 본 실루엣. 앞뒤로 긴 대역(차)은 옆모습이 알아보기 쉬워 옆에서 본다.
+function standinIcon(kind, dimensions = [1, 1, 1]) {
+  const size = (kind?.size || dimensions).map(Number);
+  const parts = kind?.parts?.length ? kind.parts : [{ shape: "box", at: [0, 0, size[2] / 2], size }];
+  const side = size[1] > size[0];
+  const across = side ? 1 : 0;
+  const shapes = parts.map((part) => ({
+    part,
+    u: Number(part.at[across]) * (side ? -1 : 1),
+    v: Number(part.at[2]),
+    w: Number(part.size[across]),
+    h: Number(part.size[2]),
+  }));
+  const left = Math.min(...shapes.map(({ u, w }) => u - w / 2));
+  const right = Math.max(...shapes.map(({ u, w }) => u + w / 2));
+  const bottom = Math.min(...shapes.map(({ v, h }) => v - h / 2));
+  const top = Math.max(...shapes.map(({ v, h }) => v + h / 2));
+  const pad = Math.max(right - left, top - bottom) * 0.06;
+  const body = shapes.map(({ part, u, v, w, h }) => {
+    // 보는 방향으로 누운 원기둥(바퀴)과 구는 원으로, 나머지는 사각형으로 그린다.
+    if (part.shape === "sphere" || (part.shape === "cylinder" && (part.axis || "z") === (side ? "x" : "y"))) {
+      return `<ellipse cx="${u}" cy="${-v}" rx="${w / 2}" ry="${h / 2}"></ellipse>`;
+    }
+    const round = part.shape === "cylinder" ? Math.min(w, h) / 2 : Math.min(w, h) * 0.06;
+    return `<rect x="${u - w / 2}" y="${-v - h / 2}" width="${w}" height="${h}" rx="${round}"></rect>`;
+  }).join("");
+  return `<svg viewBox="${left - pad} ${-top - pad} ${right - left + pad * 2} ${top - bottom + pad * 2}" aria-hidden="true">${body}</svg>`;
 }
 
 export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, openAsset, goCreate }) {
@@ -57,6 +91,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   const presets = () => getPresets()?.previz?.shotPresets || [];
   const preset = () => presets().find((item) => item.id === state.presetId) || presets()[0] || null;
+  const standins = () => getPresets()?.previz?.standins || [];
+  const standinKind = (id) => standins().find((kind) => kind.id === id) || null;
   const renders = () => getJobs().filter((job) => job.recipe === "previz");
   const rendering = () => renders().find(isActive) || null;
   const selectedRender = () => renders().find((job) => job.id === state.renderId) || renders()[0] || null;
@@ -94,8 +130,10 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   function syncPlacedWithMeshes() {
     const known = new Map(state.meshes.map((mesh) => [`${mesh.jobId}:${mesh.id}`, mesh]));
-    state.placed = state.placed.filter((item) => known.has(`${item.jobId}:${item.assetId}`));
+    // 대역은 작업 결과가 아니라 설정에서 오므로 목록과 맞춰 볼 것이 없다.
+    state.placed = state.placed.filter((item) => item.standin || known.has(`${item.jobId}:${item.assetId}`));
     for (const item of state.placed) {
+      if (item.standin) continue;
       const mesh = known.get(`${item.jobId}:${item.assetId}`);
       item.dimensions = mesh.meta?.stats?.dimensionsMeters || item.dimensions || [1, 1, 1];
       item.preview = mesh.preview;
@@ -114,24 +152,30 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   // ---- 장면 -----------------------------------------------------------------
 
-  function placeAsset(jobId, id, point = null) {
-    const mesh = state.meshes.find((item) => item.jobId === jobId && item.id === id);
-    if (!mesh) return;
-    let [x, y] = point || [0, 0];
-    if (!point) {
-      // 가운데가 차 있으면 겹치지 않게 오른쪽으로 비켜 놓는다.
-      while (state.placed.some((item) => Math.hypot(item.x - x, item.y - y) < 1)) x += 1.2;
-    }
-    state.placed.push({
-      jobId, assetId: id, label: shortTitle(mesh.jobTitle), preview: mesh.preview,
-      dimensions: mesh.meta?.stats?.dimensionsMeters || [1, 1, 1],
-      x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, yaw: 0, scale: 1,
-    });
+  function addPlaced(item, point) {
+    // 끌어 놓은 자리가 없으면 가운데부터 겹치지 않게 오른쪽으로 비켜 놓는다.
+    const [x, y] = point || freeSpot(state.placed, item.dimensions);
+    state.placed.push({ ...item, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, yaw: 0 });
     state.selectedAsset = state.placed.length - 1;
     if (state.view.auto) fitView();
     changed({ cuts: true });
     renderTray();
     renderAssetInspector();
+  }
+
+  function placeAsset(jobId, id, point = null) {
+    const mesh = state.meshes.find((item) => item.jobId === jobId && item.id === id);
+    if (!mesh) return;
+    addPlaced({
+      jobId, assetId: id, label: shortTitle(mesh.jobTitle), preview: mesh.preview,
+      dimensions: mesh.meta?.stats?.dimensionsMeters || [1, 1, 1], scale: 1,
+    }, point);
+  }
+
+  function placeStandin(id, point = null) {
+    const kind = standinKind(id);
+    if (!kind) return;
+    addPlaced({ standin: kind.id, label: kind.label, dimensions: [...kind.size] }, point);
   }
 
   function removeAsset(index) {
@@ -143,16 +187,32 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   }
 
   function renderTray() {
+    const counts = new Map();
+    for (const item of state.placed) {
+      const key = item.standin ? `standin:${item.standin}` : `${item.jobId}:${item.assetId}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const badge = (count) => (count ? `<span class="pv-tray-count">${count > 1 ? `×${count}` : "✓"}</span>` : "");
+    $("#pv-standins").innerHTML = standins().map((kind) => {
+      const count = counts.get(`standin:${kind.id}`) || 0;
+      const size = kind.size.map((value) => Number(value).toFixed(value < 1 ? 2 : 1)).join("×");
+      return `<button class="pv-tray-item is-standin${count ? " is-placed" : ""}" type="button" draggable="true"
+          data-pv="place-standin" data-standin="${escapeHtml(kind.id)}"
+          data-tip="${escapeHtml(`${kind.label} · ${size}m${kind.hint ? `\n${kind.hint}` : ""}\n끌어서 지도에 놓거나 눌러서 가운데에 놓기`)}">
+        <span class="pv-standin-icon">${standinIcon(kind)}</span>
+        <span class="pv-tray-name">${escapeHtml(kind.label)}</span>
+        ${badge(count)}
+      </button>`;
+    }).join("");
+
     const tray = $("#pv-tray");
     if (!state.meshes.length) {
       tray.innerHTML = `<div class="pv-tray-empty">
-        <p>아직 3D 에셋이 없습니다.</p>
+        <p>아직 3D 에셋이 없습니다. 아래 대역만으로도 카메라를 먼저 잡을 수 있습니다.</p>
         <button class="secondary" type="button" data-pv="go-create">만들기에서 3D 에셋 만들기</button>
       </div>`;
       return;
     }
-    const counts = new Map();
-    for (const item of state.placed) counts.set(`${item.jobId}:${item.assetId}`, (counts.get(`${item.jobId}:${item.assetId}`) || 0) + 1);
     tray.innerHTML = state.meshes.map((mesh) => {
       const key = `${mesh.jobId}:${mesh.id}`;
       const count = counts.get(key) || 0;
@@ -163,7 +223,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
           data-tip="${escapeHtml(`${shortTitle(mesh.jobTitle)}${size}\n끌어서 지도에 놓거나 눌러서 가운데에 놓기`)}">
         ${mesh.preview ? `<img src="${fileUrl(mesh.jobId, mesh.preview)}" alt="" draggable="false">` : ""}
         <span class="pv-tray-name">${escapeHtml(shortTitle(mesh.jobTitle))}</span>
-        ${count ? `<span class="pv-tray-count">${count > 1 ? `×${count}` : "✓"}</span>` : ""}
+        ${badge(count)}
       </button>`;
     }).join("");
   }
@@ -236,32 +296,45 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
         ${handle(start, "start")}`;
     }
 
-    const assets = state.placed.map((item, index) => {
-      const scale = Number(item.scale) || 1;
-      const [dx, dy] = (item.dimensions || [1, 1, 1]).map((value) => Number(value) * scale);
+    const sizeOf = (item) => (item.dimensions || [1, 1, 1]).map((value) => Number(value) * (Number(item.scale) || 1));
+    // 건물·벽처럼 큰 것을 먼저 그린다. 나중에 놓은 큰 대역이 사람을 덮어 누를 수 없게 되는 일을 막는다.
+    const order = state.placed.map((_, index) => index)
+      .sort((a, b) => sizeOf(state.placed[b])[0] * sizeOf(state.placed[b])[1] - sizeOf(state.placed[a])[0] * sizeOf(state.placed[a])[1]);
+    const assets = order.map((index) => {
+      const item = state.placed[index];
+      const [dx, dy] = sizeOf(item);
       const x = Number(item.x) || 0;
       const y = Number(item.y) || 0;
-      const selected = index === state.selectedAsset;
-      const radius = Math.max(dx, dy) * 0.5 + unit * 7;
-      const yaw = ((Number(item.yaw) || 0) * Math.PI) / 180;
-      const hx = x - Math.sin(yaw) * radius;
-      const hy = y + Math.cos(yaw) * radius;
-      return `<g class="pv-asset${index === 0 ? " hero" : ""}${selected ? " is-selected" : ""}">
+      const name = `${index === 0 ? "주인공" : `#${index + 1}`}${item.standin ? ` ${item.label}` : ""}`;
+      return `<g class="pv-asset${index === 0 ? " hero" : ""}${item.standin ? " is-standin" : ""}${index === state.selectedAsset ? " is-selected" : ""}">
         <g data-drag="asset" data-index="${index}" transform="translate(${x} ${-y}) rotate(${-(Number(item.yaw) || 0)})">
           <rect x="${-dx / 2}" y="${-dy / 2}" width="${dx}" height="${dy}" rx="${Math.min(dx, dy) * 0.08}"></rect>
-          <line class="pv-front" x1="0" y1="0" x2="0" y2="${-dy / 2}"></line>
+          <line class="pv-front" x1="0" y1="0" x2="0" y2="${dy / 2}"></line>
         </g>
-        <text x="${x}" y="${-y + dy / 2 + unit * 8}">${escapeHtml(index === 0 ? "주인공" : `#${index + 1}`)}</text>
-        ${selected ? `<line class="pv-rotate-arm" x1="${x}" y1="${-y}" x2="${hx}" y2="${-hy}"></line>
-          <circle class="pv-rotate" data-drag="rotate" data-index="${index}" cx="${hx}" cy="${-hy}" r="${unit * 3.4}"></circle>` : ""}
+        <text x="${x}" y="${-y + dy / 2 + unit * 8}">${escapeHtml(name)}</text>
       </g>`;
     }).join("");
+    const chosen = state.placed[state.selectedAsset];
+    let rotator = "";
+    if (chosen) {
+      const [dx, dy] = sizeOf(chosen);
+      const x = Number(chosen.x) || 0;
+      const y = Number(chosen.y) || 0;
+      const radius = Math.max(dx, dy) * 0.5 + unit * 7;
+      const yaw = ((Number(chosen.yaw) || 0) * Math.PI) / 180;
+      // 정면은 −Y(지도 아래)이고 회전하면 함께 돈다. 손잡이를 정면 쪽에 두어 끄는 쪽을 바라보게 한다.
+      // 손잡이는 다른 것에 가려지지 않게 맨 위에 그린다.
+      const hx = x + Math.sin(yaw) * radius;
+      const hy = y - Math.cos(yaw) * radius;
+      rotator = `<line class="pv-rotate-arm" x1="${x}" y1="${-y}" x2="${hx}" y2="${-hy}"></line>
+        <circle class="pv-rotate" data-drag="rotate" data-index="${state.selectedAsset}" cx="${hx}" cy="${-hy}" r="${unit * 3.4}"></circle>`;
+    }
 
-    const empty = state.placed.length ? "" : `<text class="pv-map-empty" x="${cx}" y="${-cy}">위의 에셋을 여기로 끌어다 놓으세요</text>`;
+    const empty = state.placed.length ? "" : `<text class="pv-map-empty" x="${cx}" y="${-cy}">위의 에셋이나 대역을 여기로 끌어다 놓으세요</text>`;
     return `<svg viewBox="${cx - reach} ${-(cy + reach)} ${reach * 2} ${reach * 2}" tabindex="0"
         role="application" aria-label="장면 배치 지도" style="--unit:${unit}">
       <g class="pv-grid">${grid.join("")}</g>
-      ${cameras}${assets}${empty}
+      ${cameras}${assets}${rotator}${empty}
       <text class="pv-front-note" x="${cx - reach + unit * 3}" y="${-(cy - reach) - unit * 3}">▼ 정면 (카메라 기본 방향)</text>
     </svg>`;
   }
@@ -285,21 +358,29 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     const panel = $("#pv-asset");
     if (!item) {
       panel.innerHTML = state.placed.length
-        ? `<p class="hint pv-asset-hint">지도에서 에셋을 누르면 위치·회전·크기를 숫자로 고칠 수 있습니다.</p>`
+        ? `<p class="hint pv-asset-hint">지도에서 에셋이나 대역을 누르면 위치·회전·크기를 숫자로 고칠 수 있습니다.</p>`
         : "";
       return;
     }
     const index = state.selectedAsset;
+    const noun = item.standin ? "대역" : "에셋";
     const field = (key, label, step) => `<label class="pv-num"><span>${label}</span>
       <input type="number" step="${step}" data-asset-field="${key}" value="${escapeHtml(item[key])}"></label>`;
+    // 대역은 배율 대신 미터 치수를 고친다. 벽 길이나 건물 높이가 장면마다 다르기 때문이다.
+    const dimension = (axis) => `<label class="pv-num" data-tip="대역의 실제 치수(m)입니다. 부품이 이 치수에 맞춰 늘어납니다."><span>${SIZE_LABELS[axis]} (m)</span>
+      <input type="number" min="0.05" step="0.1" data-asset-dim="${axis}" value="${escapeHtml(item.dimensions?.[axis])}"></label>`;
     panel.innerHTML = `<div class="pv-asset-card">
       <div class="pv-asset-head">
-        ${item.preview ? `<img src="${fileUrl(item.jobId, item.preview)}" alt="">` : ""}
-        <div><strong>${escapeHtml(item.label)}</strong><span>${index === 0 ? "주인공 · hero" : `에셋 #${index + 1}`}</span></div>
-        ${index === 0 ? "" : `<button class="ghost" type="button" data-pv="make-hero" data-tip="이 에셋을 주인공으로 바꿉니다. hero 컷이 이 에셋을 겨냥합니다.">주인공으로</button>`}
+        ${item.standin
+          ? `<span class="pv-standin-icon">${standinIcon(standinKind(item.standin), item.dimensions)}</span>`
+          : item.preview ? `<img src="${fileUrl(item.jobId, item.preview)}" alt="">` : ""}
+        <div><strong>${escapeHtml(item.standin ? `${item.label} 대역` : item.label)}</strong><span>${index === 0 ? "주인공 · hero" : `${noun} #${index + 1}`}</span></div>
+        ${index === 0 ? "" : `<button class="ghost" type="button" data-pv="make-hero" data-tip="이 ${noun}을 주인공으로 바꿉니다. hero 컷이 이 ${noun}을 겨냥합니다.">주인공으로</button>`}
         <button class="ghost is-danger" type="button" data-pv="remove-asset" data-tip="장면에서 뺍니다 (Delete)">제거</button>
       </div>
-      <div class="pv-nums">${field("x", "x (m)", 0.1)}${field("y", "y (m)", 0.1)}${field("yaw", "회전 (°)", 5)}${field("scale", "크기", 0.1)}</div>
+      ${item.standin
+        ? `<div class="pv-nums is-standin">${field("x", "x (m)", 0.1)}${field("y", "y (m)", 0.1)}${field("yaw", "회전 (°)", 5)}${[0, 1, 2].map(dimension).join("")}</div>`
+        : `<div class="pv-nums">${field("x", "x (m)", 0.1)}${field("y", "y (m)", 0.1)}${field("yaw", "회전 (°)", 5)}${field("scale", "크기", 0.1)}</div>`}
     </div>`;
   }
 
@@ -307,7 +388,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   function focusOptions(current) {
     const options = [["hero", "주인공"], ["scene", "장면 전체"],
-      ...state.placed.slice(1).map((_, index) => [assetId(index + 1), `에셋 #${index + 2}`])];
+      ...state.placed.slice(1).map((item, index) => [assetId(index + 1),
+        item.standin ? `대역 #${index + 2} ${item.label}` : `에셋 #${index + 2}`])];
     return options.map(([value, label]) =>
       `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
   }
@@ -397,7 +479,10 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   function renderSummaries() {
     const cuts = state.cuts.length;
-    $("#pv-scene-summary").textContent = state.placed.length ? `에셋 ${state.placed.length}개` : "비어 있음";
+    const standinCount = state.placed.filter((item) => item.standin).length;
+    const meshCount = state.placed.length - standinCount;
+    $("#pv-scene-summary").textContent = [meshCount && `에셋 ${meshCount}개`, standinCount && `대역 ${standinCount}개`]
+      .filter(Boolean).join(" · ") || "비어 있음";
     $("#pv-cuts-summary").textContent = cuts
       ? `${preset()?.label || ""}${edited() ? " 편집" : ""} · ${cuts}컷 ${totalSeconds(state.cuts).toFixed(1)}초`
       : "컷 없음";
@@ -407,7 +492,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   }
 
   function blocker() {
-    if (!state.placed.length) return "장면에 3D 에셋을 먼저 놓아 주세요.";
+    if (!state.placed.length) return "장면에 3D 에셋이나 대역을 먼저 놓아 주세요.";
     if (!state.cuts.length) return "컷이 하나 이상 있어야 합니다.";
     return "";
   }
@@ -449,7 +534,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   function stepsHtml() {
     const steps = [
-      [state.placed.length > 0, "장면에 3D 에셋 놓기", "왼쪽 1번에서 에셋을 지도로 끌어다 놓습니다."],
+      [state.placed.length > 0, "장면에 에셋·대역 놓기", "왼쪽 1번에서 3D 에셋이나 사람·차 같은 회색 대역을 지도로 끌어다 놓습니다."],
       [state.cuts.length > 0, "컷 확인·조정", "2번에서 순서를 끌어 바꾸고, 지도에서 카메라를 끌어 옮깁니다."],
       [false, "샷 만들기", "오른쪽 위 단추를 누르면 여기에서 한 편으로 재생됩니다."],
     ];
@@ -670,12 +755,18 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   function loadRender(job) {
     const params = job.params || {};
     const byId = new Map((params.assets || []).map((asset) => [asset.id, asset]));
-    state.placed = (params.assets || []).filter((asset) => asset.source).map((asset) => {
+    state.placed = (params.assets || []).filter((asset) => asset.source || asset.standin).map((asset) => {
+      const spot = { x: asset.position?.[0] || 0, y: asset.position?.[1] || 0, yaw: asset.yaw || 0 };
+      if (asset.standin) {
+        // 대역은 배율 없이 치수로 편집한다. 요청에 배율이 있었다면 치수에 곱해 둔다.
+        const dimensions = (asset.size || standinKind(asset.standin)?.size || [1, 1, 1]).map((value) => value * (asset.scale || 1));
+        return { standin: asset.standin, label: standinKind(asset.standin)?.label || asset.standin, dimensions, ...spot };
+      }
       const mesh = state.meshes.find((item) => item.jobId === asset.source.jobId && item.id === asset.source.assetId);
       return {
         jobId: asset.source.jobId, assetId: asset.source.assetId, label: shortTitle(mesh?.jobTitle || asset.label),
         preview: mesh?.preview, dimensions: mesh?.meta?.stats?.dimensionsMeters || [1, 1, 1],
-        x: asset.position?.[0] || 0, y: asset.position?.[1] || 0, yaw: asset.yaw || 0, scale: asset.scale || 1,
+        ...spot, scale: asset.scale || 1,
       };
     });
     const heroId = params.hero || params.assets?.[0]?.id;
@@ -777,7 +868,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       else if (action === "place") {
         const [jobId, id] = target.dataset.asset.split(":");
         placeAsset(jobId, id);
-      } else if (action === "remove-asset") removeAsset(state.selectedAsset);
+      } else if (action === "place-standin") placeStandin(target.dataset.standin);
+      else if (action === "remove-asset") removeAsset(state.selectedAsset);
       else if (action === "make-hero") {
         const [item] = state.placed.splice(state.selectedAsset, 1);
         state.placed.unshift(item);
@@ -871,6 +963,12 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       storage.write(LAYOUT_KEY, layout);
       renderLayout();
     });
+    installResizer($("#pv-resizer"), {
+      ...PANEL_WIDTH,
+      storageKey: PANEL_WIDTH_KEY,
+      max: () => Math.min(PANEL_WIDTH.max, window.innerWidth - $(".sidebar").getBoundingClientRect().width - STAGE_MIN_WIDTH),
+      apply: (width) => $("#pv-body").style.setProperty("--pv-panel-w", `${width}px`),
+    });
 
     // 설정
     for (const key of ["renderer", "resolution", "fps", "aux"]) {
@@ -888,10 +986,16 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
     // 에셋 숫자 입력
     $("#pv-asset").addEventListener("input", (event) => {
-      const input = event.target.closest("[data-asset-field]");
+      const input = event.target.closest("[data-asset-field], [data-asset-dim]");
       const item = state.placed[state.selectedAsset];
       if (!input || !item || input.value === "" || !Number.isFinite(Number(input.value))) return;
-      item[input.dataset.assetField] = Number(input.value);
+      if (input.dataset.assetDim !== undefined) {
+        // 0 이하의 치수는 지도에 그릴 수 없다. 입력 중인 값은 두고 지도만 멈춘다.
+        if (Number(input.value) <= 0) return;
+        item.dimensions = item.dimensions.map((value, axis) => (axis === Number(input.dataset.assetDim) ? Number(input.value) : value));
+      } else {
+        item[input.dataset.assetField] = Number(input.value);
+      }
       changed({});
     });
 
@@ -975,16 +1079,23 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       }
     });
 
-    // 에셋 트레이 → 지도
+    // 에셋·대역 트레이 → 지도
     const map = $("#pv-map");
+    const DROP_TYPES = ["application/x-pv-asset", "application/x-pv-standin"];
     $("#pv-tray").addEventListener("dragstart", (event) => {
       const item = event.target.closest("[data-asset]");
       if (!item) return;
       event.dataTransfer.setData("application/x-pv-asset", item.dataset.asset);
       event.dataTransfer.effectAllowed = "copy";
     });
+    $("#pv-standins").addEventListener("dragstart", (event) => {
+      const item = event.target.closest("[data-standin]");
+      if (!item) return;
+      event.dataTransfer.setData("application/x-pv-standin", item.dataset.standin);
+      event.dataTransfer.effectAllowed = "copy";
+    });
     map.addEventListener("dragover", (event) => {
-      if (!event.dataTransfer.types.includes("application/x-pv-asset")) return;
+      if (!DROP_TYPES.some((type) => event.dataTransfer.types.includes(type))) return;
       event.preventDefault();
       map.classList.add("is-drop");
     });
@@ -992,12 +1103,13 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     map.addEventListener("drop", (event) => {
       map.classList.remove("is-drop");
       const key = event.dataTransfer.getData("application/x-pv-asset");
-      if (!key) return;
+      const standin = event.dataTransfer.getData("application/x-pv-standin");
+      if (!key && !standin) return;
       event.preventDefault();
-      const [x, y] = worldPoint(event);
-      const [jobId, id] = key.split(":");
+      const point = worldPoint(event);
       state.view.auto = false;
-      placeAsset(jobId, id, [x, y]);
+      if (standin) placeStandin(standin, point);
+      else placeAsset(...key.split(":"), point);
     });
 
     // 지도 안에서 끌기: 에셋 이동·회전, 카메라 조준, 빈 곳은 화면 이동
@@ -1042,7 +1154,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
           item.y = Math.round(snap(y + drag.offset[1], 0.1) * 100) / 100;
         } else if (drag.kind === "rotate") {
           const item = state.placed[drag.index];
-          const degrees = (Math.atan2(-(x - item.x), y - item.y) * 180) / Math.PI;
+          // 끈 쪽이 정면(yaw 0에서 −Y)이 되는 각. 엔진의 Z축 회전과 방향이 같다.
+          const degrees = (Math.atan2(x - item.x, -(y - item.y)) * 180) / Math.PI;
           item.yaw = Math.round(snap(degrees, 5));
         } else if (drag.kind === "camera") {
           const index = state.selectedCut;

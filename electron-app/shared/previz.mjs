@@ -4,7 +4,8 @@
 export const SENSOR_MM = 36;
 export const ASPECT = 16 / 9;
 const DEFAULTS = { distance: 1.8, azimuth: -35, height: 0.6, targetHeight: 0.5 };
-const LIMITS = { distance: [0.2, 20], lens: [8, 300], seconds: [0.2, 60] };
+const LIMITS = { distance: [0.2, 20], lens: [8, 300], seconds: [0.2, 60], size: [0.05, 500] };
+export const SIZE_LABELS = ["가로", "깊이", "높이"];
 
 const clamp = (value, [low, high]) => Math.min(high, Math.max(low, value));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -44,6 +45,18 @@ function subjectOf(low, high) {
 
 export function assetId(index) {
   return index === 0 ? "hero" : `asset${index + 1}`;
+}
+
+// 새로 놓는 것이 이미 놓인 것과 겹치지 않는 가장 가까운 오른쪽 자리. 건물처럼 큰 대역도 비켜 선다.
+export function freeSpot(placed, dimensions, gap = 0.3) {
+  const [width, depth] = (dimensions || [1, 1]).map(Number);
+  const hits = (x) => placed.some((item) => {
+    const { low, high } = footprint(item);
+    return x - width / 2 < high[0] + gap && x + width / 2 > low[0] - gap && depth / 2 > low[1] - gap && -depth / 2 < high[1] + gap;
+  });
+  let x = 0;
+  while (hits(x)) x += 0.5;
+  return [x, 0];
 }
 
 export function sceneSubjects(placed) {
@@ -151,21 +164,29 @@ export function setSeconds(cut, seconds) {
 // 사람이 고친 장면과 컷을 엔진 요청 하나로 바꾼다. 프리셋 그대로면 컷을 보내지 않아
 // 기록에 "편집"이 붙지 않는다.
 export function buildPrevizRequest({ placed = [], cuts = [], preset = null, settings = {} }) {
-  if (!placed.length) throw new Error("장면에 3D 에셋을 하나 이상 놓아 주세요.");
+  if (!placed.length) throw new Error("장면에 3D 에셋이나 대역을 하나 이상 놓아 주세요.");
   if (!cuts.length) throw new Error("컷이 하나 이상 있어야 합니다.");
   const assets = placed.map((item, index) => {
     const number = (value, name, [low, high]) => {
       const parsed = Number(String(value ?? "").trim() || 0);
       if (!Number.isFinite(parsed) || parsed < low || parsed > high) {
-        throw new Error(`${index + 1}번째 에셋의 ${name} 값을 확인해 주세요.`);
+        throw new Error(`${index + 1}번째 ${item.standin ? "대역" : "에셋"}의 ${name} 값을 확인해 주세요.`);
       }
       return parsed;
     };
-    return {
+    const placement = {
       id: assetId(index),
-      source: { jobId: item.jobId, assetId: item.assetId },
       position: [number(item.x, "x", [-1000, 1000]), number(item.y, "y", [-1000, 1000]), 0],
       yaw: number(item.yaw, "회전", [-360, 360]),
+    };
+    if (item.standin) {
+      // 대역은 크기 배율 대신 미터 치수를 보낸다. 엔진이 부품을 그 치수로 늘인다.
+      const size = SIZE_LABELS.map((name, axis) => number(item.dimensions?.[axis], name, LIMITS.size));
+      return { ...placement, standin: item.standin, size };
+    }
+    return {
+      ...placement,
+      source: { jobId: item.jobId, assetId: item.assetId },
       scale: number(item.scale ?? 1, "크기", [0.01, 100]),
     };
   });
