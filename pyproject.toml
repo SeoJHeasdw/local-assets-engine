@@ -32,6 +32,7 @@ local-assets = "local_assets_engine.cli:main"
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "scipy>=1.18.1",
 ]
 
 [tool.hatch.build.targets.wheel]

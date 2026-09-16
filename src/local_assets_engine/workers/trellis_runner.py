@@ -49,6 +49,17 @@ def main() -> None:
         return original(name, *positional, **keywords)
 
     AutoModelForImageSegmentation.from_pretrained = redirected
+    # Metal 없이 도는 대체 굽기는 먼 텍셀을 검게 남기고 그 검은색을 이웃에 번지게 한다.
+    # 표면 전체에 잡티가 생기므로 색을 채우는 함수만 우리 것으로 바꾼다.
+    try:
+        import texture_bake
+        from backends import texture_baker
+
+        texture_bake.patch(texture_baker)
+        print("[local-assets] fallback texture baker -> local-assets", flush=True)
+    except ImportError as error:
+        print(f"[local-assets] baker patch skipped: {error}", flush=True)
+
     sys.argv = [script, *rest]
     runpy.run_path(script, run_name="__main__")
 
