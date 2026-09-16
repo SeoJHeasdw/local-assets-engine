@@ -30,6 +30,13 @@
 | Roblox Cube 3D | **기각** | 연구 전용 라이선스 |
 | TripoSR, TripoSG | 보류 | MIT. 품질이 낮거나 형상만 생성, MPS 동작 미검증 |
 
+2026-09-16 3D 첫 성공(M4 Max 36GB, Metal 텍스처 가속 없음, pipeline 512, 텍스처 1024,
+면 상한 3만): 컨셉 이미지 466.69초·28.7GB, 배경 제거 4.89초·5.0GB, TRELLIS.2
+557.02초·18.8GB(정점 187만·삼각형 377만, KDTree 방식 굽기 173초), Blender 정리
+1.62초·0.5GB(19만 9946 → 2만 9998면, 1.00×0.74×0.74m, 텍스처 2장), gltfpack
+0.13초(6.19MB → 4.66MB). 소품 하나에 약 17분이다. 메모리는 TRELLIS보다 이미지 모델이
+더 쓰므로, 3D의 병목은 메모리가 아니라 시간이다. Metal 가속을 켜면 굽기 시간이 줄 여지가 있다.
+
 설치는 커밋으로 고정한다: trellis-mac `d58628f4`, trellis2-apple `17347247`, TRELLIS.2
 `75fbf018`, mtlbvh `6b2a0f63`, mtldiffrast `c9499ba2`, mtlgemm `566c1337`, mtlmesh
 `7de3864f`, utils3d `9a4eb15e`. 모두 저장소 LICENSE가 MIT다(2026-09-16 확인). o-voxel은

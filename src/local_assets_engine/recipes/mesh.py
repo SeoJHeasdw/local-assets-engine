@@ -122,6 +122,8 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
             "--target-faces", p["targetFaces"], "--size", p["sizeMeters"],
         ], cwd=mesh_dir)
     stats = json.loads(stats_path.read_text("utf-8"))
+    # generate.py는 GLB와 함께 OBJ 사본을 남긴다. 소품 하나에 100MB가 넘어 보관하지 않는다.
+    (mesh_dir / "raw.obj").unlink(missing_ok=True)
 
     optimized: Path | None = None
     if gltfpack := find_tool("gltfpack"):

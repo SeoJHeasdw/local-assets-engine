@@ -66,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     scale = args.size / longest if args.size and longest > 0 else 1.0
     offset = Vector((-(low[0] + high[0]) / 2, -(low[1] + high[1]) / 2, -low[2]))
     mesh.transform(Matrix.Scale(scale, 4) @ Matrix.Translation(offset))
+    # 생성된 메시는 중복 면·잘못된 참조를 품고 있어 내보내기가 "유효하지 않다"고 경고한다.
+    repaired = mesh.validate(verbose=False)
     mesh.update()
     obj.name = args.output.stem
 
@@ -75,10 +77,11 @@ def main(argv: list[str] | None = None) -> int:
 
     images = {
         node.image.name
-        for material in mesh.materials if material and material.use_nodes
+        for material in mesh.materials if material and material.node_tree
         for node in material.node_tree.nodes if node.type == "TEX_IMAGE" and node.image
     }
     stats = {
+        "repaired": bool(repaired),
         "facesIn": faces_in,
         "facesOut": len(mesh.polygons),
         "triangles": int(sum(len(poly.vertices) - 2 for poly in mesh.polygons)),
