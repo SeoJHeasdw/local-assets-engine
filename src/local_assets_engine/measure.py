@@ -36,10 +36,14 @@ class StageCancelled(Exception):
 
 
 class StageFailed(Exception):
-    def __init__(self, message: str, *, code: int | None, tail: list[str]):
+    # 실패한 실행의 측정치도 남긴다. 메모리가 모자라 끊긴 경우 그 수치가 곧 근거다.
+    def __init__(self, message: str, *, code: int | None, tail: list[str],
+                 peak_memory_bytes: int | None = None, max_rss_bytes: int | None = None):
         super().__init__(message)
         self.code = code
         self.tail = tail
+        self.peak_memory_bytes = peak_memory_bytes
+        self.max_rss_bytes = max_rss_bytes
 
 
 @dataclass(frozen=True)
@@ -176,7 +180,10 @@ def run_measured(
     if code != 0:
         lines = list(tail)
         detail = next((line for line in reversed(lines) if parse_progress(line) is None), "")
-        raise StageFailed(f"종료 코드 {code}" + (f": {detail[-600:]}" if detail else ""), code=code, tail=lines)
+        raise StageFailed(
+            f"종료 코드 {code}" + (f": {detail[-600:]}" if detail else ""),
+            code=code, tail=lines, peak_memory_bytes=peak, max_rss_bytes=rss,
+        )
     return StageResult(
         seconds=round(time.monotonic() - started, 2),
         peak_memory_bytes=peak,

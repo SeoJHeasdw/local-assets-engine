@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .jobs import JobNotFound, JobStore, now_iso
-from .measure import StageCancelled, StageResult, parse_progress, run_measured
+from .measure import StageCancelled, StageFailed, StageResult, parse_progress, run_measured
 from .paths import child_env
 from .presets import PresetError, load_presets
 
@@ -108,14 +108,22 @@ class Stage:
             elif interpret is None:
                 self.progress(scaled(tracker.update(fraction)), detail)
 
-        result = run_measured(
-            args, cwd=cwd, env=env or child_env(), cancel=self.ctx.cancel,
-            on_line=on_line, on_progress=on_progress, capture_stdout=capture_stdout,
-        )
+        command = Path(str(args[0])).name if len(args) < 3 or str(args[1]) != "-m" else str(args[2])
+        started = time.monotonic()
+        try:
+            result = run_measured(
+                args, cwd=cwd, env=env or child_env(), cancel=self.ctx.cancel,
+                on_line=on_line, on_progress=on_progress, capture_stdout=capture_stdout,
+            )
+        except StageFailed as failure:
+            self.processes.append({
+                "command": command,
+                "seconds": round(time.monotonic() - started, 2),
+                "peakMemoryBytes": failure.peak_memory_bytes,
+            })
+            raise
         self.processes.append({
-            "command": Path(str(args[0])).name if len(args) < 3 or str(args[1]) != "-m" else str(args[2]),
-            "seconds": result.seconds,
-            "peakMemoryBytes": result.peak_memory_bytes,
+            "command": command, "seconds": result.seconds, "peakMemoryBytes": result.peak_memory_bytes,
         })
         return result
 

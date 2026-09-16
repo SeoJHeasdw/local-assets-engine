@@ -50,6 +50,12 @@ def test_run_measured_failure_keeps_exit_code_and_last_line():
     assert "boom detail" in str(info.value)
 
 
+def test_failed_runs_still_carry_their_measurement():
+    with pytest.raises(StageFailed) as info:
+        run_measured([sys.executable, "-c", "import sys; sys.exit(2)"])
+    assert info.value.peak_memory_bytes and info.value.peak_memory_bytes > 0
+
+
 def test_run_measured_cancel_stops_the_process_group():
     cancel = threading.Event()
     timer = threading.Timer(0.5, cancel.set)
