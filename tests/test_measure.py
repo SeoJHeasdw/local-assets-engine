@@ -5,7 +5,8 @@ import time
 import pytest
 
 from local_assets_engine.measure import (
-    StageCancelled, StageFailed, is_time_report, parse_progress, parse_time_report, run_measured,
+    StageCancelled, StageFailed, failure_detail, is_time_report, parse_progress, parse_time_report,
+    run_measured, was_killed,
 )
 
 
@@ -64,3 +65,15 @@ def test_run_measured_cancel_stops_the_process_group():
     with pytest.raises(StageCancelled):
         run_measured([sys.executable, "-c", "import time; time.sleep(30)"], cancel=cancel)
     assert time.monotonic() - started < 10
+
+
+def test_failure_detail_prefers_the_error_over_a_trailing_warning():
+    lines = ["Loading pipeline", "RuntimeError: out of memory", "  warnings.warn('resource_tracker: ...')"]
+    assert failure_detail(lines) == "RuntimeError: out of memory"
+    assert failure_detail(["plain line", "last line"]) == "last line"
+    assert failure_detail([]) == ""
+
+
+def test_a_process_the_os_killed_is_reported_as_killed():
+    assert was_killed(StageFailed("x", code=1, tail=["time: signal: Invalid argument"]))
+    assert not was_killed(StageFailed("x", code=1, tail=["모델 파일이 없습니다"]))

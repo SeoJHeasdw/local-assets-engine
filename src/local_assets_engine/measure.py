@@ -41,6 +41,12 @@ GPU_BUSY_SIGNATURES = (
 )
 
 
+# 실패한 실행의 마지막 줄은 경고이기 쉽다. 오류로 보이는 줄을 뒤에서부터 먼저 찾는다.
+ERROR_MARKERS = ("Error", "error:", "Exception", "Traceback", "Killed", "signal:", "실패")
+# /usr/bin/time은 자식이 신호로 죽으면 이렇게 적는다. 이 기기에서는 메모리 부족이 원인이다.
+KILLED_MARKERS = ("time: signal:", "Killed", "signal: killed")
+
+
 class StageCancelled(Exception):
     """The user stopped the job while this stage was running."""
 
@@ -67,6 +73,20 @@ class StageResult:
 def is_gpu_busy(failure: "StageFailed") -> bool:
     text = "\n".join([*failure.tail, str(failure)])
     return any(signature in text for signature in GPU_BUSY_SIGNATURES)
+
+
+def failure_detail(lines: Sequence[str]) -> str:
+    """The most informative line of a failed run."""
+    candidates = [line.strip() for line in lines if line.strip() and parse_progress(line) is None]
+    for line in reversed(candidates):
+        if any(marker in line for marker in ERROR_MARKERS):
+            return line
+    return candidates[-1] if candidates else ""
+
+
+def was_killed(failure: "StageFailed") -> bool:
+    """True when the operating system killed the process instead of it exiting."""
+    return any(marker in "\n".join(failure.tail) for marker in KILLED_MARKERS)
 
 
 def parse_progress(line: str) -> tuple[float, str | None] | None:
@@ -194,7 +214,7 @@ def run_measured(
     peak, rss = parse_time_report(report)
     if code != 0:
         lines = list(tail)
-        detail = next((line for line in reversed(lines) if parse_progress(line) is None), "")
+        detail = failure_detail(lines)
         raise StageFailed(
             f"종료 코드 {code}" + (f": {detail[-600:]}" if detail else ""),
             code=code, tail=lines, peak_memory_bytes=peak, max_rss_bytes=rss,
