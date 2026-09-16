@@ -65,6 +65,21 @@ function showView(view) {
   if (view === "system") refreshSystem();
 }
 
+// 프리비즈 배치처럼 넓은 편집 공간이 필요할 때 사이드바를 접는다. 단추는 창 신호등 옆에 늘 같은 자리다.
+const SIDEBAR_CLOSED_KEY = "assets-studio.sidebar-closed";
+
+function setSidebar(closed, { save = true } = {}) {
+  $(".shell").classList.toggle("is-sidebar-closed", closed);
+  const toggle = $("#sidebar-toggle");
+  toggle.setAttribute("aria-expanded", String(!closed));
+  toggle.setAttribute("data-tip", closed ? "사이드바 펼치기" : "사이드바 접기 — 편집 공간을 넓힙니다");
+  if (save) {
+    try { localStorage.setItem(SIDEBAR_CLOSED_KEY, closed ? "1" : ""); } catch { /* 기억하지 못해도 접기는 된다 */ }
+  }
+  // 편집 패널의 최대 너비가 사이드바 너비에 달려 있어 한도를 다시 잰다.
+  window.dispatchEvent(new Event("resize"));
+}
+
 // ---- 만들기 ----------------------------------------------------------------
 
 function presetsFor(kind) {
@@ -621,6 +636,10 @@ async function init() {
     storageKey: "assets-studio.sidebar-width", min: 180, max: 360, fallback: 220,
     apply: (width) => document.documentElement.style.setProperty("--sidebar-w", `${width}px`),
   });
+  let sidebarClosed = false;
+  try { sidebarClosed = localStorage.getItem(SIDEBAR_CLOSED_KEY) === "1"; } catch { /* 처음 상태로 연다 */ }
+  setSidebar(sidebarClosed, { save: false });
+  $("#sidebar-toggle").addEventListener("click", () => setSidebar(!$(".shell").classList.contains("is-sidebar-closed")));
   wireEvents();
   try {
     state.presets = await api("/api/presets");

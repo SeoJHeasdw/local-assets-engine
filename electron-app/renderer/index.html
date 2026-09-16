@@ -11,7 +11,10 @@
 </head>
 <body>
   <div class="shell">
-    <nav class="sidebar" aria-label="화면">
+    <button class="sidebar-toggle" type="button" id="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" data-tip="사이드바 접기">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2.5"></rect><path d="M6 2.5v11"></path></svg>
+    </button>
+    <nav class="sidebar" id="sidebar" aria-label="화면">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
         <div><strong>Assets Studio</strong><small>javis · 로컬 생성</small></div>
@@ -165,7 +168,7 @@
                 <ol class="pv-cutlist" id="pv-cutlist"></ol>
                 <div class="pv-cut-actions">
                   <button class="ghost" type="button" id="pv-cut-add" data-tip="선택한 컷을 복제해 바로 뒤에 넣습니다">＋ 컷 복제</button>
-                  <button class="ghost" type="button" id="pv-cut-reset" data-tip="편집한 컷을 버리고 프리셋 그대로 되돌립니다">프리셋으로 되돌리기</button>
+                  <button class="ghost" type="button" id="pv-cut-reset">프리셋으로 되돌리기</button>
                 </div>
               </div>
             </section>
@@ -212,8 +215,16 @@
                 <label class="pv-switch" data-tip="끄면 컷마다 정지 프레임만 만들고 한 편 영상이 생기지 않습니다">
                   <input type="checkbox" id="pv-animatic"><span>애니매틱 영상</span>
                 </label>
+                <div class="pv-section-foot">
+                  <button class="ghost" type="button" id="pv-settings-reset">기본값으로</button>
+                </div>
               </div>
             </section>
+
+            <div class="pv-panel-foot">
+              <button class="ghost is-danger" type="button" id="pv-reset-all"
+                data-tip="장면을 비우고 컷과 렌더 설정을 처음 상태로 돌립니다. 알림에서 바로 되돌릴 수 있습니다.">편집 전체 초기화</button>
+            </div>
           </aside>
 
           <div class="resizer pv-resizer" id="pv-resizer" aria-controls="pv-panel" aria-label="편집 패널 너비 (끌어서 조절, 두 번 누르면 기본)"></div>
@@ -225,6 +236,7 @@
             <div class="pv-timeline" id="pv-timeline"></div>
             <div class="pv-inspector" id="pv-inspector"></div>
           </div>
+          <div class="pv-toast" id="pv-toast" role="status" aria-live="polite" hidden></div>
         </div>
       </section>
 

@@ -47,6 +47,18 @@ export function assetId(index) {
   return index === 0 ? "hero" : `asset${index + 1}`;
 }
 
+// 배치 순서가 바뀌면 에셋 id(asset2…)가 가리키는 물체도 바뀐다. order[새 자리] = 옛 자리로 받아
+// 컷이 같은 물체를 계속 겨냥하게 옮긴다. hero·scene은 역할이라 그대로 두고, 빠진 물체를 보던 컷은 장면 전체를 본다.
+export function refocusCuts(cuts, order) {
+  const now = new Map(order.map((old, index) => [old, index]));
+  return cuts.map((cut) => {
+    const match = /^asset(\d+)$/.exec(cut.focus || "");
+    if (!match) return cut;
+    const index = now.get(Number(match[1]) - 1);
+    return { ...cut, focus: index === undefined ? "scene" : assetId(index) };
+  });
+}
+
 // 새로 놓는 것이 이미 놓인 것과 겹치지 않는 가장 가까운 오른쪽 자리. 건물처럼 큰 대역도 비켜 선다.
 export function freeSpot(placed, dimensions, gap = 0.3) {
   const [width, depth] = (dimensions || [1, 1]).map(Number);

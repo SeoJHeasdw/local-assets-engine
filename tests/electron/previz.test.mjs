@@ -4,7 +4,7 @@ import test from "node:test";
 
 import {
   aimFromPoint, buildPrevizRequest, cameraAt, draftFromPreset, fitDistance, freeSpot, moveItem, nextShotId,
-  sceneSubjects, setSeconds, totalSeconds,
+  refocusCuts, sceneSubjects, setSeconds, totalSeconds,
 } from "../../electron-app/shared/previz.mjs";
 
 const presets = JSON.parse(fs.readFileSync(new URL("../../config/presets.json", import.meta.url), "utf8"));
@@ -113,6 +113,15 @@ test("a stand-in is sent as its size in meters, and a scene of stand-ins alone i
     { id: "asset2", standin: "wall", size: [12, 0.2, 3], position: [1, 3, 0], yaw: 90 },
   ]);
   assert.throws(() => buildPrevizRequest({ placed: [{ ...wall, dimensions: [12, 0, 3] }], cuts: [orbit], preset }), /1번째 대역의 깊이/);
+});
+
+test("cuts keep aiming at the same thing when the scene is reordered or something is taken out", () => {
+  const cuts = [{ id: "s01", focus: "hero" }, { id: "s02", focus: "asset2" }, { id: "s03", focus: "asset3" }, { id: "s04", focus: "scene" }];
+  // 셋 중 두 번째(asset2)를 뺀다: asset3은 asset2가 되고, 빠진 것을 보던 컷은 장면 전체를 본다.
+  assert.deepEqual(refocusCuts(cuts, [0, 2]).map((cut) => cut.focus), ["hero", "scene", "asset2", "scene"]);
+  // 세 번째를 주인공으로 올린다: 역할인 hero는 새 주인공을 보고, 물체를 가리키던 컷은 그 물체를 따라간다.
+  assert.deepEqual(refocusCuts(cuts, [2, 0, 1]).map((cut) => cut.focus), ["hero", "asset3", "hero", "scene"]);
+  assert.equal(refocusCuts(cuts, [0, 1, 2])[0], cuts[0]);
 });
 
 test("something placed without a drop point steps aside from what is already there", () => {

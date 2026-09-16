@@ -115,6 +115,18 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 /* ---- 뼈대 ---- */
 .shell { position: relative; display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; }
 #sidebar-resizer { left: var(--sidebar-w); }
+/* macOS 앱처럼 창 신호등 옆에 둔다. 사이드바를 접어도 같은 자리라 다시 찾기 쉽다. */
+.sidebar-toggle {
+  position: absolute; top: 8px; left: 80px; z-index: 6; display: grid; place-items: center;
+  width: 30px; height: 26px; padding: 0; border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-3); cursor: pointer; -webkit-app-region: no-drag;
+  transition: background var(--motion), color var(--motion);
+}
+.sidebar-toggle:hover { background: var(--raised); color: var(--text); }
+.sidebar-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.shell.is-sidebar-closed { grid-template-columns: 0 minmax(0, 1fr); }
+.shell.is-sidebar-closed .sidebar { visibility: hidden; overflow: hidden; padding: 0; border: 0; }
+.shell.is-sidebar-closed #sidebar-resizer { display: none; }
 .sidebar {
   display: flex; flex-direction: column; gap: var(--s1);
   padding: 44px var(--s3) var(--s4);
@@ -221,6 +233,8 @@ button.secondary:hover { background: var(--float); }
 button.ghost { height: var(--h-sm); padding: 0 var(--s3); background: transparent; color: var(--text-2); font-weight: 500; }
 button.ghost:hover { background: var(--raised); color: var(--text); }
 button.is-danger { color: var(--danger); }
+/* 되돌릴 것이 없는 초기화 단추처럼 자리는 보여 주되 누를 수 없는 상태 */
+button.ghost:disabled, button.ghost:disabled:hover { background: transparent; color: var(--text-4); cursor: default; }
 .form-error { margin: 0; padding: var(--s3); border-radius: var(--r-md); background: var(--danger-soft); color: var(--danger); font-size: var(--fs-sm); }
 
 /* ---- 프리비즈 ---- */
@@ -323,7 +337,7 @@ button.is-danger { color: var(--danger); }
   background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 10px 10px;
 }
 .pv-tray-name { overflow: hidden; font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
-.pv-tray.is-standins { grid-auto-columns: minmax(64px, 1fr); }
+.pv-tray.is-standins { grid-auto-columns: minmax(64px, 96px); }
 /* 실루엣의 비율(사람은 세로로 길다)이 칸 높이를 바꾸지 않게 그림을 흐름에서 뺀다. */
 .pv-standin-icon { position: relative; display: block; width: 100%; aspect-ratio: 1; border-radius: var(--r-sm); background: var(--well); }
 .pv-standin-icon svg { position: absolute; inset: 13%; width: 74%; height: 74%; fill: #8e9aa8; transition: fill var(--motion); }
@@ -339,8 +353,9 @@ button.is-danger { color: var(--danger); }
 }
 .pv-tray-empty p { margin: 0; font-size: var(--fs-sm); }
 
+/* 패널을 넓히면 지도도 넓어지되, 스크롤해 맞췄을 때 한 화면에 들어오는 높이까지만 자란다. */
 .pv-map {
-  position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md);
+  position: relative; aspect-ratio: 1; max-height: calc(100vh - 170px); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md);
   background: var(--well); cursor: grab; touch-action: none; user-select: none;
   transition: border-color var(--motion), box-shadow var(--motion);
 }
@@ -377,16 +392,30 @@ button.is-danger { color: var(--danger); }
 .pv-legend .dot.standin { background: #39414a; outline: 1px dashed rgba(176, 192, 210, .8); outline-offset: -1px; }
 .pv-legend .cam { color: var(--accent); font-size: 10px; font-style: normal; }
 .pv-legend-tip { margin-left: auto; color: var(--text-2); text-decoration: underline dotted; cursor: help; }
-.pv-asset-hint { margin-top: -4px; }
-
-.pv-asset-card { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
-.pv-asset-head { display: flex; align-items: center; gap: var(--s2); }
-.pv-asset-head img { width: 34px; height: 34px; flex: none; border-radius: var(--r-sm); object-fit: contain; background: var(--well); }
-.pv-asset-head .pv-standin-icon { width: 34px; height: 34px; flex: none; }
-.pv-asset-head > div { flex: 1; min-width: 0; }
-.pv-asset-head strong { display: block; overflow: hidden; font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
-.pv-asset-head span { color: var(--text-3); font-size: var(--fs-micro); }
-.pv-asset-head .ghost { height: 28px; padding: 0 var(--s2); font-size: var(--fs-xs); }
+/* 놓인 것 목록: 눌러 펼쳐 숫자를 고치고 ✕로 뺀다. 컷 목록과 같은 모양이다. */
+#pv-asset { display: flex; flex-direction: column; gap: var(--s2); }
+#pv-asset:empty { display: none; }
+button.ghost.pv-small { height: 26px; padding: 0 var(--s2); font-size: var(--fs-xs); }
+.pv-placed { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.pv-placed-item { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); transition: border-color var(--motion); }
+.pv-placed-item.is-selected { border-color: var(--accent-edge); background: #1a1e18; }
+.pv-placed-line { display: grid; grid-template-columns: 30px minmax(0, 1fr) 28px; align-items: center; gap: var(--s2); padding: 4px 4px 4px 5px; border-radius: var(--r-md); cursor: pointer; }
+.pv-placed-line:hover { background: rgba(238, 242, 231, .03); }
+.pv-placed-thumb { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: var(--r-sm); background: var(--well); }
+.pv-placed-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.pv-placed-thumb .pv-standin-icon { width: 30px; height: 30px; }
+.pv-placed-name { min-width: 0; line-height: 1.3; }
+.pv-placed-name strong { display: block; overflow: hidden; font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pv-placed-name small { display: block; overflow: hidden; color: var(--text-3); font-family: var(--mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.pv-remove {
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; transition: background var(--motion), color var(--motion);
+}
+.pv-remove:hover { background: var(--danger-soft); color: var(--danger); }
+.pv-placed-editor { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2) var(--s3) var(--s3); border-top: 1px solid var(--line); }
+.pv-placed-editor .pv-nums { margin-top: 0; }
+.pv-placed-actions { display: flex; justify-content: flex-end; }
+.pv-placed-actions .ghost { height: 28px; padding: 0 var(--s2); font-size: var(--fs-xs); }
 .pv-nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); margin-top: var(--s2); }
 .pv-nums.is-standin { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .pv-num { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -441,6 +470,25 @@ button.is-danger { color: var(--danger); }
 .pv-switch input:checked::after { transform: translateX(12px); background: var(--accent); }
 .pv-cut-foot { display: flex; justify-content: flex-end; }
 .pv-cut-actions { display: flex; justify-content: space-between; gap: var(--s2); }
+.pv-section-foot { display: flex; justify-content: flex-end; }
+.pv-panel-foot { display: flex; justify-content: center; padding: var(--s4) var(--s4) var(--s6); }
+
+/* 빼기·초기화 뒤에 잠깐 뜨는 되돌리기 알림 */
+.pv-toast {
+  position: absolute; bottom: var(--s4); left: var(--s4); z-index: 8; display: flex; align-items: center; gap: var(--s1);
+  max-width: min(480px, calc(100% - 32px)); padding: 5px 5px 5px 14px;
+  border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--float); color: var(--text);
+  font-size: var(--fs-sm); box-shadow: 0 16px 40px rgba(0, 0, 0, .5); animation: toast-in 180ms cubic-bezier(.2, .7, .2, 1);
+}
+.pv-toast span { min-width: 0; margin-right: var(--s2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-toast button {
+  flex: none; height: 30px; padding: 0 var(--s3); border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; transition: background var(--motion);
+}
+.pv-toast button:hover { background: var(--accent-soft); }
+.pv-toast .pv-toast-close { width: 30px; padding: 0; color: var(--text-3); font-weight: 400; }
+.pv-toast .pv-toast-close:hover { background: var(--raised); color: var(--text); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 .pv-cut-empty { padding: var(--s4); color: var(--text-3); text-align: center; list-style: none; }
 
 .pv-stage { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--s5) var(--s5) var(--s6); background: #070806; }
@@ -481,6 +529,8 @@ button.is-danger { color: var(--danger); }
 .pv-transport { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .pv-transport:empty, .pv-timeline:empty, .pv-inspector:empty { display: none; }
 .pv-transport-main, .pv-transport-side { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.pv-transport-side { flex: none; }
+.pv-transport-side button { white-space: nowrap; }
 .pv-play { width: 38px; height: 38px; border: 0; border-radius: 50%; background: var(--accent); color: var(--ink); font-size: 13px; }
 .pv-play:hover { background: var(--accent-hi); color: var(--ink); }
 .pv-time { margin-left: var(--s2); color: var(--text-2); font-family: var(--mono); font-size: var(--fs-xs); white-space: nowrap; }
