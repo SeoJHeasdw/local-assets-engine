@@ -89,12 +89,15 @@ Metal 래스터라이저를 쓰면 재질 경계가 더 선명해질 여지는 �
 현재 기본값은 임시로 **Z-Image Turbo**다. 2D 조사는 중간에 멈췄으므로 아래 후보를
 직접 비교해 정한다. `config/presets.json`의 `imageModel`만 바꾸면 앱·CLI·javis가 함께 바뀐다.
 
-| 후보 | HF 라이선스 표기 | 게이트 | 저장소 크기 | mflux 명령 | 메모 |
-| --- | --- | --- | --- | --- | --- |
-| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | `mflux-generate-z-image-turbo` | 현재 기본값. 36GB에서는 8비트 양자화로 쓴다(양자화 없이 1024px 생성 시 최대 37.9GB로 스왑) |
-| Qwen-Image | Apache-2.0 | 없음 | 57.7GB | `mflux-generate-qwen` | 이미지 안 글자에 강하다고 알려짐. 36GB에서는 양자화(`quantize`)가 필요할 것으로 추정 |
-| FLUX.1 schnell | Apache-2.0 | 자동 승인 | 57.8GB | `mflux-generate` + `--model schnell` | HF 로그인 후 약관 동의 필요 |
-| FLUX.2 klein 4B·9B | 확인 필요 | 확인 필요 | 확인 필요 | `mflux-generate-flux2` | 크기별 라이선스가 다르다는 보고가 있음. 원문 확인 전 사용 금지 |
+| 후보 | 라이선스 | 게이트 | 저장소 크기 | 최종 수정 | mflux 명령 | 메모 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Z-Image Turbo | Apache-2.0 | 없음 | 32.9GB | 2026-01-30 | `mflux-generate-z-image-turbo` | 현재 기본값. 적은 스텝으로 빠르고, 36GB에서는 8비트로 쓴다 |
+| Z-Image (비-Turbo) | Apache-2.0 | 없음 | 20.5GB | 2026-01-28 | `mflux-generate-z-image` | 스텝이 많아 느린 대신 품질 여지가 있다 |
+| FLUX.2 klein 4B | Apache-2.0 | 없음 | 23.7GB | 2026-02-24 | `mflux-generate-flux2` + `--model flux2-klein-4b` | 후보 중 가장 최신이고 가볍다. 9B판은 라이선스가 달라 확인 전 사용 금지 |
+| Qwen-Image-2512 | Apache-2.0 | 없음 | 57.7GB | 2025-12-31 | `mflux-generate-qwen` | 이미지 안 글자에 강하다고 알려짐. 가장 무거워 이 기기에는 부담 |
+| FLUX.1 schnell | Apache-2.0 | 자동 승인 | 57.8GB | 2024-08-16 | `mflux-generate` + `--model schnell` | 오래된 세대 |
+
+Qwen3-Image는 오픈웨이트가 없다(2026-09-16 조회에서 저장소 없음).
 
 크기와 라이선스는 2026-09-16에 Hugging Face API의 표기를 읽은 값이다. 채택 전에 확인한다.
 
