@@ -79,7 +79,7 @@ def prepare_mesh_params(params: dict[str, Any], presets: dict[str, Any]) -> dict
         "sizeMeters": float_param(params, "sizeMeters", defaults["sizeMeters"], 0.0, 1000.0),
         "meshSeed": seed_param({"seed": params.get("meshSeed")}),
         "audit": bool_param(params, "audit", False),
-        "gameFaces": int_param(params, "gameFaces", defaults.get("gameFaces", 100000), 0, 1_000_000),
+        "gameFaces": int_param(params, "gameFaces", defaults.get("gameFaces", 0), 0, 1_000_000),
         "gameTextureSize": choice_param(params, "gameTextureSize", defaults.get("gameTextureSize", 2048), mesh["textureSizes"]),
     }
 
@@ -241,6 +241,9 @@ def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str |
 
 
 def _prepare_image_to_3d(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") -> tuple[dict[str, Any], str]:
+    if params.get("uploadId"):
+        from ..uploads import resolve_upload
+        params = {**params, "imagePath": str(resolve_upload(store, params["uploadId"]))}
     source = params.get("source")
     if source:
         job_id, asset_id = str(source.get("jobId")), str(source.get("assetId"))
@@ -258,8 +261,9 @@ def _prepare_image_to_3d(params: dict[str, Any], presets: dict[str, Any], store:
         if not raw or not image_path.is_absolute() or not image_path.is_file() \
                 or image_path.suffix.lower() not in IMAGE_SUFFIXES:
             raise PresetError("PNG·JPG·WEBP 이미지 파일의 절대 경로가 필요합니다.")
-        subject, source_ref = image_path.stem, None
+        subject, source_ref = " ".join(str(params.get("name") or image_path.stem).split())[:160], None
     normalized = {
+        "subject": subject,
         "imagePath": str(image_path),
         "source": source_ref,
         "removeBackground": bool_param(params, "removeBackground", True),

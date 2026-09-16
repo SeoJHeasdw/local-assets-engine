@@ -1,0 +1,5 @@
+// Local drafts survive closing the editor or restarting the app. Assets stay immutable.
+let database;
+function db(){database ||= new Promise((resolve,reject)=>{const request=indexedDB.open('assets-studio',1);request.onupgradeneeded=()=>request.result.createObjectStore('drafts');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});return database;}
+export async function readDraft(key){try{const database=await db();return await new Promise((resolve,reject)=>{const request=database.transaction('drafts').objectStore('drafts').get(key);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}catch{return null;}}
+export async function writeDraft(key,value){try{const database=await db();await new Promise((resolve,reject)=>{const tx=database.transaction('drafts','readwrite');const store=tx.objectStore('drafts');if(value)store.put(value,key);else store.delete(key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});return true;}catch{return false;}}

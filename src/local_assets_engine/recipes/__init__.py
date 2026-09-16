@@ -6,9 +6,10 @@ from .mesh import IMAGE_TO_3D, TEXT_TO_3D
 from .previz import PREVIZ
 from .repair_mesh import REPAIR_MESH
 from .refine_mesh import REFINE_MESH
+from .edit_asset import EDIT_ASSET, IMPORT_IMAGE
 
 RECIPES: dict[str, Recipe] = {
-    recipe.id: recipe for recipe in (IMAGE, IMAGE_TO_3D, TEXT_TO_3D, PREVIZ, REPAIR_MESH, REFINE_MESH)
+    recipe.id: recipe for recipe in (IMAGE, IMAGE_TO_3D, TEXT_TO_3D, PREVIZ, REPAIR_MESH, REFINE_MESH, EDIT_ASSET, IMPORT_IMAGE)
 }
 
 __all__ = ["RECIPES", "Recipe"]

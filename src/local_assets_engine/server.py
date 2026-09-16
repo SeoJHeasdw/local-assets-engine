@@ -19,6 +19,7 @@ from .jobs import REVIEW_STATES, JobNotFound, JobStore, now_iso
 from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir, output_dir
 from .presets import PresetError, load_presets
 from .runner import Runner
+from .uploads import MAX_UPLOAD, save_upload, resolve_upload
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
@@ -78,6 +79,25 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
     @app.get("/api/presets")
     def get_presets() -> dict[str, Any]:
         return load_presets()
+
+    @app.post("/api/uploads", status_code=201)
+    async def upload_image(request: Request):
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > MAX_UPLOAD:
+                raise HTTPException(status_code=413, detail="20MB 이하의 이미지를 골라 주세요.")
+        try:
+            return save_upload(store, data)
+        except PresetError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/uploads/{upload_id}")
+    def uploaded_image(upload_id: str):
+        try:
+            return FileResponse(resolve_upload(store, upload_id), media_type="image/png")
+        except PresetError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/api/bench")
     def get_bench() -> dict[str, Any]:

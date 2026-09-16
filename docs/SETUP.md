@@ -1,6 +1,6 @@
 # 직접 해야 하는 준비
 
-에이전트가 대신할 수 없는 로그인·승인·설치와, 모델 선택 참고 자료을
+에이전트가 대신할 수 없는 로그인·승인·설치와, 모델 선택 참고 자료를
 모았다. 단계마다 끝나면 `npm run doctor`로 확인한다. 기준일은 2026-09-17이다.
 
 ## 지금 상태
@@ -65,13 +65,13 @@ DINOv3" 표기가 필요하다는 보고가 있었지만 원문으로 확인하�
 
 ## 3. 첫 3D 확인
 
-1. `./app.sh`로 앱을 연다. 3D 에셋 → 설명으로 → 후보 수 1 → "3D 바로 만들기".
+1. `./app.sh`로 앱을 연다. 3D 소품 → 설명으로 시작 → 한 번에 3D까지 → "3D 만들기".
    터미널로는 다음과 같다.
    ```bash
    .venv/bin/python -m local_assets_engine run text-to-3d --params '{"subject": "wooden treasure chest"}'
    ```
 2. 첫 실행은 DINOv3 가중치 내려받기가 포함돼 오래 걸린다.
-   결과는 `output/jobs/<작업 ID>/mesh/asset.glb`(품질본)와 `asset.game.glb`(게임용)다.
+   기본 결과는 `output/jobs/<작업 ID>/mesh/asset.glb`(품질본) 하나다.
    각각의 `.opt.glb`는 전송용 사본이다. 카드에는 실제 GLB 렌더가 보이고 여섯 방향 검수도 제공한다.
 3. 실패하면 앱 작업 카드의 오류와 `output/jobs/<작업 ID>/job.log`를 본다.
    외부 모니터를 여러 대 쓰는 중에 "GPU 감시" 오류가 나면 모니터를 줄이고 다시 시도한다.

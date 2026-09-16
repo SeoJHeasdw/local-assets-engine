@@ -125,3 +125,14 @@ def test_surface_reconstruction_keeps_an_open_thin_sheet(tmp_path):
     geom = np.load(store.job_dir(job["id"]) / "surface/master.npz")
     bounds = np.ptp(geom["vertices"], axis=0)
     assert bounds[0] > 0.55 and bounds[1] > 0.55 and bounds[2] < 0.09
+
+
+def test_default_generation_only_publishes_the_quality_master(tmp_path):
+    store, source_id, request = source_job(tmp_path)
+    runner = Runner(store, recipes={REFINE_MESH.id: REFINE_MESH})
+    created = runner.create('refine-mesh', {**request, 'targetFaces':3000, 'textureSize':512})
+    assert created['params']['gameFaces'] == 0
+    job = runner.run_job(created['id'])
+    assert job['state'] == 'done', job['error']
+    assert len(job['assets']) == 1 and job['assets'][0]['meta']['variant'] == 'master'
+    assert not any(s['name'] == 'lod' or s['name'].endswith('-game') for s in job['stages'])

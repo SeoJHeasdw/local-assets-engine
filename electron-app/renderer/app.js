@@ -5,6 +5,8 @@ import {
 import { createPreviz } from "./previz.js";
 import { installResizer } from "./resize.js";
 import { installTooltips } from "./tooltip.js";
+import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
+import { createEditor } from "./editor.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -22,7 +24,8 @@ const PIXEL_FILE = /px(@preview)?\.png$/;
 
 const state = {
   presets: null,
-  kind: "2d",
+  kind: "3d",
+  uploadId: null, imageSource: null, imageName: "",
   source: "text",
   presetId: { "2d": "item-icon", "3d": "prop-3d" },
   imagePath: "",
@@ -53,6 +56,8 @@ const previz = createPreviz({
   getPresets: () => state.presets,
   goCreate: () => showView("create"),
 });
+
+const editor = createEditor({api, refreshJobs, openAsset, makeMesh, addToPrevizScene, bridge});
 
 // ---- 화면 전환 -------------------------------------------------------------
 
@@ -89,13 +94,16 @@ function presetsFor(kind) {
 function renderComposer() {
   const { kind, source } = state;
   const fromImage = kind === "3d" && source === "image";
-  for (const button of $$("#kind-switch button")) button.classList.toggle("is-active", button.dataset.kind === kind);
+  for (const button of $$("#kind-switch button")) { button.classList.toggle("is-active", button.dataset.kind === kind); button.setAttribute("aria-selected", String(button.dataset.kind === kind)); }
   for (const button of $$("#source-switch button")) button.classList.toggle("is-active", button.dataset.source === source);
   $("#source-switch").hidden = kind !== "3d";
   $("#preset-field").hidden = fromImage;
   $("#subject-field").hidden = fromImage;
   $("#style-field").hidden = fromImage;
-  $("#count-field").hidden = fromImage;
+  $("#count-field").hidden = fromImage || (kind === "3d" && workflow() === "direct");
+  $("#workflow-field").hidden = kind !== "3d" || fromImage;
+  $("#background-field").hidden = kind === "3d";
+  $("#prompt-examples").hidden = fromImage;
   $("#image-field").hidden = !fromImage;
   for (const option of $$(".mesh-option")) option.hidden = kind !== "3d";
 
@@ -106,41 +114,54 @@ function renderComposer() {
       ${escapeHtml(preset.label)}
     </button>`).join("");
   $("#preset-hint").textContent = presets.find((preset) => preset.id === state.presetId[kind])?.hint || "";
+  const preset = presets.find(p => p.id === state.presetId[kind]);
+  if (state.lastPreset !== preset?.id) { $("#remove-background").checked = !!preset?.removeBackground; state.lastPreset = preset?.id; }
+  $("#preset-field").hidden = fromImage || kind === "3d";
   renderImagePick();
   updateSubmitLabel();
 }
 
+function workflow() { return $('input[name="workflow"]:checked')?.value || "concept"; }
 function updateSubmitLabel() {
   const count = Number($("#count").value);
-  let label = "후보 만들기";
-  let hint = "";
+  let label = `이미지 ${count}장 만들기`, hint = "완성된 이미지를 열어 색상과 로고를 편집할 수 있습니다.";
   if (state.kind === "3d") {
-    if (state.source === "image") label = "이미지로 3D 만들기";
-    else if (count === 1) [label, hint] = ["3D 바로 만들기", "컨셉 이미지 1장을 만든 뒤 곧바로 3D로 바꿉니다."];
-    else [label, hint] = ["컨셉 후보 만들기", "마음에 드는 후보를 열어 3D로 만들기를 누르세요."];
-    if (state.doctor && !state.doctor.capabilities.mesh3d) {
-      hint = `${hint} 3D 준비가 덜 됐습니다. 환경 화면을 확인하세요.`.trim();
-    }
+    if (state.source === "image") [label, hint] = ["이 이미지로 3D 만들기", "선택한 이미지를 고품질 3D 원본으로 만듭니다."];
+    else if (workflow() === "direct") [label, hint] = ["3D 만들기", "컨셉 이미지 1장부터 3D 완성까지 진행합니다."];
+    else [label, hint] = [`컨셉 ${count}장 만들기`, "이미지를 고르고 확인한 뒤 3D로 만들 수 있습니다."];
   }
+  $("#count-field").hidden = state.kind === "3d" && (state.source === "image" || workflow() === "direct");
   $("#submit").textContent = label;
   $("#submit-hint").textContent = hint;
+  const preset = state.presets?.presets.find(p => p.id === state.presetId[state.kind]);
+  $("#settings-summary").textContent = state.kind === "3d" ? `고품질 원본 · ${Number($("#texture").value) / 1024}K 텍스처`
+    : `${preset?.pixelate ? preset.pixelate.size + "px 픽셀 아트" : (preset?.canvas?.width || preset?.width || 1024) + "px PNG"} · ${$("#remove-background").checked ? "투명 배경" : "배경 포함"}`;
 }
 
 function renderImagePick() {
   const preview = $("#image-preview");
-  if (!state.imagePath) {
+  if (!state.imagePath && !state.uploadId && !state.imageSource) {
     preview.innerHTML = "";
     return;
   }
   preview.innerHTML = `${state.imagePreviewUrl ? `<img src="${state.imagePreviewUrl}" alt="">` : ""}
-    <div class="path">${escapeHtml(state.imagePath)}</div>`;
+    <div class="path">${escapeHtml(state.imageName || state.imagePath)}</div>`;
 }
 
-function setImage(path, previewUrl = "") {
-  if (state.imagePreviewUrl) URL.revokeObjectURL(state.imagePreviewUrl);
-  state.imagePath = path;
-  state.imagePreviewUrl = previewUrl;
-  renderImagePick();
+function setImage(upload, name) {
+  state.imagePath = ""; state.imageSource = null; state.uploadId = upload.id;
+  state.imagePreviewUrl = upload.url; state.imageName = name; renderImagePick();
+}
+async function chooseImage(file) {
+  if (!file) return;
+  try { showFormError(""); setImage(await uploadBlob(file), file.name); }
+  catch(error) { showFormError(error.message); }
+}
+async function chooseFromLibrary() {
+  const {assets} = await api("/api/assets?kind=image&limit=200");
+  const dialog = popup("3D로 만들 이미지 선택", `<div class="library-pick">${assets.map((a,i) => `<button type="button" data-choice="${i}"><img loading="lazy" src="${fileUrl(a.jobId,a.preview||a.file)}" alt=""><small>${escapeHtml(a.jobTitle)}</small></button>`).join("") || '<p class="hint">먼저 이미지를 만들거나 가져와 주세요.</p>'}</div>`, {wide:true});
+  dialog.addEventListener("click", e => { const choice=e.target.closest("[data-choice]"); if(!choice)return; const a=assets[Number(choice.dataset.choice)];
+    state.uploadId=null;state.imagePath="";state.imageSource={jobId:a.jobId,assetId:a.id};state.imageName=a.jobTitle;state.imagePreviewUrl=fileUrl(a.jobId,a.preview||a.file);dialog.close();renderImagePick();});
 }
 
 function showFormError(message) {
@@ -157,9 +178,10 @@ async function submitComposer(event) {
     request = buildJobRequest({
       kind: state.kind, source: state.source, preset: state.presetId[state.kind],
       subject: $("#subject").value, style: $("#style").value, count: $("#count").value, seed: $("#seed").value,
-      imagePath: state.imagePath, pipelineType: $("#pipeline").value,
+      imagePath: state.imagePath, imageName:state.imageName, uploadId: state.uploadId, imageSource: state.imageSource, workflow: workflow(),
+      removeBackground: $("#remove-background").checked, pipelineType: $("#pipeline").value,
       textureSize: $("#texture").value, targetFaces: $("#faces").value,
-      gameFaces: $("#game-faces").value,
+      gameFaces: 0,
     });
   } catch (error) {
     showFormError(error.message);
@@ -169,6 +191,7 @@ async function submitComposer(event) {
   button.disabled = true;
   try {
     await api("/api/jobs", { method: "POST", body: request });
+    toast("새 작업을 시작했습니다. 완료되면 오른쪽에 결과가 나타납니다.");
     await refreshJobs();
   } catch (error) {
     showFormError(error.message);
@@ -219,36 +242,40 @@ function thumbHtml(jobId, asset) {
   </button>`;
 }
 
+function readablePhase(job) {
+  if (job.state === "queued") return "앞선 작업이 끝나면 시작합니다";
+  if (job.state === "cancelling") return "작업을 중지하고 있습니다";
+  const name = job.stages.findLast(s=>s.state === "running")?.name || "";
+  if (name === "generate") return "이미지를 만들고 있습니다";
+  if (name === "mesh") return "3D 형태를 만들고 있습니다";
+  if (name === "inspect") return "완성된 에셋을 확인하고 있습니다";
+  if (name.startsWith("texture") || name === "surface" || name === "lod") return "표면과 재질을 다듬고 있습니다";
+  if (name === "edit") return "편집본을 저장하고 있습니다";
+  if (name === "cutout") return "배경을 정리하고 있습니다";
+  return "에셋을 준비하고 있습니다";
+}
 function jobCardHtml(job) {
   const elapsed = elapsedSeconds(job.startedAt, job.finishedAt);
-  const stages = job.stages.map(stageHtml).join("");
-  const assets = job.assets.map((asset) => thumbHtml(job.id, asset)).join("");
-  const cancelling = job.state === "cancelling";
-  return `
-    <header class="job-head">
-      <div>
-        <div class="job-title">${escapeHtml(job.title)}</div>
-        <div class="job-meta">${escapeHtml(RECIPE_LABELS[job.recipe] || job.recipe)} · ${escapeHtml(timeLabel(job.createdAt))}${
-          elapsed === null ? "" : ` · <span class="job-elapsed" data-started="${escapeHtml(job.startedAt)}"
-            data-finished="${escapeHtml(job.finishedAt || "")}">${formatDuration(elapsed)}</span>`}</div>
-      </div>
-      <span class="state state-${escapeHtml(job.state)}">${escapeHtml(JOB_STATE_LABELS[job.state] || job.state)}</span>
-    </header>
-    ${stages ? `<ol class="stages">${stages}</ol>` : ""}
+  const assets = job.assets.map(asset => thumbHtml(job.id,asset)).join("");
+  const title=job.params?.subject || job.title;
+  const label=job.recipe === "image" && job.params?.preset === "prop-3d" ? "3D 컨셉" : RECIPE_LABELS[job.recipe] || job.recipe;
+  return `<header class="job-head"><div><div class="job-title">${escapeHtml(title)}</div><div class="job-meta">${escapeHtml(label)} · ${escapeHtml(timeLabel(job.createdAt))}</div></div><span class="state state-${escapeHtml(job.state)}">${escapeHtml(JOB_STATE_LABELS[job.state])}</span></header>
+    ${isActive(job) ? `<div class="job-summary"><span class="pulse"></span>${readablePhase(job)}</div>` : ""}
     ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
     ${assets ? `<div class="job-assets">${assets}</div>` : ""}
-    ${isActive(job) ? `<footer class="job-foot">
-      <button class="ghost is-danger" type="button" data-action="cancel" data-job="${escapeHtml(job.id)}" ${cancelling ? "disabled" : ""}>
-        ${cancelling ? "중지하는 중" : "중지"}
-      </button></footer>` : ""}`;
+    <footer class="job-foot"><button class="ghost" type="button" data-action="record" data-job="${job.id}">작업 기록 ↗</button>${isActive(job)?`<button class="ghost is-danger" type="button" data-action="cancel" data-job="${job.id}" ${job.state==='cancelling'?'disabled':''}>중지</button>`:`<span class="job-meta">${elapsed!==null?formatDuration(elapsed):''}</span>`}</footer>`;
+}
+async function openRecord(jobId) {
+ const job=await api(`/api/jobs/${jobId}`);
+ popup("작업 기록", `<div class="record-summary"><span>${escapeHtml(job.title)}</span><span>${JOB_STATE_LABELS[job.state]}</span></div><ol class="stages">${job.stages.map(stageHtml).join("")}</ol>${job.error?`<p class="notice">${escapeHtml(job.error)}</p>`:''}<details class="advanced"><summary>입력 조건</summary><pre class="record-log">${escapeHtml(JSON.stringify(job.params,null,2))}</pre></details><details class="advanced"><summary>실행 로그</summary><pre class="record-log">${escapeHtml((job.logTail||[]).join('\n'))}</pre></details>`, {wide:true});
 }
 
 function renderJobs() {
   const list = $("#job-list");
   // 프리비즈 작업은 프리비즈 탭이 컷 순서로 보여 준다. 여기서는 에셋 생성만 다룬다.
-  const jobs = state.jobs.filter((job) => job.recipe !== "previz");
+  const jobs = state.jobs.filter((job) => job.recipe !== "previz").slice(0, 10);
   if (!jobs.length) {
-    list.innerHTML = `<div class="empty">아직 작업이 없습니다. 왼쪽에서 첫 에셋을 만들어 보세요.</div>`;
+    list.innerHTML = `<div class="empty empty-studio"><span>◇</span><h3>첫 에셋을 만들어 보세요.</h3><p>만든 결과가 이곳에 모입니다.<br>에셋을 열면 색과 로고를 자유롭게 바꿀 수 있습니다.</p></div>`;
     state.signatures.clear();
   } else {
     list.querySelector(".empty")?.remove();
@@ -435,11 +462,15 @@ function detailHtml(job, asset) {
   </div>`;
 }
 
+let assetOpenRequest=0;
 async function openAsset(jobId, assetId) {
+  const request=++assetOpenRequest;
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+    if(request!==assetOpenRequest)return;
     const asset = job.assets.find((item) => item.id === assetId);
     if (!asset) return;
+    if (asset.kind === "image" || asset.kind === "mesh") { $("#asset-dialog").close(); return editor.open(job, asset); }
     $("#asset-detail").innerHTML = detailHtml(job, asset);
     const dialog = $("#asset-dialog");
     if (!dialog.open) dialog.showModal();
@@ -475,23 +506,13 @@ async function setReview(button) {
 
 async function makeMesh(jobId, assetId) {
   try {
-    await api("/api/jobs", {
-      method: "POST",
-      body: {
-        recipe: "image-to-3d",
-        params: {
-          source: { jobId, assetId }, pipelineType: $("#pipeline").value,
-          textureSize: Number($("#texture").value), targetFaces: Number($("#faces").value),
-          gameFaces: Number($("#game-faces").value),
-        },
-      },
-    });
-    $("#asset-dialog").close();
-    showView("create");
-    refreshJobs();
-  } catch (error) {
-    setDetailMessage(error.message);
-  }
+    const job=await api(`/api/jobs/${jobId}`),asset=job.assets.find(a=>a.id===assetId);
+    const dialog=popup("이 이미지로 3D 만들기", `<img class="conversion-preview" src="${fileUrl(jobId,asset.preview||asset.file)}" alt="선택한 이미지"><div class="quality-note"><strong>고품질 3D 원본</strong><p>선택한 이미지로 형태와 재질을 만듭니다. 완성 후 색상과 로고를 편집할 수 있습니다.</p></div><button class="primary full" data-convert>3D 생성 시작</button>`);
+    dialog.querySelector('[data-convert]').onclick=async e=>{e.target.disabled=true;try {
+      await api('/api/jobs',{method:'POST',body:{recipe:'image-to-3d',params:{source:{jobId,assetId},pipelineType:$('#pipeline').value,textureSize:Number($('#texture').value),targetFaces:Number($('#faces').value),gameFaces:0}}});
+      dialog.close();$('#asset-dialog').close();editor.close();showView('create');await refreshJobs();toast('3D 생성을 시작했습니다.');
+    } catch(error){toast(error.message);e.target.disabled=false;}};
+  }catch(error){toast(error.message);}
 }
 
 // ---- 보관함 -----------------------------------------------------------------
@@ -501,7 +522,9 @@ async function refreshLibrary() {
   const filter = state.libraryFilter;
   for (const button of $$("#library-filter button")) button.classList.toggle("is-active", button.dataset.filter === filter);
   try {
-    const { assets } = await api(`/api/assets${filter === "all" ? "" : `?review=${filter}`}`);
+    const response = await api(`/api/assets${filter === "all" ? "" : `?review=${filter}`}`);
+    const query = $("#library-search").value.trim().toLowerCase(), kind = $("#library-kind").value;
+    const assets = response.assets.filter(a=>(kind === "all" || a.kind === kind) && (!query || a.jobTitle.toLowerCase().includes(query)));
     grid.innerHTML = assets.length
       ? assets.map((asset) => `<div class="asset-card">${thumbHtml(asset.jobId, asset)}
           <div class="caption">${escapeHtml(asset.jobTitle)}${asset.meta?.label ? ` · ${escapeHtml(asset.meta.label)}` : ""}</div></div>`).join("")
@@ -580,6 +603,13 @@ function wireEvents() {
     renderComposer();
   });
   $("#count").addEventListener("change", updateSubmitLabel);
+  for (const input of $$('input[name="workflow"]')) input.addEventListener('change', updateSubmitLabel);
+  $("#open-settings").onclick=()=>$("#settings-dialog").showModal();
+  for (const id of ['close-settings','apply-settings']) $('#'+id).onclick=()=>{$('#settings-dialog').close();updateSubmitLabel();};
+  $('#remove-background').onchange=updateSubmitLabel;
+  $('#prompt-examples').onclick=e=>{const b=e.target.closest('[data-example]');if(b){$('#subject').value=b.dataset.example;$('#subject').focus();}};
+  $('#pick-library').onclick=()=>chooseFromLibrary().catch(e=>toast(e.message));
+  $('#import-image').onclick=async()=>{try{const file=await pickFile();if(!file)return;const upload=await uploadBlob(file);const created=await api('/api/jobs',{method:'POST',body:{recipe:'import-image',params:{uploadId:upload.id,name:file.name.replace(/\.[^.]+$/,'')}}});await refreshJobs();const job=await waitJob(api,created.id);await refreshJobs();openAsset(job.id,job.assets[0].id);}catch(error){toast(error.message);}};
   $("#composer").addEventListener("submit", submitComposer);
   $("#subject").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) $("#composer").requestSubmit();
@@ -591,14 +621,12 @@ function wireEvents() {
     refreshLibrary();
   });
   $("#doctor-refresh").addEventListener("click", refreshSystem);
+  $("#library-search").addEventListener("input", refreshLibrary);
+  $("#library-kind").addEventListener("change", refreshLibrary);
   // 닫을 때 비워야 3D 뷰어가 뒤에서 계속 그리지 않는다.
   $("#asset-dialog").addEventListener("close", () => { $("#asset-detail").innerHTML = ""; });
 
-  $("#pick-image").addEventListener("click", async () => {
-    if (!bridge) return showFormError("파일 고르기는 앱에서만 쓸 수 있습니다.");
-    const path = await bridge.pickImage();
-    if (path) setImage(path);
-  });
+  $("#pick-image").addEventListener("click", async () => chooseImage(await pickFile()));
   const dropzone = $("#image-field");
   dropzone.addEventListener("dragover", (event) => { event.preventDefault(); dropzone.classList.add("is-over"); });
   dropzone.addEventListener("dragleave", () => dropzone.classList.remove("is-over"));
@@ -607,10 +635,7 @@ function wireEvents() {
     dropzone.classList.remove("is-over");
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
-    const path = bridge?.pathForFile(file) || "";
-    if (!path) return showFormError("끌어다 놓은 파일의 경로를 읽지 못했습니다. 이미지 고르기를 써 주세요.");
-    showFormError("");
-    setImage(path, URL.createObjectURL(file));
+    chooseImage(file);
   });
   // 창 아무 데나 파일을 놓으면 Electron이 그 파일로 이동하려 한다.
   for (const type of ["dragover", "drop"]) document.addEventListener(type, (event) => event.preventDefault());
@@ -620,6 +645,8 @@ function wireEvents() {
     if (!target) return;
     const { action, job, asset } = target.dataset;
     if (action === "open") openAsset(job, asset);
+    else if (action === "record") openRecord(job).catch(e=>toast(e.message));
+    else if (action === "library") showView("library");
     else if (action === "review") setReview(target);
     else if (action === "to3d") makeMesh(job, asset);
     else if (action === "refine") {
@@ -665,7 +692,7 @@ async function init() {
     $("#pipeline").value = defaults.pipelineType;
     $("#texture").value = String(defaults.textureSize);
     $("#faces").value = String(defaults.targetFaces);
-    $("#game-faces").value = String(defaults.gameFaces ?? 100000);
+
   } catch (error) {
     showFormError(error.message);
   }

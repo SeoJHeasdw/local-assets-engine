@@ -81,3 +81,16 @@ def test_invalid_requests_return_clear_errors(api):
     assert client.post("/api/jobs/bad-id/cancel").status_code == 404
     bad_review = client.post("/api/jobs/20260101-000000-abcd/assets/a01/review", json={"status": "maybe"})
     assert bad_review.status_code == 400
+
+
+def test_local_image_upload_and_source_validation(api):
+    import io
+    from PIL import Image
+    client, _runner = api
+    image=io.BytesIO();Image.new('RGBA',(8,8),'red').save(image,format='PNG')
+    result=client.post('/api/uploads',content=image.getvalue(),headers={'content-type':'image/png'})
+    assert result.status_code==201
+    upload=result.json();assert upload['width']==8 and client.get(upload['url']).status_code==200
+    assert client.post('/api/uploads',content=b'not an image').status_code==400
+    assert client.post('/api/uploads',content=image.getvalue(),headers={'origin':'https://evil.example'}).status_code==403
+    assert client.get('/uploads/invalid').status_code==404

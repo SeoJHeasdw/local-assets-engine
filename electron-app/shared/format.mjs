@@ -11,7 +11,7 @@ export const REVIEW_LABELS = { pending: "검토 대기", approved: "승인", rej
 export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
   "repair-mesh": "기존 3D 복구",
-  "refine-mesh": "3D 품질 재구성",
+  "refine-mesh": "3D 원본 재구성", "edit-asset": "에셋 편집", "import-image": "가져온 이미지",
 };
 
 export function isActive(job) {
@@ -73,13 +73,15 @@ export function buildJobRequest(form) {
     ...(form.gameFaces !== undefined ? { gameFaces: Number(form.gameFaces) } : {}),
   };
   if (form.kind === "3d" && form.source === "image") {
-    if (!form.imagePath) throw new Error("3D로 만들 이미지를 골라 주세요.");
-    return { recipe: "image-to-3d", params: { imagePath: form.imagePath, ...mesh, ...(seed ? { meshSeed: Number(seed) } : {}) } };
+    if (!form.imagePath && !form.uploadId && !form.imageSource) throw new Error("3D로 만들 이미지를 골라 주세요.");
+    const source = form.imageSource ? {source:form.imageSource} : form.uploadId ? {uploadId:form.uploadId} : {imagePath:form.imagePath};
+    return { recipe: "image-to-3d", params: { ...source, ...(form.imageName ? {name:form.imageName} : {}), ...mesh, ...(seed ? { meshSeed: Number(seed) } : {}) } };
   }
   const subject = String(form.subject ?? "").trim();
   if (!subject) throw new Error("무엇을 만들지 적어 주세요.");
   const base = { preset: form.preset, subject, style: String(form.style ?? "").trim(), ...(seed ? { seed: Number(seed) } : {}) };
+  if (form.removeBackground !== undefined && form.kind === "2d") base.removeBackground = Boolean(form.removeBackground);
   const count = Number(form.count || 1);
-  if (form.kind === "3d" && count === 1) return { recipe: "text-to-3d", params: { ...base, count: 1, ...mesh } };
+  if (form.kind === "3d" && (form.workflow === "direct" || (!form.workflow && count === 1))) return { recipe: "text-to-3d", params: { ...base, count: 1, ...mesh } };
   return { recipe: "image", params: { ...base, count } };
 }

@@ -35,7 +35,7 @@
       "pipelineType": "512",
       "textureSize": 4096,
       "targetFaces": 1000000,
-      "gameFaces": 100000,
+      "gameFaces": 0,
       "gameTextureSize": 2048,
       "sizeMeters": 1.0
     }

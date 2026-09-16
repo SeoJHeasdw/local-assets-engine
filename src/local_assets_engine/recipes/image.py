@@ -185,7 +185,8 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], _store: "JobStore"
 
 
 def _run(ctx: "JobContext") -> None:
-    generate_candidates(ctx, ctx.params)
+    role = "concept" if find_preset(ctx.presets, ctx.params["preset"])["kind"] == "3d" else "candidate"
+    generate_candidates(ctx, ctx.params, role=role)
 
 
 IMAGE = Recipe(id="image", label="2D 이미지 후보", prepare=_prepare, run=_run)

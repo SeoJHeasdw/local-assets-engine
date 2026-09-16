@@ -5,7 +5,9 @@
   <!-- wasm-unsafe-eval: model-viewer의 메시 압축 해제기(WASM)가 필요하다. 스크립트 출처는 그대로 'self'뿐이다. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' blob: data:; worker-src 'self' blob:">
   <title>Local Assets Studio</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="studio.css">
   <script type="module" src="/vendor/model-viewer.min.js"></script>
   <script type="module" src="app.js"></script>
 </head>
@@ -28,98 +30,26 @@
     <div class="resizer" id="sidebar-resizer" aria-label="사이드바 너비 (끌어서 조절, 두 번 누르면 기본)"></div>
 
     <main class="content">
-      <section class="view" id="view-create">
+      <section class="view studio" id="view-create">
+        <header class="studio-head"><div><span class="eyebrow">CREATION STUDIO</span><h1>생각을 에셋으로.</h1><p>만들고, 골라보고, 나만의 디테일을 더하세요.</p></div><button class="secondary" type="button" id="import-image">이미지 가져오기 ↗</button></header>
         <div class="create-grid">
           <form class="composer" id="composer" novalidate>
-            <header class="view-head">
-              <h1>만들기</h1>
-              <p>설명을 적으면 후보를 만들고, 고른 후보는 3D로 바꿀 수 있습니다.</p>
-            </header>
-
-            <div class="segmented" id="kind-switch" role="tablist" aria-label="에셋 종류">
-              <button type="button" data-kind="2d" class="is-active" role="tab">2D 에셋</button>
-              <button type="button" data-kind="3d" role="tab">3D 에셋</button>
+            <div class="segmented kind-cards" id="kind-switch" role="tablist" aria-label="에셋 종류">
+              <button type="button" data-kind="3d" role="tab"><span class="kind-symbol">◇</span><strong>3D 소품</strong><small>입체적인 오브젝트</small></button>
+              <button type="button" data-kind="2d" role="tab"><span class="kind-symbol">▧</span><strong>2D 이미지</strong><small>아이콘부터 배경까지</small></button>
             </div>
+            <div class="composer-body"><div class="segmented small" id="source-switch" aria-label="3D 입력"><button type="button" data-source="text">설명으로 시작</button><button type="button" data-source="image">이미지로 시작</button></div>
+            <div class="field" id="preset-field"><span class="label">만들 종류</span><div class="chips" id="preset-chips"></div><p class="hint" id="preset-hint"></p></div>
+            <div id="workflow-field" class="field"><div class="workflow-options"><label><input type="radio" name="workflow" value="concept" checked><span><strong>컨셉을 고른 뒤 3D로</strong><small>이미지를 먼저 보고 마음에 드는 방향을 선택</small></span></label><label><input type="radio" name="workflow" value="direct"><span><strong>한 번에 3D까지</strong><small>이미지 1장부터 3D 완성까지 자동으로 진행</small></span></label></div></div>
+            <label class="field" id="subject-field"><span class="label">어떤 에셋을 만들까요?</span><textarea id="subject" rows="3" placeholder="예: 둥근 뚜껑과 검은 철띠가 있는 나무 보물상자"></textarea></label>
+            <div class="prompt-examples" id="prompt-examples"><button type="button" data-example="wooden treasure chest with dark iron bands">보물상자</button><button type="button" data-example="ceramic teapot shaped like a sleepy cat">고양이 주전자</button><button type="button" data-example="old stone lantern covered in moss">이끼 낀 석등</button></div>
 
-            <div class="segmented small" id="source-switch" hidden aria-label="3D 입력">
-              <button type="button" data-source="text" class="is-active">설명으로</button>
-              <button type="button" data-source="image">이미지로</button>
-            </div>
+            <div class="field dropzone" id="image-field" hidden><div id="image-preview"></div><span class="drop-icon">↥</span><strong>이미지에서 3D로</strong><p>물체 전체가 잘 보이는 이미지가 좋아요.</p><div class="control-row"><button class="secondary" type="button" id="pick-image">파일 선택</button><button class="ghost" type="button" id="pick-library">보관함에서</button></div><small>PNG · JPG · WEBP / 끌어다 놓기</small></div>
 
-            <div class="field" id="preset-field">
-              <span class="label">종류</span>
-              <div class="chips" id="preset-chips"></div>
-              <p class="hint" id="preset-hint"></p>
-            </div>
-
-            <label class="field" id="subject-field">
-              <span class="label">무엇을 만들까요?</span>
-              <textarea id="subject" rows="3" placeholder="예: 푸른 불꽃이 감도는 마법 검"></textarea>
-            </label>
-
-            <label class="field" id="style-field">
-              <span class="label">스타일 <em>선택</em></span>
-              <input id="style" autocomplete="off" placeholder="예: hand-painted, warm palette">
-            </label>
-
-            <div class="field dropzone" id="image-field" hidden>
-              <button class="secondary" type="button" id="pick-image">이미지 고르기</button>
-              <p>또는 PNG·JPG·WEBP 파일을 여기로 끌어다 놓기</p>
-              <div id="image-preview"></div>
-            </div>
-
-            <div class="options">
-              <label class="field" id="count-field">
-                <span class="label">후보 수</span>
-                <select id="count"><option>1</option><option>2</option><option selected>4</option><option>8</option></select>
-              </label>
-              <label class="field">
-                <span class="label">시드</span>
-                <input id="seed" inputmode="numeric" autocomplete="off" placeholder="자동">
-              </label>
-              <label class="field mesh-option" hidden>
-                <span class="label">형상 해상도</span>
-                <select id="pipeline">
-                  <option value="512" selected>512 · 현재 장비 검증</option>
-                  <option value="1024">1024 · 메모리 요구 높음</option>
-                  <option value="1024_cascade">1024 cascade · 메모리 요구 높음</option>
-                </select>
-              </label>
-              <label class="field mesh-option" hidden>
-                <span class="label">품질본 텍스처</span>
-                <select id="texture"><option>512</option><option>1024</option><option>2048</option><option selected>4096</option></select>
-              </label>
-              <label class="field mesh-option" hidden>
-                <span class="label">품질본 목표 면 수</span>
-                <select id="faces">
-                  <option value="10000">1만</option>
-                  <option value="30000">3만</option>
-                  <option value="100000">10만</option>
-                  <option value="500000">50만</option>
-                  <option value="1000000" selected>100만 · 품질 우선</option>
-                  <option value="0">줄이지 않음</option>
-                </select>
-              </label>
-              <label class="field mesh-option" hidden>
-                <span class="label">게임용 목표 면 수 <em>형태 보존 우선</em></span>
-                <select id="game-faces">
-                  <option value="0">품질본만 만들기</option>
-                  <option value="30000">3만 면 · 2048px</option>
-                  <option value="100000" selected>10만 면 · 2048px</option>
-                  <option value="300000">30만 면 · 2048px</option>
-                </select>
-              </label>
-            </div>
-
-            <p class="form-error" id="form-error" role="alert" hidden></p>
-            <button class="primary" type="submit" id="submit">후보 만들기</button>
-            <p class="hint" id="submit-hint"></p>
+            </div><div class="composer-submit"><div class="composer-settings"><span id="settings-summary">고품질 원본</span><button class="ghost" type="button" id="open-settings">생성 설정 ⚙</button></div>
+            <p class="form-error" id="form-error" role="alert" hidden></p><button class="primary" type="submit" id="submit">컨셉 만들기</button><p class="hint" id="submit-hint"></p><kbd class="keyboard-hint">⌘ Enter 로 시작</kbd></div>
           </form>
-
-          <section class="feed" aria-label="작업">
-            <header class="feed-head"><h2>작업</h2><span id="queue-summary"></span></header>
-            <div class="job-list" id="job-list"></div>
-          </section>
+          <section class="feed" aria-label="최근 작업"><header class="feed-head"><div><span class="eyebrow">YOUR WORKSPACE</span><h2>최근 작업</h2></div><span id="queue-summary"></span><button class="ghost" type="button" data-action="library">전체 에셋 보기 →</button></header><div class="job-list" id="job-list"></div></section>
         </div>
       </section>
 
@@ -261,6 +191,7 @@
             <button type="button" data-filter="all">전체</button>
           </div>
         </header>
+        <div class="library-toolbar"><input type="search" id="library-search" aria-label="에셋 검색" placeholder="에셋 이름으로 찾기"><select id="library-kind" aria-label="에셋 종류 필터"><option value="all">모든 종류</option><option value="mesh">3D 에셋</option><option value="image">2D·컨셉 이미지</option><option value="shot">프리비즈 샷</option></select></div>
         <div class="asset-grid" id="library-grid"></div>
       </section>
 
@@ -281,5 +212,14 @@
     <div id="asset-detail"></div>
   </dialog>
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <dialog class="studio-dialog" id="settings-dialog" aria-labelledby="settings-title"><header class="dialog-head"><div><span class="eyebrow">PREFERENCES</span><h2 id="settings-title">생성 설정</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="설정 닫기">✕</button></header><div class="dialog-body">
+            <label class="field" id="style-field"><span class="label">스타일 <em>선택</em></span><input id="style" placeholder="예: 손으로 그린 듯한 따뜻한 느낌"></label>
+    <label class="field" id="count-field"><span class="label">이미지 후보 수</span><select id="count"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></label>
+    <label class="field"><span class="label">시드 <em>선택</em></span><input id="seed" inputmode="numeric" placeholder="비워 두면 새로운 결과"></label>
+    <label class="check-label" id="background-field"><input type="checkbox" id="remove-background" checked>투명 배경으로 만들기</label>
+    <div class="quality-note mesh-option"><strong>고품질 원본을 만듭니다.</strong><p>표면과 재질을 보존하고, 여러 방향에서 확인할 수 있는 결과를 함께 남깁니다.</p></div>
+    <details class="advanced mesh-option"><summary>고급 품질 설정</summary><label class="field"><span class="label">형상 해상도</span><select id="pipeline"><option value="512">512 · 현재 장비 검증</option><option value="1024">1024 · 높은 메모리 요구</option><option value="1024_cascade">1024 cascade · 높은 메모리 요구</option></select></label><label class="field"><span class="label">텍스처 크기</span><select id="texture"><option>1024</option><option>2048</option><option selected>4096</option></select></label><label class="field"><span class="label">표면 면 수</span><select id="faces"><option value="100000">10만</option><option value="500000">50만</option><option value="1000000" selected>100만</option><option value="0">모두 보존</option></select></label></details>
+    <button class="primary full" type="button" id="apply-settings">설정 적용</button>
+  </div></dialog>
 </body>
 </html>

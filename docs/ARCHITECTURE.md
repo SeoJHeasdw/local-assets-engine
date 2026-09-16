@@ -16,6 +16,10 @@
 | `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
 | `src/local_assets_engine/workers/quality_*.py` | 원본 표면 재구성, 형상 오차 제한 감축, 최종 UV·PBR 굽기 |
 | `src/local_assets_engine/workers/gltf_export.py` | 좌표·UV·PBR GLB 계약, 이전 KDTree 원본 복구 |
+| `src/local_assets_engine/uploads.py` | 20MB·1,677만 픽셀 이하 로컬 이미지 가져오기, 경로 없는 ID |
+| `tools/asset_edit.py`, `tools/edit_pixels.mjs` | 측정 프로세스에서 표면 편집 적용, 원본 형상 버퍼 보존 |
+| `electron-app/shared/editing.mjs`, `glb.mjs` | 미리보기·최종 저장이 공유하는 픽셀 계산과 GLB 읽기 |
+| `electron-app/renderer/editor.js`, `drafts.js` | 에셋 편집 공간과 로컬 임시 편집 보관 |
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
@@ -71,6 +75,8 @@ javis · CLI   ──HTTP───▶        │
 | --- | --- |
 | `GET /api/health` | 상태, 버전, 실행 중인 작업, 출력 폴더 |
 | `GET /api/doctor?deep=true` | 진단. `deep`은 하위 프로세스 검사(MPS, TRELLIS Metal)를 포함 |
+| `POST /api/uploads` | PNG/JPG/WEBP 바이트를 검증·정규화하고 로컬 이미지 ID 반환 |
+| `GET /uploads/{id}` | 해당 이미지 PNG. ID로만 조회, 경로 입력 불가 |
 | `GET /api/presets` | `config/presets.json` |
 | `GET /api/bench` | 단계·조건별 소요 시간과 최대 메모리 |
 | `GET /api/jobs?limit=100` | 최근 작업 |
@@ -89,10 +95,12 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | --- | --- | --- |
 | `image` | `subject`(필수), `preset`, `style`, `count` 1~8, `seed`, `width`·`height` 256~2048(16의 배수로 내림), `removeBackground` | `item-icon`, 4장, 프리셋 크기 |
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
-| `image-to-3d` | `imagePath`(절대 경로) 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
+| `image-to-3d` | `imagePath`(절대 경로), `uploadId`, 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
-| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 목표 100,000·2048px, 1.0m |
+| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
+| `import-image` | `uploadId`, `name` | 이미지를 새 검토 대기 에셋으로 등록 |
+| `edit-asset` | `source`, `name`, `plan`, `replaceEdits` | 원본 보존, 새 버전 생성 |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
@@ -161,6 +169,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `optimize-master`·`optimize-game` | `gltfpack ... -noq` | 추가 감축·양자화 없는 전송용 사본 |
 | `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
 | `post`·`optimize` | Blender·gltfpack | 이전 `repair-mesh` 전용 |
+| `edit`·`import` | `python -m local_assets_engine.tools.asset_edit` + Node.js 픽셀 계산 | 원본을 새 작업에 복사하고 새 버전 저장 |
 | `repair` | `python workers/gltf_export.py --input ... --output ...` | 없음. 기존 KDTree 원본을 새 작업으로 복구 |
 | `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
 
@@ -184,7 +193,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 4. CPU에서 원본 표면까지의 unsigned distance를 계산해 좁은 두께의 일관된 표면으로 재구성한다.
    물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 가장 짧은 모서리부터
    위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다.
-5. 게임용은 **품질본에서 UV를 펴기 전에** 형상 오차를 제한하며 감축한다. 위상이 나빠지면
+5. 게임용은 기본 생성에서 생략한다. API에 `gameFaces > 0`을 명시한 경우에만 **품질본에서 UV를 펴기 전에** 형상 오차를 제한하며 감축한다. 위상이 나빠지면
    오차를 더 엄격히 하여 재시도하고 끝내 통과하지 못하면 품질본 형상을 유지한다. 목표 면 수를
    맞추려고 형상을 망가뜨리지 않으며, 초과한 실제 면 수와 이유를 경고에 기록한다.
 6. 각 최종 형상에 UV를 펴고 텍셀 중심을 원본 표면으로 투영하여 원본 복셀의 PBR을 삼선형
@@ -193,7 +202,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
    위치·부드러운 노멀·텍스처에 함께 적용한다.
 7. Blender는 **추가 감축 없이** 바닥 중심과 미터 크기만 맞춘다. 품질본과 게임용은 동일한
    변환을 공유한다. gltfpack 사본도 감축·정밀도 양자화를 하지 않는다.
-8. 실제 최종 GLB를 여섯 방향으로 렌더하고 품질본·게임용을 각각 `pending` 에셋으로 등록한다.
+8. 실제 최종 GLB를 여섯 방향으로 렌더하고 품질본을 `pending` 에셋으로 등록한다.
+   게임용을 요청한 경우에도 별도 `pending` 에셋이다.
    카드의 그림은 생성 입력이 아니라 해당 GLB의 렌더다.
 
 파일은 `mesh/asset.glb`(품질본), `asset.game.glb`(게임용), 각각의 `.raw.glb`·`.opt.glb`·
@@ -215,6 +225,42 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 이미 손실된 형상은 되살리지 못한다. 이전 `audit: true` 작업의 `mesh/audit/decoded.npz`는
 `refine-mesh`의 원본으로 사용할 수 있다. 새 생성은 `audit` 여부와 관계없이 원본을 항상 남긴다.
 진단용 `trellis_audit.py`는 이전 경로 재현용이며 일반 생성 기본 경로는 아니다.
+
+## 생성 UI와 표면 편집 계약
+
+디자인 컴포넌트와 사용 흐름은 [DESIGN_SYSTEM](DESIGN_SYSTEM.md)을 따른다.
+3D 컨셉 확인과 바로 생성은 UI의 명시적 선택이며 후보 수에 의존하지 않는다. 레거시 CLI의
+`text-to-3d`는 계속 자동 생성을 지원한다. 주 화면에는 결과·간결한 상태를 보여 주고 상세 단계는
+작업 기록 팝업에 표시한다. `job.json` 계측과 환경의 측정 기록은 그대로 유지한다.
+
+`edit-asset`의 `plan`은 다음을 가진다.
+
+- `brightness`, `contrast`, `saturation`: 픽셀 색 조절, 기본 1.
+- `recolor`: `{enabled, from, to, tolerance}`. RGB 거리로 선택하고 기존 명암을 유지한다.
+- `frame`: 2D만 `{turns: 0..3, flipX, crop: original/square/portrait/landscape}`.
+- `overlay`: `{enabled, uploadId, size, rotation, opacity, text?}`. 2D는 `x,y`(0..1),
+  3D는 glTF 모델 좌표의 `position,normal`, 투영 범위 `depth`를 더 가진다. 3D 크기는 미터,
+  2D 크기는 이미지 가로의 비율이다. 업로드 PNG가 실제 글꼴·로고 픽셀을 보존한다.
+- `metallic`, `roughness`: 기존 PBR 계수에 곱할 유지 비율. 기본 1.
+
+미리보기는 Web Worker, 최종 저장은 측정된 Python→Node 프로세스에서 **같은** `editing.mjs`를
+실행한다. 미리보기 텍스처만 1024px 이내로 표시하며 최종 파일은 원래 텍스처 해상도를 유지한다.
+CanvasTexture의 V 규약은 화면에 적용할 때만 뒤집는다. 저장 PNG와 glTF UV는 그대로다.
+
+3D 로고는 선택한 면 주변을 평면 투영하여 원래 색 텍스처에 합성한다. 이웃 면 방향과 깊이 범위로
+반대편까지 관통하는 것을 막는다. 조각·불리언·형상 변경이나 실제 음각 기능은 아니다. 애니메이션,
+스킨, 압축·특수 UV 메시에는 지원 범위를 명확한 오류로 알린다. 이 프로젝트의 정적 품질본이 대상이다.
+GLB 저장은 이미지 bufferView와 요청한 재질 계수만 바꾸고 모든 형상·UV·노멀·면 인덱스 바이트를 보존한다.
+
+결과는 `edit/asset.png` 또는 `edit/asset.glb`, `edit/source.*`(편집 기준), `edit/logo.png`,
+`edit/request.json`, `edit/stats.json`, 3D 검수 이미지다. `meta.source`는 이전 버전을,
+`editBaseFile`, `editStampFile`, `editPlan`은 재편집 기준과 설정을 가리킨다. UI가 `replaceEdits: true`로
+저장하면 기준 파일에 수정된 설정을 재적용하여 로고·보정이 중복으로 구워지지 않는다.
+기본 API 호출은 선택한 현재 파일 위에 새 편집을 적용한다.
+
+편집본의 원본 복셀 참조는 그대로 물려주지 않는다. 과거 복셀로 재구성하면 표면 편집이 사라지기
+때문이다. 이전 버전을 열어 원본으로 돌아갈 수 있다. 파일·승인·프리비즈 참조는 덮어쓰지 않고 새
+검토 대기 에셋을 만든다. 미저장 편집은 브라우저 IndexedDB에 따로 보관한다.
 
 ## 프리비즈 계약
 
