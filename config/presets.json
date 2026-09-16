@@ -116,7 +116,7 @@
       "kind": "3d",
       "label": "3D 소품",
       "hint": "컨셉 이미지를 만든 뒤 3D 메시로 변환",
-      "prompt": "{subject}, single 3D game prop, entire object visible, three-quarter view, centered, soft even lighting, plain white background, no shadow, no text",
+      "prompt": "{subject}, single 3D game prop, stylized with smooth clean surfaces and simple bold shapes, flat even materials, minimal surface texture detail, entire object visible, three-quarter view, centered, soft even lighting, plain white background, no shadow, no text",
       "width": 1024,
       "height": 1024,
       "removeBackground": true,

@@ -57,8 +57,15 @@ def _run(recipe: str, raw_params: str) -> int:
     if _server_running():
         # 서버가 떠 있으면 같은 줄에 세운다. 두 곳에서 동시에 모델을 올리면 메모리가 넘친다.
         job = _api("POST", "/api/jobs", {"recipe": recipe, "params": params})
-        print(f"엔진 서버에 작업을 넣었습니다: {job['id']}")
-        job = _print_progress(lambda: _api("GET", f"/api/jobs/{job['id']}"))
+        job_id = job["id"]
+        print(f"엔진 서버에 작업을 넣었습니다: {job_id}")
+        try:
+            job = _print_progress(lambda: _api("GET", f"/api/jobs/{job_id}"))
+        except (urllib.error.URLError, OSError) as error:
+            # 앱을 닫으면 그 앱이 띄운 엔진도 함께 사라진다. 역추적 대신 어디를 볼지 알린다.
+            print(f"엔진 서버와 연결이 끊겼습니다: {error}")
+            print(f"진행 상황은 output/jobs/{job_id}/job.json에 남아 있습니다.")
+            return 1
     else:
         from .jobs import JobStore
         from .paths import jobs_dir

@@ -2,6 +2,12 @@ import { spawn as nativeSpawn } from "node:child_process";
 
 export const DEFAULT_PORT = 47831;
 
+// 앱을 닫는다고 만들던 에셋까지 버릴 이유는 없다. 엔진은 앱과 별개 프로세스이고 다음
+// 실행에서 다시 붙으므로, 작업이 도는 중이면 그대로 두고 비어 있을 때만 끈다.
+export function shouldStopEngine({ owned, busyJob }) {
+  return Boolean(owned) && !busyJob;
+}
+
 // 엔진은 앱보다 먼저 떠 있을 수 있다(javis나 CLI가 띄운 경우). 이미 응답하는 엔진은
 // 그대로 쓰고, 이 앱이 직접 띄운 엔진만 앱과 함께 끈다.
 export function createEngineService({

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { createEngineService } from "../../electron-app/main/engine.mjs";
+import { createEngineService, shouldStopEngine } from "../../electron-app/main/engine.mjs";
 import { resolveJobFile } from "../../electron-app/main/ipc.mjs";
 
 // pid_max보다 큰 값이라 실제 프로세스 그룹에 신호가 가지 않는다.
@@ -84,4 +84,10 @@ test("revealed files stay inside the job folder", () => {
   assert.equal(resolveJobFile("/out", "20260916-010203-abcd", "../../secret"), null);
   assert.equal(resolveJobFile("/out", "../x", "a.png"), null);
   assert.equal(resolveJobFile(null, "20260916-010203-abcd", "a.png"), null);
+});
+
+test("the engine stays up while a job is still generating", () => {
+  assert.equal(shouldStopEngine({ owned: true, busyJob: null }), true);
+  assert.equal(shouldStopEngine({ owned: true, busyJob: "20260916-143609-c4f7" }), false);
+  assert.equal(shouldStopEngine({ owned: false, busyJob: null }), false);
 });
