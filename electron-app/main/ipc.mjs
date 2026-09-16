@@ -9,6 +9,13 @@ export function resolveJobFile(outputDir, jobId, relative) {
   return target.startsWith(base + path.sep) ? target : null;
 }
 
+// 기본 앱으로 여는 통로는 작업 폴더 안의 Blender 장면으로만 좁힌다.
+// 임의 파일을 열 수 있으면 화면이 실행 파일을 여는 통로가 된다.
+export function resolveBlendFile(outputDir, jobId, relative) {
+  const target = resolveJobFile(outputDir, jobId, relative);
+  return target && path.extname(target) === ".blend" ? target : null;
+}
+
 export function createIpcService({ ipcMain, dialog, shell, state, reconnect }) {
   function registerIpc() {
     ipcMain.handle("assets:engine-info", () => ({
@@ -28,6 +35,11 @@ export function createIpcService({ ipcMain, dialog, shell, state, reconnect }) {
       if (!target) return false;
       shell.showItemInFolder(target);
       return true;
+    });
+    ipcMain.handle("assets:open-blend", async (_event, jobId, relative) => {
+      const target = resolveBlendFile(state.outputDir, jobId, relative);
+      if (!target) return false;
+      return (await shell.openPath(target)) === "";
     });
   }
 

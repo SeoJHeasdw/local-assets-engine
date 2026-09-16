@@ -2,7 +2,8 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' blob: data:; worker-src 'self' blob:">
+  <!-- wasm-unsafe-eval: model-viewer의 메시 압축 해제기(WASM)가 필요하다. 스크립트 출처는 그대로 'self'뿐이다. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' blob: data:; worker-src 'self' blob:">
   <title>Local Assets Studio</title>
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="/vendor/model-viewer.min.js"></script>
@@ -107,82 +108,116 @@
         </div>
       </section>
 
-      <section class="view" id="view-previz" hidden>
-        <div class="create-grid">
-          <form class="composer" id="previz-form" novalidate>
-            <header class="view-head">
-              <h1>프리비즈</h1>
-              <p>뼈대 장면으로 연출을 먼저 확정합니다. 결과는 그림이 아니라 카메라 값입니다.</p>
-            </header>
+      <section class="view pv" id="view-previz" hidden>
+        <header class="pv-bar">
+          <div class="pv-title">
+            <h1>프리비즈</h1>
+            <span class="pv-sub">뼈대 장면에서 카메라를 먼저 확정합니다</span>
+          </div>
+          <div class="pv-renders" id="pv-renders" aria-label="렌더 기록"></div>
+          <div class="pv-cta">
+            <span class="pv-cta-note" id="pv-cta-note"></span>
+            <button class="primary" type="button" id="pv-render">샷 만들기</button>
+          </div>
+        </header>
 
-            <div class="field">
-              <span class="label">장면에 놓을 3D 에셋</span>
-              <div class="picker">
-                <select id="previz-mesh"></select>
-                <button class="secondary" type="button" id="previz-add">추가</button>
+        <div class="pv-body" id="pv-body">
+          <aside class="pv-panel" id="pv-panel" aria-label="장면과 컷 편집">
+            <section class="pv-section" data-section="scene">
+              <button class="pv-head" type="button" aria-expanded="true">
+                <span class="pv-step">1</span><span class="pv-head-title">장면</span>
+                <span class="pv-head-summary" id="pv-scene-summary"></span><span class="pv-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="pv-section-body">
+                <div class="pv-row-label">
+                  <span class="label">3D 에셋</span>
+                  <span class="pv-help" data-tip="에셋을 지도로 끌어다 놓거나, 눌러서 가운데에 놓습니다. 처음 놓은 에셋이 주인공이 됩니다.">?</span>
+                </div>
+                <div class="pv-tray" id="pv-tray"></div>
+                <div class="pv-row-label">
+                  <span class="label">배치 <em>위에서 본 모습 · 한 칸 1m</em></span>
+                  <button class="pv-icon" type="button" id="pv-fit" data-tip="모든 에셋과 카메라가 보이게 맞춤">⤢</button>
+                </div>
+                <div class="pv-map" id="pv-map"></div>
+                <div class="pv-legend">
+                  <span><i class="dot hero"></i>주인공</span><span><i class="dot"></i>에셋</span>
+                  <span><i class="cam"></i>카메라 시작</span><span><i class="cam end"></i>끝</span>
+                  <span class="pv-legend-tip" data-tip="에셋을 끌어 옮기고, 선택한 에셋의 둥근 손잡이를 끌어 돌립니다. 선택한 컷의 카메라 삼각형을 끌면 방향과 거리가 바뀝니다. 휠로 확대·축소합니다.">조작법</span>
+                </div>
+                <div id="pv-asset"></div>
               </div>
-              <div class="placed" id="previz-placed"></div>
-            </div>
+            </section>
 
-            <div class="field" id="previz-map-field" hidden>
-              <span class="label">배치 <em>위에서 본 모습 · 한 칸 1m</em></span>
-              <div class="scene-map" id="previz-map"></div>
-            </div>
+            <section class="pv-section" data-section="cuts">
+              <button class="pv-head" type="button" aria-expanded="true">
+                <span class="pv-step">2</span><span class="pv-head-title">컷 구성</span>
+                <span class="pv-head-summary" id="pv-cuts-summary"></span><span class="pv-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="pv-section-body">
+                <div class="chips" id="pv-presets"></div>
+                <p class="hint" id="pv-preset-hint"></p>
+                <ol class="pv-cutlist" id="pv-cutlist"></ol>
+                <div class="pv-cut-actions">
+                  <button class="ghost" type="button" id="pv-cut-add" data-tip="선택한 컷을 복제해 바로 뒤에 넣습니다">＋ 컷 복제</button>
+                  <button class="ghost" type="button" id="pv-cut-reset" data-tip="편집한 컷을 버리고 프리셋 그대로 되돌립니다">프리셋으로 되돌리기</button>
+                </div>
+              </div>
+            </section>
 
-            <div class="field">
-              <span class="label">샷 프리셋</span>
-              <div class="chips" id="shot-preset-chips"></div>
-              <p class="hint" id="shot-preset-hint"></p>
-            </div>
+            <section class="pv-section is-collapsed" data-section="render">
+              <button class="pv-head" type="button" aria-expanded="false">
+                <span class="pv-step">3</span><span class="pv-head-title">렌더 설정</span>
+                <span class="pv-head-summary" id="pv-render-summary"></span><span class="pv-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="pv-section-body">
+                <div class="options">
+                  <label class="field">
+                    <span class="label">렌더러 <span class="pv-help" data-tip="EEVEE: 그림자와 1m 격자 바닥이 보여 움직임을 판단하기 좋습니다(기본). Workbench: 가장 빠르지만 격자가 없습니다. Cycles: 약 7배 느립니다.">?</span></span>
+                    <select id="pv-renderer">
+                      <option value="eevee">EEVEE</option>
+                      <option value="workbench">Workbench</option>
+                      <option value="cycles">Cycles</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="label">해상도</span>
+                    <select id="pv-resolution">
+                      <option value="640x360">640×360</option>
+                      <option value="960x540">960×540</option>
+                      <option value="1280x720">1280×720</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span class="label">초당 프레임 <span class="pv-help" data-tip="12fps는 움직임 판단에 충분하고 렌더가 절반입니다.">?</span></span>
+                    <select id="pv-fps"><option value="12">12</option><option value="24">24</option></select>
+                  </label>
+                  <label class="field">
+                    <span class="label">깊이·윤곽 <span class="pv-help" data-tip="나중에 영상 모델의 조건 입력으로 쓰는 보조 그림입니다. 대표 프레임은 컷마다 처음·중간·끝입니다.">?</span></span>
+                    <select id="pv-aux">
+                      <option value="keys">대표 프레임</option>
+                      <option value="all">모든 프레임</option>
+                      <option value="none">만들지 않음</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="pv-switch" data-tip="텍스처를 끄고 한 가지 재질로 그려 형태와 구도만 봅니다">
+                  <input type="checkbox" id="pv-clay"><span>점토 재질</span>
+                </label>
+                <label class="pv-switch" data-tip="끄면 컷마다 정지 프레임만 만들고 한 편 영상이 생기지 않습니다">
+                  <input type="checkbox" id="pv-animatic"><span>애니매틱 영상</span>
+                </label>
+              </div>
+            </section>
+          </aside>
 
-            <div class="options">
-              <label class="field">
-                <span class="label">렌더러</span>
-                <select id="previz-renderer">
-                  <option value="eevee" selected>EEVEE (그림자·격자)</option>
-                  <option value="workbench">Workbench (가장 빠름)</option>
-                  <option value="cycles">Cycles (느림)</option>
-                </select>
-              </label>
-              <label class="field">
-                <span class="label">해상도</span>
-                <select id="previz-resolution">
-                  <option value="640x360">640×360</option>
-                  <option value="960x540" selected>960×540</option>
-                  <option value="1280x720">1280×720</option>
-                </select>
-              </label>
-              <label class="field">
-                <span class="label">초당 프레임</span>
-                <select id="previz-fps"><option value="12" selected>12</option><option value="24">24</option></select>
-              </label>
-              <label class="field">
-                <span class="label">깊이·윤곽</span>
-                <select id="previz-aux">
-                  <option value="keys" selected>대표 프레임만</option>
-                  <option value="all">모든 프레임</option>
-                  <option value="none">만들지 않음</option>
-                </select>
-              </label>
-            </div>
+          <button class="pv-panel-toggle" type="button" id="pv-panel-toggle" aria-controls="pv-panel" aria-expanded="true" data-tip="편집 패널 접기">‹</button>
 
-            <div class="toggles">
-              <label class="toggle"><input type="checkbox" id="previz-clay" checked> 점토 재질로 형태만 보기</label>
-              <label class="toggle"><input type="checkbox" id="previz-animatic" checked> 애니매틱 영상 만들기</label>
-            </div>
-
-            <p class="form-error" id="previz-error" role="alert" hidden></p>
-            <button class="primary" type="submit" id="previz-submit">샷 만들기</button>
-            <p class="hint" id="previz-cost"></p>
-          </form>
-
-          <section class="feed" aria-label="컷">
-            <header class="feed-head">
-              <h2>컷 순서</h2>
-              <select id="previz-job" class="quiet" aria-label="프리비즈 작업"></select>
-            </header>
-            <div id="previz-cuts" class="cuts"></div>
-          </section>
+          <div class="pv-stage" aria-label="프리비즈 영상">
+            <div class="pv-screen" id="pv-screen"></div>
+            <div class="pv-transport" id="pv-transport"></div>
+            <div class="pv-timeline" id="pv-timeline"></div>
+            <div class="pv-inspector" id="pv-inspector"></div>
+          </div>
         </div>
       </section>
 
@@ -215,5 +250,6 @@
   <dialog class="asset-dialog" id="asset-dialog">
     <div id="asset-detail"></div>
   </dialog>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
 </body>
 </html>

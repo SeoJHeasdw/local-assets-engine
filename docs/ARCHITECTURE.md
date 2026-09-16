@@ -34,6 +34,10 @@ javis · CLI   ──HTTP───▶        │
 ```
 
 - 앱은 이미 응답하는 엔진이 있으면 그대로 쓰고, 직접 띄운 엔진만 앱이 끝날 때 끈다.
+  그래서 레시피를 고친 뒤에는 떠 있던 엔진을 끄고 앱을 다시 열어야 새 코드가 올라온다.
+- 화면(HTML·JS·CSS)은 엔진이 저장소에서 바로 내보내며 `Cache-Control: no-store`를 붙이고, 앱도
+  화면을 띄울 때마다 창 캐시를 비운다. 작업 결과(`/files/`)와 벤더 스크립트는 캐시를 허용한다.
+- 창의 기본 앱 열기는 작업 폴더 안의 `.blend`만 받는다(`assets:open-blend`).
 - 엔진이 SIGTERM을 받으면 진행 중인 작업을 중지한다. 단계 프로세스는 자기 세션으로
   실행되므로 그 프로세스 그룹에 SIGTERM을, 3초 뒤에도 남으면 SIGKILL을 보낸다.
 - 엔진이 시작할 때 `queued`로 남은 작업은 `cancelled`, `running`으로 남은 작업은
@@ -82,7 +86,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
 | `image-to-3d` | `imagePath`(절대 경로) 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048, `targetFaces` 0~1,000,000(0은 줄이지 않음), `sizeMeters`, `meshSeed` | `512`, 1024, 30000, 1.0 |
-| `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
+| `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
+| 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시) 또는 `path`(GLB·glTF 절대 경로), `id`, `position` [x, y, z] 미터, `yaw` 도, `scale` | 원점, 0도, 1.0 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
@@ -170,6 +175,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 
 - 레시피가 `previz/plan.json`(배치·샷 규칙)을 쓰고, 도구가 `previz/shots.json`(풀린 카메라
   값과 파일 목록)을 쓴다. 승인 상태는 `job.json`의 에셋에만 있다.
+- 앱의 프리비즈 화면은 프리셋을 초안으로 불러와 컷 순서·길이·카메라를 고치고 `shots`로 보낸다. 고친 적이 없으면
+  `shots`를 보내지 않아 기록의 `edited`가 거짓이다. 화면의 지도 카메라 계산(`electron-app/shared/previz.mjs`)은
+  엔진의 식과 같아야 하며, 같은 에셋·프리셋으로 엔진이 기록한 좌표와 맞는지 테스트가 지킨다.
 - 샷 프리셋은 `config/presets.json`의 `previz.shotPresets`다. 장르는 코드가 아니라 이 목록이며
   컷 길이·렌즈·움직임·구도 규칙을 정한다. `focus: "hero"`는 장면의 첫 에셋을 가리킨다.
 - 프레이밍은 미터가 아니라 **피사체 단위**로 적는다. `distance: 1.0`이 피사체가 화면을 꽉
@@ -190,6 +198,14 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `files` | `animatic`(mp4), `key`(대표 프레임), `color`·`depth`·`line` 목록 |
 | `pathFile` | 프레임별 카메라 값이 든 `previz/shots.json` 경로 |
 
+| `sequence` | 컷을 이어 붙인 한 편에서의 자리: `{file, seconds, at, start, end}`. `at`은 초, `start`·`end`는 프레임 |
+| `blendFile` | 모든 컷이 한 타임라인에 든 Blender 장면(`previz/scene.blend`) |
+
+- `previz/sequence.mp4`는 컷 애니매틱을 순서대로 이은 한 편이다. Blender 시퀀서로 다시 렌더하지
+  않고 잇기만 한다. `shots.json`의 `sequence.cuts`가 컷별 시작 프레임을 담는다.
+- `previz/scene.blend`에는 컷마다 `CAM_<샷 id>` 카메라가 있고, 타임라인 마커가 컷 시작 프레임에서
+  그 카메라로 바꾼다. 텍스처를 파일 안에 넣어 작업 폴더 밖에서도 열리고, 열면 카메라 시점이다.
+  사람이 Blender에서 카메라를 손으로 고치는 출발점이며 엔진은 이 파일을 다시 읽지 않는다.
 - 프레임별 카메라 값은 `job.json`을 불리므로 `shots.json`에만 둔다. `job.json`은 시작·끝만 든다.
 - 깊이는 `depthRange`로 정규화한 그림이고 샷 안에서 축척이 고정된다. 윤곽선은 그 깊이에
   소벨을 걸어 얻는다. 둘 다 나중 영상 모델의 조건 입력으로 쓸 수 있게 남긴다.

@@ -282,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
 
     aspect = width / height
     records: list[dict[str, Any]] = []
+    takes: list[tuple[str, list[tuple[Any, Any, float]]]] = []
     for shot in shots:
         started = time.monotonic()
         subject = subjects.get(str(shot.get("focus", "scene")), subjects["scene"])
@@ -311,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
 
         camera.animation_data_clear()
         path: list[dict[str, Any]] = []
+        keys: list[tuple[Any, Any, float]] = []
         for index in range(frames):
             fraction = 0.0 if frames == 1 else index / (frames - 1)
             lens = _interpolate(lens_start, lens_end, fraction, ease)
@@ -329,9 +331,13 @@ def main(argv: list[str] | None = None) -> int:
             aim = (target - position).to_track_quat("-Z", "Y")
             roll = math.radians(_interpolate(roll_start, roll_end, fraction, ease))
             camera.location = position
-            # 롤은 화면 축 기준이므로 시선 회전 뒤에 카메라 지역 Z로 돌린다.
-            camera.rotation_euler = (aim @ Quaternion((0.0, 0.0, 1.0), roll)).to_euler()
+            # 롤은 화면 축 기준이므로 시선 회전 뒤에 카메라 지역 Z로 돌린다. 앞 프레임과 이어지는
+            # 오일러 값을 골라야 Blender에서 키를 고칠 때 카메라가 한 바퀴 돌지 않는다.
+            turn = aim @ Quaternion((0.0, 0.0, 1.0), roll)
+            rotation = turn.to_euler("XYZ", keys[-1][1]) if keys else turn.to_euler("XYZ")
+            camera.rotation_euler = rotation
             camera_data.lens = lens
+            keys.append((position.copy(), rotation.copy(), lens))
             frame = index + 1
             camera.keyframe_insert("location", frame=frame)
             camera.keyframe_insert("rotation_euler", frame=frame)
@@ -344,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
                 "lens": round(lens, 2),
                 "distance": round(distance, 4),
             })
+
+        takes.append((str(shot["id"]), keys))
 
         # 한 샷 안에서 깊이 축척이 바뀌면 프레임끼리 비교할 수 없다. 샷 전체로 고정한다.
         reach = [(Vector(point["position"]) - center).length for point in path]
@@ -416,6 +424,77 @@ def main(argv: list[str] | None = None) -> int:
             "renderSeconds": round(time.monotonic() - started, 2),
         })
 
+    # 값으로 잡은 샷을 사람이 Blender에서 그대로 열어 손으로 고칠 수 있게 남긴다.
+    # 컷마다 CAM_<샷> 카메라를 만들고 타임라인 마커에 묶어 한 줄의 컷 편집으로 둔다.
+    print(progress_line(progress["done"], total, "Blender 장면 저장 중"), flush=True)
+    bpy.data.objects.remove(camera, do_unlink=True)
+    cursor = 1
+    for shot_id, keys in takes:
+        cut_data = bpy.data.cameras.new(f"CAM_{shot_id}")
+        cut_data.sensor_width = SENSOR_MM
+        cut_data.sensor_fit = "HORIZONTAL"
+        # 기본 카메라 아이콘은 1m라 소품 크기 장면에서는 다른 카메라가 화면을 가린다.
+        cut_data.display_size = max(0.05, span * 0.06)
+        cut = bpy.data.objects.new(f"CAM_{shot_id}", cut_data)
+        scene.collection.objects.link(cut)
+        for index, (location, rotation, lens) in enumerate(keys):
+            cut.location, cut.rotation_euler, cut_data.lens = location, rotation, lens
+            cut.keyframe_insert("location", frame=cursor + index)
+            cut.keyframe_insert("rotation_euler", frame=cursor + index)
+            cut_data.keyframe_insert("lens", frame=cursor + index)
+        scene.timeline_markers.new(f"CAM_{shot_id}", frame=cursor).camera = cut
+        if cursor == 1:
+            scene.camera = cut
+        cursor += len(keys)
+    scene.frame_start, scene.frame_end = 1, cursor - 1
+    scene.frame_set(1)
+    # 열자마자 카메라가 보는 화면과 컷 마커가 보이게 둔다. 재생하면 컷이 순서대로 바뀐다.
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == "VIEW_3D":
+                area.spaces.active.region_3d.view_perspective = "CAMERA"
+                area.spaces.active.shading.type = "SOLID"
+    show("color")
+    scene.render.image_settings.media_type = "VIDEO"
+    scene.render.filepath = "//render/previz"
+    blend_path = args.out_dir / "scene.blend"
+    # 텍스처를 파일 안에 넣어야 작업 폴더 밖으로 옮겨도 열린다.
+    bpy.ops.file.pack_all()
+    bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), copy=True, compress=True)
+
+    # 컷을 따로 보면 연결과 리듬을 판단할 수 없다. 애니매틱을 컷 순서대로 이어 한 편으로 만든다.
+    sequence = None
+    clips = [record for record in records if record["files"]["animatic"]]
+    if clips:
+        print(progress_line(progress["done"], total, "컷을 한 편으로 잇는 중"), flush=True)
+        edit = bpy.data.scenes.new("sequence")
+        edit.render.resolution_x, edit.render.resolution_y = width, height
+        edit.render.resolution_percentage = 100
+        edit.render.fps = fps
+        # 컷 영상은 이미 화면용 색으로 구워졌다. 한 번 더 톤 매핑하면 색이 바랜다.
+        edit.view_settings.view_transform = "Standard"
+        editor = edit.sequence_editor_create()
+        cursor, cuts = 1, []
+        for record in clips:
+            strip = editor.strips.new_movie(record["id"], str(args.out_dir / record["files"]["animatic"]), 1, cursor)
+            length = int(strip.frame_final_duration)
+            cuts.append({"shot": record["id"], "start": cursor, "end": cursor + length - 1,
+                         "at": round((cursor - 1) / fps, 3)})
+            cursor += length
+        edit.frame_start, edit.frame_end = 1, cursor - 1
+        edit.render.image_settings.media_type = "VIDEO"
+        edit.render.ffmpeg.format = "MPEG4"
+        edit.render.ffmpeg.codec = "H264"
+        edit.render.ffmpeg.constant_rate_factor = "HIGH"
+        edit.render.filepath = str(args.out_dir / "sequence")
+        bpy.ops.render.render(animation=True, scene=edit.name)
+        if written := sorted(args.out_dir.glob("sequence*.mp4")):
+            film = args.out_dir / "sequence.mp4"
+            if written[0] != film:
+                written[0].replace(film)
+            sequence = {"file": film.name, "fps": fps, "frames": cursor - 1,
+                        "seconds": round((cursor - 1) / fps, 3), "cuts": cuts}
+
     result = {
         "renderer": renderer,
         "resolution": [width, height],
@@ -423,6 +502,8 @@ def main(argv: list[str] | None = None) -> int:
         "samples": samples,
         "aux": aux,
         "clay": clay,
+        "sequence": sequence,
+        "blend": blend_path.name if blend_path.exists() else None,
         "scene": {
             "boundsLow": [round(v, 4) for v in scene_low],
             "boundsHigh": [round(v, 4) for v in scene_high],

@@ -57,39 +57,6 @@ export function fileUrl(jobId, relative) {
   return `/files/${encodeURIComponent(jobId)}/${parts}`;
 }
 
-// 프리비즈는 장면 배치가 입력이다. 미터·도 단위 값을 그대로 넘기고, 사람이 잘못
-// 적은 값은 엔진에 보내기 전에 여기서 막는다.
-export function buildPrevizRequest(form) {
-  const assets = (form.assets || []).map((item, index) => {
-    const number = (value, name, low, high) => {
-      const parsed = Number(String(value ?? "").trim() || 0);
-      if (!Number.isFinite(parsed) || parsed < low || parsed > high) {
-        throw new Error(`${index + 1}번째 에셋의 ${name} 값을 확인해 주세요.`);
-      }
-      return parsed;
-    };
-    const scale = Number(String(item.scale ?? "1").trim() || 1);
-    if (!Number.isFinite(scale) || scale < 0.01 || scale > 100) {
-      throw new Error(`${index + 1}번째 에셋의 크기는 0.01~100 사이여야 합니다.`);
-    }
-    return {
-      source: { jobId: item.jobId, assetId: item.assetId },
-      position: [number(item.x, "x", -1000, 1000), number(item.y, "y", -1000, 1000), 0],
-      yaw: number(item.yaw, "회전", -360, 360),
-      scale,
-    };
-  });
-  if (!assets.length) throw new Error("장면에 놓을 3D 에셋을 하나 이상 골라 주세요.");
-  const [width, height] = String(form.resolution || "960x540").split("x").map(Number);
-  return {
-    recipe: "previz",
-    params: {
-      preset: form.preset, assets, renderer: form.renderer, width, height,
-      fps: Number(form.fps || 12), aux: form.aux, clay: Boolean(form.clay), animatic: Boolean(form.animatic),
-    },
-  };
-}
-
 // 폼 상태를 엔진 요청 하나로 바꾼다. 3D를 설명으로 만들 때 후보가 1장이면 바로 3D까지
 // 가고, 여러 장이면 컨셉 후보만 만든 뒤 사용자가 고른 후보를 3D로 바꾼다.
 export function buildJobRequest(form) {

@@ -76,6 +76,35 @@ def test_only_absolute_mesh_files_are_accepted_from_disk(tmp_path):
     assert normalized["assets"][0]["file"] == str(outside) and "scene" in title
 
 
+def test_cuts_rearranged_in_the_app_replace_the_preset(tmp_path):
+    shots = [
+        {"id": "s02", "label": "주인공 공개", "move": "orbit", "focus": "hero", "lens": 50, "seconds": 3,
+         "framing": {"distance": 1.7, "azimuth": 20, "azimuthEnd": 80, "height": 0.8, "targetHeight": 0.55}},
+        {"id": "s01", "focus": "scene", "lens": "28", "seconds": "2.5", "framing": {"distance": 3}},
+    ]
+    normalized, title = prepare({"shots": shots}, tmp_path)
+    assert title.startswith("프리비즈 · 게임 트레일러 편집")
+    assert normalized["edited"] is True
+    assert [(shot["id"], shot["order"], shot["focus"]) for shot in normalized["shots"]] == [
+        ("s02", 1, "hero"), ("s01", 2, "scene"),
+    ]
+    assert normalized["shots"][0]["framing"]["azimuthEnd"] == 80.0
+    assert (normalized["shots"][1]["lens"], normalized["shots"][1]["seconds"]) == (28.0, 2.5)
+
+
+def test_edited_cuts_cannot_escape_the_shot_folder_or_break_ranges(tmp_path):
+    base = {"focus": "hero", "lens": 35, "seconds": 2, "framing": {"distance": 1.5}}
+    for bad_id in ("../../etc", "s 01", "", "a" * 40):
+        with pytest.raises(PresetError, match="컷 id"):
+            prepare({"shots": [{**base, "id": bad_id}]}, tmp_path)
+    with pytest.raises(PresetError, match="겹치지"):
+        prepare({"shots": [{**base, "id": "s01"}, {**base, "id": "s01"}]}, tmp_path)
+    with pytest.raises(PresetError, match="distance"):
+        prepare({"shots": [{**base, "id": "s01", "framing": {"distance": 0}}]}, tmp_path)
+    with pytest.raises(PresetError, match="focus"):
+        prepare({"shots": [{**base, "id": "s01", "focus": "nobody"}]}, tmp_path)
+
+
 def test_shot_presets_in_the_repository_are_usable(tmp_path):
     presets = load_presets()
     trailer = presets["previz"]["shotPresets"][0]

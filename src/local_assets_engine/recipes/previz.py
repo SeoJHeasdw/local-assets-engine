@@ -8,6 +8,7 @@ framing against the placed assets and records what the camera actually did.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,7 +23,14 @@ if TYPE_CHECKING:
 
 MESH_SUFFIXES = {".glb", ".gltf"}
 MAX_ASSETS = 8
+MAX_SHOTS = 24
 DEFAULT_PRESET = "game-trailer"
+# 샷 id는 결과 폴더 이름이 되고 에셋 id는 Blender 오브젝트 이름이 된다. 경로 문자를 받지 않는다.
+SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+FRAMING_RANGES = {
+    "distance": (0.2, 20.0), "azimuth": (-720.0, 720.0), "height": (-1.0, 10.0),
+    "targetHeight": (-1.0, 5.0), "roll": (-90.0, 90.0),
+}
 
 
 def _number(value: Any, name: str, low: float, high: float, default: float) -> float:
@@ -59,8 +67,11 @@ def _placement(raw: dict[str, Any], index: int, store: "JobStore") -> dict[str, 
     position = raw.get("position") or (0.0, 0.0, 0.0)
     if len(position) != 3:
         raise PresetError("position은 [x, y, z] 세 값이어야 합니다.")
+    asset_id = str(raw.get("id") or ("hero" if index == 0 else f"asset{index + 1}"))
+    if not SAFE_ID.match(asset_id):
+        raise PresetError("에셋 id는 영문·숫자·-·_ 32자 이내여야 합니다.")
     return {
-        "id": str(raw.get("id") or ("hero" if index == 0 else f"asset{index + 1}")),
+        "id": asset_id,
         "label": label,
         "file": str(file),
         "source": reference,
@@ -68,6 +79,50 @@ def _placement(raw: dict[str, Any], index: int, store: "JobStore") -> dict[str, 
         "yaw": _number(raw.get("yaw"), "yaw", -360.0, 360.0, 0.0),
         "scale": _number(raw.get("scale"), "scale", 0.01, 100.0, 1.0),
     }
+
+
+def _edited_shots(raw: Any, known: set[str], hero: str) -> list[dict[str, Any]]:
+    """Shots a person rearranged or re-aimed in the app, checked like preset values."""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_SHOTS:
+        raise PresetError(f"컷은 1~{MAX_SHOTS}개여야 합니다.")
+    shots: list[dict[str, Any]] = []
+    for order, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise PresetError("컷 형식이 올바르지 않습니다.")
+        shot_id = str(item.get("id") or "")
+        if not SAFE_ID.match(shot_id) or any(shot["id"] == shot_id for shot in shots):
+            raise PresetError("컷 id는 영문·숫자·-·_ 32자 이내이고 겹치지 않아야 합니다.")
+        given = item.get("framing") if isinstance(item.get("framing"), dict) else {}
+        framing: dict[str, Any] = {}
+        for key, (low, high) in FRAMING_RANGES.items():
+            for name in (key, f"{key}End"):
+                if given.get(name) not in (None, ""):
+                    framing[name] = _number(given[name], f"{shot_id} {name}", low, high, 0.0)
+        if given.get("targetOffset") is not None:
+            offset = given["targetOffset"]
+            if not isinstance(offset, list) or len(offset) != 2:
+                raise PresetError(f"{shot_id} targetOffset은 [x, y] 두 값이어야 합니다.")
+            framing["targetOffset"] = [_number(value, f"{shot_id} targetOffset", -5.0, 5.0, 0.0) for value in offset]
+        focus = str(item.get("focus") or "scene")
+        focus = hero if focus == "hero" else focus
+        if focus not in known:
+            raise PresetError(f"{shot_id}의 focus를 장면에서 찾을 수 없습니다: {focus}")
+        shot = {
+            "id": shot_id,
+            "label": str(item.get("label") or shot_id)[:40],
+            "purpose": str(item.get("purpose") or "")[:80],
+            "move": str(item.get("move") or "static")[:24],
+            "focus": focus,
+            "lens": _number(item.get("lens"), f"{shot_id} lens", 8.0, 300.0, 35.0),
+            "seconds": _number(item.get("seconds"), f"{shot_id} seconds", 0.2, 60.0, 2.0),
+            "ease": "linear" if item.get("ease") == "linear" else "inout",
+            "framing": framing,
+            "order": order,
+        }
+        if item.get("lensEnd") not in (None, ""):
+            shot["lensEnd"] = _number(item["lensEnd"], f"{shot_id} lensEnd", 8.0, 300.0, shot["lens"])
+        shots.append(shot)
+    return shots
 
 
 def _prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") -> tuple[dict[str, Any], str]:
@@ -88,18 +143,23 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore")
     # 프리셋은 "hero"라는 이름으로 주인공을 가리킨다. 장면의 첫 에셋이 그 자리다.
     known = {asset["id"] for asset in assets} | {"scene"}
     hero = assets[0]["id"]
-    shots = []
-    for order, shot in enumerate(preset["shots"], start=1):
-        focus = str(shot.get("focus", "scene"))
-        if focus == "hero":
-            focus = hero
-        if focus not in known:
-            raise PresetError(f"{shot['id']}의 focus를 장면에서 찾을 수 없습니다: {focus}")
-        shots.append({**shot, "focus": focus, "order": order})
+    edited = bool(params.get("shots"))
+    if edited:
+        shots = _edited_shots(params["shots"], known, hero)
+    else:
+        shots = []
+        for order, shot in enumerate(preset["shots"], start=1):
+            focus = str(shot.get("focus", "scene"))
+            if focus == "hero":
+                focus = hero
+            if focus not in known:
+                raise PresetError(f"{shot['id']}의 focus를 장면에서 찾을 수 없습니다: {focus}")
+            shots.append({**shot, "focus": focus, "order": order})
 
     clay = bool_param(params, "clay", defaults["clay"])
     normalized = {
         "preset": preset["id"],
+        "edited": edited,
         "assets": assets,
         "shots": shots,
         "hero": hero,
@@ -114,7 +174,8 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore")
         "clay": clay,
         "look": {**preset.get("look", {}), "clay": clay},
     }
-    return normalized, f"프리비즈 · {preset['label']} · {assets[0]['label']}"
+    label = f"{preset['label']} 편집" if edited else preset["label"]
+    return normalized, f"프리비즈 · {label} · {assets[0]['label']}"
 
 
 def _run(ctx: "JobContext") -> None:
@@ -138,10 +199,18 @@ def _run(ctx: "JobContext") -> None:
         ], cwd=previz_dir)
 
     result = json.loads(result_path.read_text("utf-8"))
+    sequence = result.get("sequence")
+    placement = {cut["shot"]: cut for cut in (sequence or {}).get("cuts", [])}
     for shot in result["shots"]:
         files = shot["files"]
         key_frame = previz_dir / files["key"]
         clip = previz_dir / files["animatic"] if files.get("animatic") else None
+        # 컷마다 이어 붙인 한 편 안의 자리를 남긴다. 화면이 그 시점으로 바로 옮겨 간다.
+        cut = placement.get(shot["id"])
+        in_sequence = {
+            "file": ctx.rel(previz_dir / sequence["file"]), "seconds": sequence["seconds"],
+            "at": cut["at"], "start": cut["start"], "end": cut["end"],
+        } if sequence and cut else None
         ctx.add_asset(
             kind="shot", role="candidate", file=clip or key_frame, preview=key_frame,
             meta={
@@ -153,7 +222,8 @@ def _run(ctx: "JobContext") -> None:
                 "framing": shot["framing"], "depthRange": shot["depthRange"],
                 "renderer": result["renderer"], "resolution": result["resolution"],
                 "clay": result["clay"], "renderSeconds": shot["renderSeconds"],
-                "preset": p["preset"],
+                "preset": p["preset"], "sequence": in_sequence,
+                "blendFile": ctx.rel(previz_dir / result["blend"]) if result.get("blend") else None,
                 # 프레임별 카메라 값은 job.json을 불리므로 파일에 두고 여기서 가리킨다.
                 "pathFile": ctx.rel(result_path),
                 "files": {name: ([ctx.rel(previz_dir / item) for item in value]
