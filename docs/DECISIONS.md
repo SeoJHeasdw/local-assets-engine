@@ -47,6 +47,11 @@ PyTorch 2.14가 C++20을 요구해 빌드 플래그만 바꿨다.
 | RMBG-2.0 `briaai/RMBG-2.0` | **기각** | 비상업 라이선스, 게이트. TRELLIS.2 기본 설정이 불러오므로 실행기에서 BiRefNet으로 교체 |
 | DINOv3 `facebook/dinov3-vitl16-pretrain-lvd1689m` | 필수, 조건 확인 중 | TRELLIS.2의 이미지 조건 모델이라 바꿀 수 없음. 수동 승인 게이트. 상업 조건과 표기 의무 원문 미확인 ([SETUP](SETUP.md) 1단계) |
 
+2026-09-16 확인: TRELLIS 환경(Python 3.11)에서 `workers/trellis_runner.py`가
+`briaai/RMBG-2.0` 로드 요청을 가로채 BiRefNet(220M 파라미터)을 실제로 불러오는 것을
+확인했다. BiRefNet의 원격 코드가 `einops`·`kornia`·`timm`을 요구하므로
+`scripts/setup_trellis.sh`가 그 환경에 함께 설치한다.
+
 ## 2D 이미지 모델
 
 | 모델 | 판정 | 근거 |

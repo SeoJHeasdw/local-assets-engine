@@ -38,6 +38,10 @@ export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 (cd "$ENGINE" && bash setup.sh)
 
 PYTHON="$ENGINE/.venv/bin/python"
+
+# 이 엔진은 TRELLIS의 배경 제거 모델을 BiRefNet으로 바꿔 부른다. BiRefNet의 원격
+# 코드가 요구하는 패키지는 trellis-mac의 setup.sh가 설치하지 않으므로 여기서 넣는다.
+VIRTUAL_ENV="$ENGINE/.venv" uv pip install einops kornia timm
 reinstall() {
   VIRTUAL_ENV="$ENGINE/.venv" uv pip install --reinstall --no-build-isolation "$1"
 }
