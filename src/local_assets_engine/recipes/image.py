@@ -87,6 +87,26 @@ def match_generated_files(raw_dir: Path, seeds: list[int]) -> list[Path]:
     return [by_seed[seed] for seed in seeds]
 
 
+def build_image_command(model: dict[str, Any], p: dict[str, Any], output: Path) -> list[str | Path]:
+    """Assemble the image model command. Memory options come from the model config."""
+    args: list[str | Path] = [
+        engine_bin(model["command"]), "--prompt", p["prompt"],
+        "--width", str(p["width"]), "--height", str(p["height"]),
+        "--seed", *[str(seed) for seed in p["seeds"]],
+        "--output", str(output), "--metadata",
+    ]
+    if model.get("steps"):
+        args += ["--steps", str(model["steps"])]
+    if model.get("quantize"):
+        args += ["--quantize", str(model["quantize"])]
+    # 36GB를 다른 앱과 나눠 쓰므로 MLX 캐시를 묶어 최대 사용량을 낮춘다.
+    if model.get("mlxCacheLimitGb"):
+        args += ["--mlx-cache-limit-gb", str(model["mlxCacheLimitGb"])]
+    if model.get("lowRam"):
+        args += ["--low-ram"]
+    return args
+
+
 def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "candidate") -> list[dict[str, Any]]:
     model = ctx.presets["imageModel"]
     seeds = p["seeds"]
@@ -95,16 +115,7 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
 
     with ctx.stage("generate", "이미지 생성") as stage:
         stage.progress(0, f"{model['label']} · 후보 {len(seeds)}장", force=True)
-        args: list[str | Path] = [
-            engine_bin(model["command"]), "--prompt", p["prompt"],
-            "--width", str(p["width"]), "--height", str(p["height"]),
-            "--seed", *[str(seed) for seed in seeds],
-            "--output", str(raw_dir / "candidate.png"), "--metadata",
-        ]
-        if model.get("steps"):
-            args += ["--steps", str(model["steps"])]
-        if model.get("quantize"):
-            args += ["--quantize", str(model["quantize"])]
+        args = build_image_command(model, p, raw_dir / "candidate.png")
         stage.run(args, cwd=ctx.dir, units=len(seeds), retries=1)
         raws = match_generated_files(raw_dir, seeds)
 

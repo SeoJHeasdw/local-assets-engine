@@ -1,8 +1,34 @@
 import json
+from pathlib import Path
 
 import pytest
 
-from local_assets_engine.recipes.image import match_generated_files
+from local_assets_engine.presets import load_presets
+from local_assets_engine.recipes.image import build_image_command, match_generated_files
+
+
+def test_image_command_carries_every_seed_and_memory_option():
+    model = {"command": "mflux-generate-z-image-turbo", "quantize": 8, "mlxCacheLimitGb": 8, "lowRam": True}
+    params = {"prompt": "a sword", "width": 1024, "height": 768, "seeds": [7, 8]}
+    args = [str(part) for part in build_image_command(model, params, Path("/tmp/out/candidate.png"))]
+    assert args[0].endswith("mflux-generate-z-image-turbo")
+    assert args[args.index("--seed") + 1:args.index("--seed") + 3] == ["7", "8"]
+    assert args[args.index("--width") + 1] == "1024" and args[args.index("--height") + 1] == "768"
+    assert args[args.index("--quantize") + 1] == "8"
+    assert args[args.index("--mlx-cache-limit-gb") + 1] == "8"
+    assert "--low-ram" in args and "--metadata" in args
+
+
+def test_image_command_omits_options_the_model_does_not_set():
+    args = [str(part) for part in build_image_command(
+        {"command": "mflux-generate"}, {"prompt": "x", "width": 512, "height": 512, "seeds": [1]}, Path("out.png"),
+    )]
+    assert not {"--quantize", "--mlx-cache-limit-gb", "--low-ram", "--steps"} & set(args)
+
+
+def test_repository_image_model_is_configured_for_this_machine():
+    model = load_presets()["imageModel"]
+    assert model["quantize"] == 8 and model["mlxCacheLimitGb"]
 
 
 def write_candidate(directory, name, seed=None):
