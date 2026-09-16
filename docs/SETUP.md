@@ -9,8 +9,8 @@
 | --- | --- |
 | 엔진 Python 환경(bpy 5.2.2, mflux 0.19.1, BiRefNet 의존성), gltfpack, Electron | 설치됨 |
 | TRELLIS.2 Mac 엔진 `engines/trellis-mac` | 설치됨. Metal 텍스처 가속은 빠짐 (Xcode 없음) |
-| Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 2026-09-16 밤에 내려받기 시작 |
-| Hugging Face 로그인, DINOv3 승인 | 안 됨 → **3D 생성 불가** |
+| Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 내려받기 완료 (2026-09-16) |
+| Hugging Face 로그인, DINOv3 승인 | 완료 (2026-09-16). `npm run doctor`에서 3D 생성 ✓ |
 
 ## 0. 가중치 내려받기가 끊길 때
 
@@ -31,21 +31,14 @@ hf download Tongyi-MAI/Z-Image-Turbo transformer/diffusion_pytorch_model-00001-o
 
 `npm run doctor`의 가중치 항목은 `blobs/*.incomplete`가 남아 있으면 미완료로 본다.
 
-## 1. Hugging Face 로그인과 DINOv3 승인 (3D에 필수)
+## 1. Hugging Face 로그인과 DINOv3 승인 — 완료 (2026-09-16)
 
-TRELLIS.2는 입력 이미지를 DINOv3로 읽는다. DINOv3는 수동 승인 게이트 모델이라
-승인 전에는 3D를 한 번도 만들 수 없다. 승인에 시간이 걸릴 수 있으니 가장 먼저 한다.
+로그인과 Meta의 DINOv3 접근 승인이 끝났다. TRELLIS.2가 입력 이미지를 읽는 데 쓰는
+모델이라 이것이 3D 생성의 전제였다.
 
-1. <https://huggingface.co/settings/tokens>에서 Read 권한 토큰을 만든다.
-2. 터미널에서 `hf auth login`을 실행하고 토큰을 붙여 넣는다. `hf auth whoami`로 확인한다.
-3. <https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m>에서 접근을 요청한다.
-4. 승인 메일을 받은 뒤 확인한다.
-   ```bash
-   hf download facebook/dinov3-vitl16-pretrain-lvd1689m config.json
-   ```
-5. DINOv3 License 원문에서 상업 이용 조건과 표기 의무를 확인하고
-   [DECISIONS](DECISIONS.md)에 날짜와 함께 적는다. 조사 단계에서 "Built with DINOv3"
-   표기가 필요하다는 보고가 있었지만 원문으로 확인하지 않았다.
+남은 일이 하나 있다. **판매 전에** DINOv3 License 원문에서 상업 이용 조건과 표기 의무를
+확인하고 [DECISIONS](DECISIONS.md)에 날짜와 함께 적는다. 조사 단계에서 "Built with
+DINOv3" 표기가 필요하다는 보고가 있었지만 원문으로 확인하지 않았다.
 
 `briaai/RMBG-2.0` 접근 요청은 하지 않는다. 비상업 라이선스라서, 엔진이 TRELLIS의
 배경 제거 모델을 BiRefNet(MIT)으로 바꿔 불러오도록 해 두었다.
