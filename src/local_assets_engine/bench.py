@@ -15,7 +15,9 @@ from .jobs import JobStore
 def variant(job: dict[str, Any], stage: dict[str, Any]) -> str:
     params = job["params"]
     if stage["name"] == "generate":
-        return f"{params.get('width')}x{params.get('height')} ×{params.get('count')}"
+        # 모델을 빼면 모델을 바꾼 전후 기록이 한 줄에 섞여 중앙값이 뜻을 잃는다.
+        model = params.get("imageModel") or "?"
+        return f"{model} · {params.get('width')}x{params.get('height')} ×{params.get('count')}"
     if stage["name"] == "mesh":
         return f"{params.get('pipelineType')} · tex {params.get('textureSize')}"
     if stage["name"] == "post":
