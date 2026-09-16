@@ -19,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--size", type=int, default=480)
     parser.add_argument("--samples", type=int, default=24)
+    # 밝은 재질은 조명이 세면 하얗게 날아가 텍스처가 흐려 보인다. 비교는 같은 값으로 한다.
+    parser.add_argument("--sun", type=float, default=2.5)
+    parser.add_argument("--world", type=float, default=0.6)
     args = parser.parse_args(argv)
 
     import bpy
@@ -44,9 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     world = bpy.data.worlds.new("preview")
     bpy.context.scene.world = world
     world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs[1].default_value = 1.1
+    world.node_tree.nodes["Background"].inputs[1].default_value = args.world
     sun = bpy.data.lights.new("sun", "SUN")
-    sun.energy = 4
+    sun.energy = args.sun
     sun_object = bpy.data.objects.new("sun", sun)
     bpy.context.scene.collection.objects.link(sun_object)
     sun_object.rotation_euler = (math.radians(55), 0, math.radians(35))
