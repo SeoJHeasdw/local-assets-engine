@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--generate-py", required=True)
     parser.add_argument("--birefnet", default="ZhengPeng7/BiRefNet")
     parser.add_argument("--birefnet-revision", default=None)
+    parser.add_argument("--audit-dir", default=None)
+    parser.add_argument("--state-output", default=None)
+    parser.add_argument("--model-revision", default=None)
     args, rest = parser.parse_known_args()
     if rest[:1] == ["--"]:
         rest = rest[1:]
@@ -57,10 +60,20 @@ def main() -> None:
 
     texture_bake.patch(texture_baker)
     texture_baker.export_glb_with_texture = gltf_export.export_glb_with_texture
-    print(f"[local-assets] KDTree GLB export v{gltf_export.EXPORT_VERSION}", flush=True)
+    print("[local-assets] Full-resolution source → quality surface/PBR" if args.state_output
+          else f"[local-assets] KDTree GLB export v{gltf_export.EXPORT_VERSION}", flush=True)
 
     sys.argv = [script, *rest]
-    runpy.run_path(script, run_name="__main__")
+    if args.state_output:
+        import trellis_infer
+
+        trellis_infer.run(script, rest, args.state_output, args.model_revision)
+    elif args.audit_dir:
+        import trellis_audit
+
+        trellis_audit.run(script, args.audit_dir)
+    else:
+        runpy.run_path(script, run_name="__main__")
 
 
 if __name__ == "__main__":

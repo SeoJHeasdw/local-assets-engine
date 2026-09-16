@@ -230,3 +230,99 @@ def test_a_running_job_survives_another_engine_starting(tmp_path):
     release.set()
     worker.join(10)
     assert store.load(job["id"])["state"] == "done"
+
+
+def test_two_runners_serialize_and_waiting_job_can_be_cancelled(tmp_path):
+    import fcntl
+    from local_assets_engine.jobs import now_iso
+    store, runner = make_runner(tmp_path, lambda ctx: pytest.fail("cancelled job ran"))
+    job = runner.create("fake", {})
+    with (store.root / ".engine.lock").open("a") as lane:
+        fcntl.flock(lane, fcntl.LOCK_EX)
+        worker = threading.Thread(target=runner.run_job, args=(job["id"],))
+        worker.start()
+        for _ in range(50):
+            if store.load(job["id"]).get("owner"):
+                break
+            time.sleep(0.02)
+        assert store.load(job["id"])["state"] == "queued"
+        assert store.recover_interrupted() == 0
+        runner.cancel(job["id"])
+        worker.join(3)
+        assert not worker.is_alive()
+    assert store.load(job["id"])["state"] == "cancelled"
+
+
+def test_distinct_runner_instances_never_enter_recipe_together(tmp_path):
+    first_entered, release, second_entered = threading.Event(), threading.Event(), threading.Event()
+    def first(ctx):
+        first_entered.set()
+        release.wait(5)
+    store, one = make_runner(tmp_path, first)
+    _, two = make_runner(tmp_path, lambda ctx: second_entered.set())
+    a, b = one.create("fake", {}), two.create("fake", {})
+    ta = threading.Thread(target=one.run_job, args=(a["id"],))
+    tb = threading.Thread(target=two.run_job, args=(b["id"],))
+    ta.start()
+    assert first_entered.wait(3)
+    tb.start()
+    try:
+        assert not second_entered.wait(0.3)
+    finally:
+        release.set()
+        ta.join(3)
+        tb.join(3)
+    assert second_entered.is_set()
+    assert store.load(a["id"])["state"] == store.load(b["id"])["state"] == "done"
+
+
+def test_external_cancellation_stops_a_silent_measured_process(tmp_path):
+    entered = threading.Event()
+    def run(ctx):
+        with ctx.stage("quiet", "quiet") as stage:
+            entered.set()
+            stage.run([sys.executable, "-c", "import time; time.sleep(30)"])
+    store, runner = make_runner(tmp_path, run)
+    job = runner.create("fake", {})
+    worker = threading.Thread(target=runner.run_job, args=(job["id"],))
+    worker.start()
+    assert entered.wait(3)
+    other = Runner(JobStore(store.root), recipes=runner.recipes, presets_loader=dict)
+    other.cancel(job["id"])
+    worker.join(5)
+    assert not worker.is_alive()
+    assert store.load(job["id"])["state"] == "cancelled"
+
+
+def test_queued_behind_live_job_survives_recovery_and_shutdown_cancels_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "HEARTBEAT_INTERVAL_S", 0.05)
+    entered, release = threading.Event(), threading.Event()
+    def run(ctx):
+        entered.set()
+        release.wait(5)
+    store, runner = make_runner(tmp_path, run)
+    runner.start()
+    a = runner.submit("fake", {})
+    assert entered.wait(3)
+    b = runner.submit("fake", {})
+    store.update(b["id"], lambda j: j["owner"].update(heartbeat="2020-01-01T00:00:00+09:00"))
+    time.sleep(0.15)
+    assert store.recover_interrupted() == 0
+    runner.shutdown(timeout=0.01)
+    release.set()
+    runner._thread.join(3)
+    assert store.load(b["id"])["state"] == "cancelled"
+
+
+def test_job_updates_do_not_lose_writes_between_processes(tmp_path):
+    import subprocess
+    store = JobStore(tmp_path / "jobs")
+    job = store.create("fake", {}, "counter")
+    script = (
+        "from pathlib import Path\nfrom local_assets_engine.jobs import JobStore\n"
+        f"s=JobStore(Path({str(store.root)!r}))\n"
+        f"for _ in range(30): s.update({job['id']!r}, lambda j: j.update(counter=j.get('counter', 0)+1))\n"
+    )
+    processes = [subprocess.Popen([sys.executable, "-c", script]) for _ in range(3)]
+    assert [p.wait(timeout=10) for p in processes] == [0, 0, 0]
+    assert store.load(job["id"])["counter"] == 90

@@ -18,8 +18,9 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | 레시피 | 흐름 | 결과 |
 | --- | --- | --- |
 | `image` | 설명 → 이미지 후보 → 배경 제거 → 캔버스 맞춤 또는 픽셀화 | 투명 PNG 후보 |
-| `text-to-3d` | 설명 → 컨셉 이미지 1장 → TRELLIS.2 → Blender 정리 → gltfpack | GLB |
-| `image-to-3d` | 고른 후보나 이미지 파일 → TRELLIS.2 → Blender 정리 → gltfpack | GLB |
+| `text-to-3d` | 설명 → 컨셉 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본·게임용 GLB, 여섯 방향 검수 |
+| `image-to-3d` | 고른 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본·게임용 GLB, 여섯 방향 검수 |
+| `refine-mesh` | 저장된 생성 원본 → 출력 설정을 바꿔 표면·PBR 재구성 | 모델 추론 없이 새 품질본·게임용 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
 | `previz` | 완성된 메시·회색 대역 배치 → 샷 프리셋을 카메라 값으로 풀기 → 스케치 렌더 | 샷별 애니매틱·깊이·윤곽과 샷 값 |
 
@@ -79,7 +80,18 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 `.venv/bin/python -m local_assets_engine run <레시피> --params '<JSON>'`은 엔진이 떠 있으면
 엔진에 작업을 넣고, 없으면 그 자리에서 실행한다. API 목록은 [ARCHITECTURE](docs/ARCHITECTURE.md)에 있다.
 
-이전 3D 결과가 회전하면 사라지거나 색이 뒤섞였다면, 모델을 다시 돌리지 않고 복구할 수 있다.
+3D 기본 출력은 **100만 면·4K 품질본**과 **목표 10만 면·2K 게임용**이다. 게임용도 형태가
+무너지면 목표 면 수를 넘겨 보존한다. 원본은 따로 저장되며 텍스처를 구운 뒤 다시 감축하지 않는다.
+보관함에서 품질본·게임용을 각각 열어 회전하고, "여섯 방향 검수 보기"로 뒤와 바닥까지 확인한다.
+다른 면 수·텍스처가 필요하면 "원본으로 품질 다시 만들기" 또는 다음 명령을 쓴다.
+
+```bash
+.venv/bin/python -m local_assets_engine run refine-mesh \
+  --params '{"source": {"jobId": "<3D 작업 ID>", "assetId": "a01"}, "textureSize": 4096, "targetFaces": 1000000}'
+```
+
+예전 에셋 중 원본 NPZ가 없는 것은 입력 이미지로 새로 생성해야 전체 개선이 적용된다.
+아래 `repair-mesh`는 예전 표시·UV 오류만 복구하며 손실된 형태를 복원하지 못한다.
 원본과 승인 상태는 보존하고, 보관함에 새 **검토 대기** 에셋을 만든다. 이미 보정된 결과나
 Metal 경로의 결과에는 적용하지 않는다. 서버가 이전 코드를 쓰고 있다면 진행 작업을 마친 뒤
 앱과 엔진을 다시 열어 새 레시피를 불러온다.

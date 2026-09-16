@@ -13,7 +13,9 @@
 | `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`) |
 | `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
-| `src/local_assets_engine/workers/gltf_export.py` | KDTree GLB 내보내기 계약 보정, 이전 원본 복구(모델 적재 없음) |
+| `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
+| `src/local_assets_engine/workers/quality_*.py` | 원본 표면 재구성, 형상 오차 제한 감축, 최종 UV·PBR 굽기 |
+| `src/local_assets_engine/workers/gltf_export.py` | 좌표·UV·PBR GLB 계약, 이전 KDTree 원본 복구 |
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
@@ -47,6 +49,8 @@ javis · CLI   ──HTTP───▶        │
   프로세스 번호를 적고 기록을 쓸 때마다 `heartbeat`를 갱신하므로, 그 프로세스가 살아
   있고 하트비트가 3분 안쪽이면 남의 작업으로 보고 건너뛴다. 앱과 CLI가 각자 엔진을
   띄울 수 있어서, 이 검사가 없으면 앱을 여는 것만으로 CLI가 돌리던 생성이 끊긴다.
+- 같은 출력 저장소의 `.engine.lock`을 프로세스 사이에서 공유한다. 독립 CLI와 앱도 생성·후처리를
+  동시에 실행하지 않는다. 대기열도 소유자와 하트비트를 유지하고, 다른 엔진의 중지 요청을 읽는다.
 - 모델은 서버 프로세스에 올리지 않는다. 레시피는 torch·bpy를 import하지 않고, 모델은
   단계 프로세스 안에서만 불러온다.
 
@@ -87,7 +91,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
 | `image-to-3d` | `imagePath`(절대 경로) 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
-| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048, `targetFaces` 0~1,000,000(0은 줄이지 않음), `sizeMeters`, `meshSeed` | `512`, 1024, 30000, 1.0 |
+| `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
+| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 목표 100,000·2048px, 1.0m |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
@@ -130,14 +135,14 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | --- | --- |
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
-| `owner` | 실행 중인 작업에만 있다. `{pid, heartbeat}`로 시작 복구가 남의 작업을 닫지 않게 한다 |
+| `owner` | 실행·대기를 맡은 `{pid, heartbeat}`. 시작 복구가 살아 있는 다른 엔진의 작업을 닫지 않게 한다 |
 | `assets[].kind` / `role` | `image`·`mesh`·`shot` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D용 컨셉), `final`(메시) |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
-| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
+| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`), `label`, `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
 
-- 러너와 API가 같은 기록을 고치므로 모든 쓰기는 `JobStore.update`로 다시 읽은 뒤 임시
-  파일에 쓰고 교체한다.
+- 러너와 API가 같은 기록을 고치므로 모든 수정은 `JobStore.update`에서 작업별 파일 잠금과
+  스레드 잠금을 잡고 다시 읽은 뒤 임시 파일에 쓰고 교체한다.
 - 파일 경로는 작업 폴더 기준 상대 경로다. `resolve_file`이 폴더 밖 경로를 막는다.
 - 진행률은 최대 0.5초 간격으로 기록한다. 진행 막대 줄은 `job.log`에 남기지 않는다.
 
@@ -149,8 +154,13 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `cutout` | `python -m local_assets_engine.tools.remove_bg` | `@@progress` JSON 줄 |
 | `finish` | 엔진 안(PIL) | 처리한 후보 수 |
 | `mesh` | `engines/trellis-mac/.venv/bin/python workers/trellis_runner.py` | generate.py 출력 표식과 샘플러 막대 3개 |
-| `post` | `python -m local_assets_engine.tools.blender_post` | `@@progress` JSON 줄 |
-| `optimize` | `gltfpack -i asset.glb -o asset.opt.glb` | 없음. gltfpack이 없으면 `skipped` |
+| `surface` | TRELLIS 환경 `quality_surface.py` | unsigned distance 재구성·형상 보존 감축 |
+| `lod` | TRELLIS 환경 `quality_lod.py` + gltfpack | 형상 오차 제한과 위상 회귀 검사, UV 이전 실행 |
+| `texture-master`·`texture-game` | TRELLIS 환경 `quality_texture.py` | UV → 원본 표면 질의 → native PBR |
+| `post-master`·`post-game` | `python -m local_assets_engine.tools.blender_post` | 크기·원점만 정리, 추가 감축 없음 |
+| `optimize-master`·`optimize-game` | `gltfpack ... -noq` | 추가 감축·양자화 없는 전송용 사본 |
+| `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
+| `post`·`optimize` | Blender·gltfpack | 이전 `repair-mesh` 전용 |
 | `repair` | `python workers/gltf_export.py --input ... --output ...` | 없음. 기존 KDTree 원본을 새 작업으로 복구 |
 | `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
 
@@ -164,25 +174,47 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 
 ## 3D 계약
 
-- TRELLIS 입력은 `mesh/input.png`다. 알파가 있으면 그대로 쓰고, 없으면 BiRefNet으로 먼저 지운다.
-- `trellis_runner.py`는 `briaai/RMBG-2.0` 로드를 고정 커밋의 `ZhengPeng7/BiRefNet`으로
-  바꾼 뒤 generate.py를 실행한다. generate.py가 torch보다 먼저 두는 환경 변수를 같은 값으로 먼저 둔다.
-- Blender 정리는 부모 변환을 굽고 메시를 합친 뒤 COLLAPSE 방식으로 면을 줄인다. 바닥 중심을
-  원점에 두고 가장 긴 변을 `sizeMeters`로 맞춰 GLB(+Y 위)로 내보낸다.
-- 결과 파일은 `mesh/raw.glb`(TRELLIS 원본), `mesh/asset.glb`(정리본),
-  `mesh/asset.opt.glb`(gltfpack), `mesh/asset.stats.json`이다.
-- KDTree 대체 경로의 GLB 내보내기는 래퍼가 `gltf_export.py`로 교체한다. 굽기에 쓴 V와
-  glTF의 이미지 행 좌표를 맞추고, TRELLIS Z-up을 glTF Y-up으로 변환하며 양면 재질로 저장한다.
-  원본 메시 extras의 `local_assets_export: {version: 1, backend: "kdtree"}`가 보정 여부를 표시한다.
-  Metal 경로에는 이 보정을 적용하지 않으며, 래퍼 보정 로드 실패는 작업 실패로 기록한다.
-- 메시 `meta.processingVersion`은 현재 후처리 계약의 버전이다(현재 1). `stats.topology`에는
-  `boundaryEdges`, `nonManifoldEdges`, `inconsistentWindingEdges`, `duplicateFaces`, `warnings`를
-  기록한다. UV 경계의 동일 위치 정점은 검사할 때만 합쳐 세며 파일을 바꾸지 않는다.
-  경고는 에셋 상세에 표시하고 승인·거절은 사람이 정한다.
-- `repair-mesh`는 기존 작업 기록으로 이전 KDTree 경로임을 확인하고, 원본 raw의 내보내기만
-  새 작업 폴더에서 보정한 뒤 동일한 `post`·`optimize` 단계를 실행한다. 모델을 적재하지 않으며
-  각 단계는 동일한 러너와 측정을 거친다. 원본 파일·승인·프리비즈 참조는 바꾸지 않고,
-  새 메시의 `meta.source`가 원본 메시를 가리킨다. 복구본은 검토 대기다.
+1. `mesh/input.png`를 TRELLIS에 넣는다. 알파가 없으면 먼저 BiRefNet으로 배경을 지운다.
+   래퍼는 파이프라인 내부 RMBG-2.0 로드도 고정 커밋의 BiRefNet으로 바꾼다.
+2. 고정된 TRELLIS 모델 스냅샷에서 요청한 해상도의 모델만 올린다. 512 기본값과 학습된
+   샘플러 설정은 유지한다. `mesh_extract.py`는 면의 순서·연결·분할을 바꾸지 않고 CPU
+   정수 키 탐색을 벡터화한다. 원본 엔진 클론은 수정하지 않는다.
+3. 감축 전 **전체 메시·복셀 PBR**을 `mesh/source.npz`에 원자적으로 저장하고 모델 프로세스를
+   끝낸다. `source.json`에는 모델 리비전·시드·입력 해시·샘플러 설정·적재/추론 시간을 남긴다.
+4. CPU에서 원본 표면까지의 unsigned distance를 계산해 좁은 두께의 일관된 표면으로 재구성한다.
+   물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 가장 짧은 모서리부터
+   위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다.
+5. 게임용은 **품질본에서 UV를 펴기 전에** 형상 오차를 제한하며 감축한다. 위상이 나빠지면
+   오차를 더 엄격히 하여 재시도하고 끝내 통과하지 못하면 품질본 형상을 유지한다. 목표 면 수를
+   맞추려고 형상을 망가뜨리지 않으며, 초과한 실제 면 수와 이유를 경고에 기록한다.
+6. 각 최종 형상에 UV를 펴고 텍셀 중심을 원본 표면으로 투영하여 원본 복셀의 PBR을 삼선형
+   보간한다. 없는 복셀은 검은색과 섞지 않는다. 별도 감마를 추가하지 않고 금속성·거칠기
+   계수는 1이다. 패딩을 채워 필터링의 검은 경계도 막는다. Z-up→Y-up과 UV 행 규약을
+   위치·부드러운 노멀·텍스처에 함께 적용한다.
+7. Blender는 **추가 감축 없이** 바닥 중심과 미터 크기만 맞춘다. 품질본과 게임용은 동일한
+   변환을 공유한다. gltfpack 사본도 감축·정밀도 양자화를 하지 않는다.
+8. 실제 최종 GLB를 여섯 방향으로 렌더하고 품질본·게임용을 각각 `pending` 에셋으로 등록한다.
+   카드의 그림은 생성 입력이 아니라 해당 GLB의 렌더다.
+
+파일은 `mesh/asset.glb`(품질본), `asset.game.glb`(게임용), 각각의 `.raw.glb`·`.opt.glb`·
+`.stats.json`·`.raw.bake.json`, `surface/*.npz`·진단 JSON, `inspection/*-contact.png`다.
+`raw`는 현재 계약에서는 최종 재질 굽기 직후, 크기·원점 정리 전 파일을 뜻한다.
+`source.npz`가 유일한 감축 전 모델 원본이다. 텍스처 해상도는 아틀라스 출력 크기이며 모델이
+예측한 복셀 이상의 새 디테일을 만들어내는 값은 아니다.
+
+`meta.processingVersion`은 **2**다. `stats.sourceTriangles`는 생성 원본,
+`facesIn`·`facesOut`은 정규화 전후의 면 수다. `stats.topology`는 열린 경계·비다양체 모서리·
+이웃 면 방향·중복 면을 검사하고, `stats.lod`에는 게임용의 감축 시도와 실제 오차 제한을 남긴다.
+UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경고이며 승인·거절은 사람이 한다.
+
+`refine-mesh`는 완료된 원본 NPZ와 입력 이미지를 **새 작업**으로 복사한 뒤 4~8단계를 실행한다.
+원본의 시드·형상 해상도는 유지하고 면 수·텍스처는 현재 요청/기본값을 따른다. 모델 추론을
+반복하지 않고 다른 출력 설정을 비교할 수 있다. 기존 작업·승인·프리비즈 참조는 바꾸지 않는다.
+
+이전 계약(버전 1)의 `repair-mesh`는 기존 KDTree raw GLB의 UV·위쪽 축·양면 표시만 복구한다.
+이미 손실된 형상은 되살리지 못한다. 이전 `audit: true` 작업의 `mesh/audit/decoded.npz`는
+`refine-mesh`의 원본으로 사용할 수 있다. 새 생성은 `audit` 여부와 관계없이 원본을 항상 남긴다.
+진단용 `trellis_audit.py`는 이전 경로 재현용이며 일반 생성 기본 경로는 아니다.
 
 ## 프리비즈 계약
 

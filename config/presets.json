@@ -18,6 +18,7 @@
   },
   "mesh": {
     "repo": "microsoft/TRELLIS.2-4B",
+    "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
     "license": "MIT",
     "pipelineTypes": [
       "512",
@@ -27,12 +28,15 @@
     "textureSizes": [
       512,
       1024,
-      2048
+      2048,
+      4096
     ],
     "defaults": {
       "pipelineType": "512",
-      "textureSize": 1024,
-      "targetFaces": 30000,
+      "textureSize": 4096,
+      "targetFaces": 1000000,
+      "gameFaces": 100000,
+      "gameTextureSize": 2048,
       "sizeMeters": 1.0
     }
   },

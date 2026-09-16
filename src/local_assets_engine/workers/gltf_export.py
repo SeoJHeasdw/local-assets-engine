@@ -17,7 +17,7 @@ EXPORT_VERSION = 1
 
 
 def export_glb_with_texture(vertices, faces, uvs, base_color_img, mr_img=None,
-                            output_path="output.glb"):
+                            output_path="output.glb", *, normals=None, native_pbr=False):
     import trimesh
     from PIL import Image
 
@@ -30,12 +30,19 @@ def export_glb_with_texture(vertices, faces, uvs, base_color_img, mr_img=None,
     material = trimesh.visual.material.PBRMaterial(
         baseColorTexture=Image.fromarray(np.asarray(base_color_img)),
         metallicRoughnessTexture=Image.fromarray(np.asarray(mr_img)) if mr_img is not None else None,
-        metallicFactor=0.0, roughnessFactor=0.8, doubleSided=True,
+        metallicFactor=1.0 if native_pbr else 0.0,
+        roughnessFactor=1.0 if native_pbr else 0.8, doubleSided=True,
     )
+    gltf_normals = None
+    if normals is not None:
+        gltf_normals = np.asarray(normals).copy()
+        gltf_normals[:, 1], gltf_normals[:, 2] = normals[:, 2], -normals[:, 1]
     mesh = trimesh.Trimesh(
         vertices=positions, faces=faces, process=False,
+        vertex_normals=gltf_normals,
         visual=trimesh.visual.TextureVisuals(uv=texture_uv, material=material),
-        metadata={EXPORT_MARKER: {"version": EXPORT_VERSION, "backend": "kdtree"}},
+        metadata={EXPORT_MARKER: {"version": 2 if native_pbr else EXPORT_VERSION,
+                                 "backend": "native-pbr" if native_pbr else "kdtree"}},
     )
     mesh.export(str(output_path))
     return output_path

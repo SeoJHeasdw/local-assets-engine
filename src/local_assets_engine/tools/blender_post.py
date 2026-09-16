@@ -48,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stats", required=True, type=Path)
     parser.add_argument("--target-faces", type=int, default=0, help="0 keeps every face")
     parser.add_argument("--size", type=float, default=1.0, help="longest side in meters, 0 keeps scale")
+    parser.add_argument("--audit-dir", type=Path, default=None)
+    parser.add_argument("--normalization", type=Path, default=None, help="share the quality master's pivot and scale")
     args = parser.parse_args(argv)
 
     import bpy
@@ -88,11 +90,21 @@ def main(argv: list[str] | None = None) -> int:
     coords = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
     mesh.vertices.foreach_get("co", coords)
     coords = coords.reshape(-1, 3)
+    if args.audit_dir:
+        mesh.calc_loop_triangles()
+        audit_faces = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
+        mesh.loop_triangles.foreach_get("vertices", audit_faces)
+        args.audit_dir.mkdir(parents=True, exist_ok=True)
+        np.savez(args.audit_dir / "post-geometry.npz", vertices=coords,
+                 faces=audit_faces.reshape(-1, 3))
     low, high = coords.min(axis=0), coords.max(axis=0)
     dimensions = high - low
     longest = float(dimensions.max())
     scale = args.size / longest if args.size and longest > 0 else 1.0
     offset = Vector((-(low[0] + high[0]) / 2, -(low[1] + high[1]) / 2, -low[2]))
+    if args.normalization:
+        transform = json.loads(args.normalization.read_text("utf-8"))["normalization"]
+        scale, offset = float(transform["scale"]), Vector(transform["offset"])
     mesh.transform(Matrix.Scale(scale, 4) @ Matrix.Translation(offset))
     # 생성된 메시는 중복 면·잘못된 참조를 품고 있어 내보내기가 "유효하지 않다"고 경고한다.
     repaired = mesh.validate(verbose=False)
@@ -129,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         # Blender는 Z가 위, glTF는 Y가 위다. 여기 값은 [가로, 깊이, 높이] 미터다.
         "dimensionsMeters": [round(float(v) * scale, 4) for v in dimensions],
         "scale": round(scale, 6),
+        "normalization": {"scale": scale, "offset": list(offset)},
         "materials": [material.name for material in mesh.materials if material],
         "textures": len(images),
         "bytes": args.output.stat().st_size,

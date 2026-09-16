@@ -11,6 +11,7 @@ export const REVIEW_LABELS = { pending: "검토 대기", approved: "승인", rej
 export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
   "repair-mesh": "기존 3D 복구",
+  "refine-mesh": "3D 품질 재구성",
 };
 
 export function isActive(job) {
@@ -35,9 +36,11 @@ export function formatBytes(bytes) {
 
 export function formatDuration(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "–";
-  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}초`;
+  if (seconds < 10) return `${seconds.toFixed(1)}초`;
+  seconds = Math.round(seconds);
+  if (seconds < 60) return `${seconds}초`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}분 ${String(Math.round(seconds % 60)).padStart(2, "0")}초`;
+  if (minutes < 60) return `${minutes}분 ${String(seconds % 60).padStart(2, "0")}초`;
   return `${Math.floor(minutes / 60)}시간 ${String(minutes % 60).padStart(2, "0")}분`;
 }
 
@@ -65,8 +68,9 @@ export function buildJobRequest(form) {
   if (seed && !/^\d+$/.test(seed)) throw new Error("시드는 0 이상의 정수로 적어 주세요.");
   const mesh = {
     pipelineType: String(form.pipelineType || "512"),
-    textureSize: Number(form.textureSize || 1024),
-    targetFaces: Number(form.targetFaces ?? 30000),
+    textureSize: Number(form.textureSize || 4096),
+    targetFaces: Number(form.targetFaces ?? 1000000),
+    ...(form.gameFaces !== undefined ? { gameFaces: Number(form.gameFaces) } : {}),
   };
   if (form.kind === "3d" && form.source === "image") {
     if (!form.imagePath) throw new Error("3D로 만들 이미지를 골라 주세요.");

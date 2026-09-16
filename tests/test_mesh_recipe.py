@@ -1,5 +1,8 @@
 from local_assets_engine.measure import StageFailed
 from local_assets_engine.recipes.mesh import explain_trellis_failure
+from local_assets_engine.recipes.mesh import prepare_mesh_params
+from local_assets_engine.presets import load_presets, PresetError
+import pytest
 
 
 def failure(*tail, code=1):
@@ -23,3 +26,13 @@ def test_the_gpu_watchdog_is_explained_separately():
 
 def test_anything_else_keeps_the_original_message():
     assert "TRELLIS.2" in explain_trellis_failure(failure("모델 파일이 깨졌습니다"))
+
+
+def test_mesh_audit_is_opt_in_and_preserves_generation_settings():
+    values = {"meshSeed": 123, "targetFaces": 30000, "textureSize": 1024, "pipelineType": "512"}
+    baseline = prepare_mesh_params(values, load_presets())
+    audited = prepare_mesh_params({**values, "audit": True}, load_presets())
+    assert baseline["audit"] is False
+    assert audited == {**baseline, "audit": True}
+    with pytest.raises(PresetError):
+        prepare_mesh_params({"audit": "maybe"}, load_presets())

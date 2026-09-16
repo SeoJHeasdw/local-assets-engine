@@ -7,6 +7,7 @@ Each stage records wall time and the peak memory footprint of its processes.
 from __future__ import annotations
 
 import collections
+import fcntl
 import os
 import queue
 import threading
@@ -204,7 +205,8 @@ class JobContext:
         return self.store.update(self.job_id, apply)
 
     def check_cancel(self) -> None:
-        if self.cancel.is_set():
+        if self.cancel.is_set() or self.store.load(self.job_id)["state"] in {"cancelled", "cancelling"}:
+            self.cancel.set()
             raise StageCancelled()
 
     def log_line(self, line: str) -> None:
@@ -256,16 +258,23 @@ class Runner:
         self._cancels: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._pending: set[str] = set()
+        self._stopping = threading.Event()
 
     def start(self) -> None:
         self.store.recover_interrupted()
+        threading.Thread(target=self._beat_pending, name="queued-heartbeat", daemon=True).start()
         self._thread = threading.Thread(target=self._loop, name="asset-runner", daemon=True)
         self._thread.start()
 
     def shutdown(self, timeout: float = 8.0) -> None:
         """Stop the running job so its model processes do not outlive the engine."""
+        self._stopping.set()
         with self._lock:
             events = list(self._cancels.values())
+            pending = list(self._pending)
+        for job_id in pending:
+            self.cancel(job_id)
         for event in events:
             event.set()
         deadline = time.monotonic() + timeout
@@ -281,8 +290,25 @@ class Runner:
 
     def submit(self, recipe_id: str, params: dict[str, Any] | None) -> dict[str, Any]:
         job = self.create(recipe_id, params)
+        job = self.store.update(job["id"], lambda record: record.update(
+            owner={"pid": os.getpid(), "heartbeat": now_iso()}))
+        with self._lock:
+            self._pending.add(job["id"])
         self._queue.put(job["id"])
         return job
+
+    def _beat_pending(self) -> None:
+        while not self._stopping.wait(HEARTBEAT_INTERVAL_S):
+            with self._lock:
+                pending = list(self._pending)
+            for job_id in pending:
+                def touch(record):
+                    if record["state"] == "queued" and record.get("owner", {}).get("pid") == os.getpid():
+                        record["owner"]["heartbeat"] = now_iso()
+                try:
+                    self.store.update(job_id, touch)
+                except (JobNotFound, OSError):
+                    continue
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -297,33 +323,66 @@ class Runner:
                 event.set()
             return job
 
-    def _beat(self, job_id: str, stop: threading.Event) -> None:
+    def _beat(self, job_id: str, stop: threading.Event, cancel: threading.Event) -> None:
         def touch(job: dict[str, Any]) -> None:
             if job.get("state") == "running" and isinstance(job.get("owner"), dict):
                 job["owner"]["heartbeat"] = now_iso()
 
-        while not stop.wait(HEARTBEAT_INTERVAL_S):
+        last_beat = time.monotonic()
+        while not stop.wait(min(0.5, HEARTBEAT_INTERVAL_S)):
             try:
-                self.store.update(job_id, touch)
+                if self.store.load(job_id)["state"] in {"cancelling", "cancelled"}:
+                    cancel.set()
+                if time.monotonic() - last_beat >= HEARTBEAT_INTERVAL_S:
+                    self.store.update(job_id, touch)
+                    last_beat = time.monotonic()
             except (JobNotFound, OSError):
                 return
 
     def run_job(self, job_id: str) -> dict[str, Any]:
+        # Separate CLI processes also share this lane. A thread-local queue
+        # alone cannot keep two model processes off the same 36GB machine.
+        with (self.store.root / ".engine.lock").open("a") as lane:
+            last_queued_beat = 0.0
+            while True:
+                job = self.store.load(job_id)
+                if job["state"] != "queued":
+                    return job
+                if time.monotonic() - last_queued_beat >= HEARTBEAT_INTERVAL_S:
+                    def queued_owner(record):
+                        if record["state"] == "queued":
+                            record["owner"] = {"pid": os.getpid(), "heartbeat": now_iso()}
+                    self.store.update(job_id, queued_owner)
+                    last_queued_beat = time.monotonic()
+                try:
+                    fcntl.flock(lane, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(0.2)
+            try:
+                return self._run_in_lane(job_id)
+            finally:
+                fcntl.flock(lane, fcntl.LOCK_UN)
+
+    def _run_in_lane(self, job_id: str) -> dict[str, Any]:
         job = self.store.load(job_id)
         if job["state"] != "queued":
             return job
         recipe = self.recipes[job["recipe"]]
         cancel = threading.Event()
+        def claim(record):
+            if record["state"] == "queued":
+                record.update(state="running", startedAt=now_iso(),
+                              owner={"pid": os.getpid(), "heartbeat": now_iso()})
+        claimed = self.store.update(job_id, claim)
+        if claimed["state"] != "running":
+            return claimed
         with self._lock:
             self._cancels[job_id] = cancel
             self.current_job_id = job_id
-        self.store.update(job_id, lambda record: record.update(
-            state="running", startedAt=now_iso(),
-            owner={"pid": os.getpid(), "heartbeat": now_iso()},
-        ))
         ctx = JobContext(self.store, job_id, self.presets_loader(), cancel)
         stop_beat = threading.Event()
-        threading.Thread(target=self._beat, args=(job_id, stop_beat), daemon=True).start()
+        threading.Thread(target=self._beat, args=(job_id, stop_beat, cancel), daemon=True).start()
         state, error = "done", None
         try:
             recipe.run(ctx)
@@ -342,11 +401,17 @@ class Runner:
             state=state, error=error, finishedAt=now_iso()))
 
     def _loop(self) -> None:
-        while True:
-            job_id = self._queue.get()
+        while not self._stopping.is_set():
+            try:
+                job_id = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
             try:
                 self.run_job(job_id)
             except JobNotFound:
                 continue
             except Exception:  # noqa: BLE001 - keep the lane alive
                 traceback.print_exc()
+            finally:
+                with self._lock:
+                    self._pending.discard(job_id)

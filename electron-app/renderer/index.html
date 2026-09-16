@@ -78,24 +78,35 @@
                 <input id="seed" inputmode="numeric" autocomplete="off" placeholder="자동">
               </label>
               <label class="field mesh-option" hidden>
-                <span class="label">3D 품질</span>
+                <span class="label">형상 해상도</span>
                 <select id="pipeline">
-                  <option value="512" selected>빠름 (512)</option>
-                  <option value="1024">정밀 (1024)</option>
-                  <option value="1024_cascade">최고 (1024 cascade)</option>
+                  <option value="512" selected>512 · 현재 장비 검증</option>
+                  <option value="1024">1024 · 메모리 요구 높음</option>
+                  <option value="1024_cascade">1024 cascade · 메모리 요구 높음</option>
                 </select>
               </label>
               <label class="field mesh-option" hidden>
-                <span class="label">텍스처</span>
-                <select id="texture"><option>512</option><option selected>1024</option><option>2048</option></select>
+                <span class="label">품질본 텍스처</span>
+                <select id="texture"><option>512</option><option>1024</option><option>2048</option><option selected>4096</option></select>
               </label>
               <label class="field mesh-option" hidden>
-                <span class="label">면 수 상한</span>
+                <span class="label">품질본 목표 면 수</span>
                 <select id="faces">
                   <option value="10000">1만</option>
-                  <option value="30000" selected>3만</option>
+                  <option value="30000">3만</option>
                   <option value="100000">10만</option>
+                  <option value="500000">50만</option>
+                  <option value="1000000" selected>100만 · 품질 우선</option>
                   <option value="0">줄이지 않음</option>
+                </select>
+              </label>
+              <label class="field mesh-option" hidden>
+                <span class="label">게임용 목표 면 수 <em>형태 보존 우선</em></span>
+                <select id="game-faces">
+                  <option value="0">품질본만 만들기</option>
+                  <option value="30000">3만 면 · 2048px</option>
+                  <option value="100000" selected>10만 면 · 2048px</option>
+                  <option value="300000">30만 면 · 2048px</option>
                 </select>
               </label>
             </div>

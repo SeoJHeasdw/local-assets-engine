@@ -42,6 +42,8 @@ PYTHON="$ENGINE/.venv/bin/python"
 # 이 엔진은 TRELLIS의 배경 제거 모델을 BiRefNet으로 바꿔 부른다. BiRefNet의 원격
 # 코드가 요구하는 패키지는 trellis-mac의 setup.sh가 설치하지 않으므로 여기서 넣는다.
 VIRTUAL_ENV="$ENGINE/.venv" uv pip install einops kornia timm
+# CPU 표면 재구성과 원본 투영 굽기. Xcode 없이도 같은 품질 경로를 재현한다.
+VIRTUAL_ENV="$ENGINE/.venv" uv pip install scikit-image==0.26.0 point-cloud-utils==0.34.0
 reinstall() {
   VIRTUAL_ENV="$ENGINE/.venv" uv pip install --reinstall --no-build-isolation "$1"
 }

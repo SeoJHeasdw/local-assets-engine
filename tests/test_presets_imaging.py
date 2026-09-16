@@ -42,7 +42,9 @@ def test_image_params_use_consecutive_seeds_and_preset_outputs():
 
 def test_mesh_params_validate_choices():
     params = prepare_mesh_params({"pipelineType": "1024", "textureSize": "2048", "meshSeed": 5}, load_presets())
-    assert params == {"pipelineType": "1024", "textureSize": 2048, "targetFaces": 30000, "sizeMeters": 1.0, "meshSeed": 5}
+    assert params == {"pipelineType": "1024", "textureSize": 2048, "targetFaces": 1000000,
+                      "sizeMeters": 1.0, "meshSeed": 5, "audit": False,
+                      "gameFaces": 100000, "gameTextureSize": 2048}
     with pytest.raises(PresetError):
         prepare_mesh_params({"pipelineType": "4096"}, load_presets())
 

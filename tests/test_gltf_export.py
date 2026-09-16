@@ -136,3 +136,16 @@ def test_generation_runner_actually_installs_the_export_fix(tmp_path):
     assert doc["materials"][0]["doubleSided"] is True
     np.testing.assert_allclose(attribute(doc, binary, "POSITION")[:, 1], [0, 0, 2])
     np.testing.assert_allclose(attribute(doc, binary, "TEXCOORD_0")[:, 1], [.25, .25, .75])
+
+
+def test_native_pbr_keeps_factors_and_rotates_smooth_normals(tmp_path, surface):
+    vertices, faces, uv, texture = surface
+    normals = np.tile([0., 0., 1.], (3, 1))
+    path = tmp_path / "native.glb"
+    export_glb_with_texture(vertices, faces, uv, texture, texture, path,
+                            normals=normals, native_pbr=True)
+    doc, binary = read_glb(path)
+    pbr = doc["materials"][0]["pbrMetallicRoughness"]
+    assert pbr["metallicFactor"] == 1 and pbr["roughnessFactor"] == 1
+    np.testing.assert_allclose(attribute(doc, binary, "NORMAL"), [[0, 1, 0]] * 3)
+    assert doc["meshes"][0]["extras"][EXPORT_MARKER]["version"] == 2

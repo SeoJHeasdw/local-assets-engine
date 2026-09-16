@@ -1,4 +1,4 @@
-"""3D recipes: image → TRELLIS.2 mesh → Blender normalize → gltfpack."""
+"""3D recipes: full source → reconstructed surface → final-geometry PBR."""
 
 from __future__ import annotations
 
@@ -78,6 +78,9 @@ def prepare_mesh_params(params: dict[str, Any], presets: dict[str, Any]) -> dict
         "targetFaces": int_param(params, "targetFaces", defaults["targetFaces"], 0, 1_000_000),
         "sizeMeters": float_param(params, "sizeMeters", defaults["sizeMeters"], 0.0, 1000.0),
         "meshSeed": seed_param({"seed": params.get("meshSeed")}),
+        "audit": bool_param(params, "audit", False),
+        "gameFaces": int_param(params, "gameFaces", defaults.get("gameFaces", 100000), 0, 1_000_000),
+        "gameTextureSize": choice_param(params, "gameTextureSize", defaults.get("gameTextureSize", 2048), mesh["textureSizes"]),
     }
 
 
@@ -102,6 +105,9 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
     args: list[Any] = [python, WORKER, "--generate-py", script, "--birefnet", background["repo"]]
     if background.get("revision"):
         args += ["--birefnet-revision", background["revision"]]
+    args += ["--state-output", mesh_dir / "source.npz"]
+    if ctx.presets["mesh"].get("revision"):
+        args += ["--model-revision", ctx.presets["mesh"]["revision"]]
     args += [
         "--", input_path, "--seed", p["meshSeed"], "--output", raw_base,
         "--pipeline-type", p["pipelineType"], "--texture-size", p["textureSize"],
@@ -112,11 +118,84 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
             stage.run(args, cwd=mesh_dir, interpret=TrellisProgress(), retries=1)
         except StageFailed as failure:
             raise RuntimeError(explain_trellis_failure(failure)) from failure
-        raw_glb = mesh_dir / "raw.glb"
-        if not raw_glb.exists():
-            raise RuntimeError("TRELLIS.2가 GLB 파일을 만들지 않았습니다.")
+        if not (mesh_dir / "source.npz").exists():
+            raise RuntimeError("TRELLIS.2가 생성 원본을 저장하지 못했습니다.")
 
-    return finish_mesh(ctx, p, concept_asset_id=concept_asset_id)
+    return finish_quality_mesh(ctx, p, concept_asset_id=concept_asset_id)
+
+
+def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str | None = None) -> dict[str, Any]:
+    """Full source → final topology → native PBR → normalize only → inspection."""
+    mesh_dir = ctx.dir / "mesh"
+    source = mesh_dir / "source.npz"
+    workers = WORKER.parent
+    python = trellis_python()
+    with ctx.stage("surface", "원본 표면 재구성") as stage:
+        stage.run([python, workers / "quality_surface.py", "--source", source,
+                   "--output", mesh_dir / "surface", "--target-faces", p["targetFaces"],
+                   "--game-faces", 0])
+    surface = json.loads((mesh_dir / "surface/surface.json").read_text("utf-8"))
+    variants = [("master", "품질본", p["textureSize"], "asset")]
+    if p["gameFaces"]:
+        with ctx.stage("lod", "게임용 형상 보존 감축") as stage:
+            command = [python, workers / "quality_lod.py", "--master", mesh_dir / "surface/master.npz",
+                       "--output", mesh_dir / "surface/game.npz", "--target-faces", p["gameFaces"]]
+            if gltfpack := find_tool("gltfpack"):
+                command += ["--gltfpack", gltfpack]
+            stage.run(command)
+        variants.append(("game", "게임용", p["gameTextureSize"], "asset.game"))
+    artifacts = []
+    for name, label, size, stem in variants:
+        raw_glb = mesh_dir / f"{stem}.raw.glb"
+        with ctx.stage(f"texture-{name}", f"{label} UV·PBR 굽기") as stage:
+            stage.run([python, workers / "quality_texture.py", "--source", source,
+                       "--geometry", mesh_dir / f"surface/{name}.npz", "--output", raw_glb,
+                       "--texture-size", size])
+        final_glb = mesh_dir / f"{stem}.glb"
+        stats_path = mesh_dir / f"{stem}.stats.json"
+        with ctx.stage(f"post-{name}", f"{label} 크기·원점 정리") as stage:
+            command = [sys.executable, "-m", "local_assets_engine.tools.blender_post",
+                       "--input", raw_glb, "--output", final_glb, "--stats", stats_path,
+                       "--target-faces", 0, "--size", p["sizeMeters"]]
+            if name == "game":
+                command += ["--normalization", mesh_dir / "asset.stats.json"]
+            stage.run(command)
+        stats = json.loads(stats_path.read_text("utf-8"))
+        stats["sourceTriangles"] = surface["sourceTriangles"]
+        stats["reconstructedTriangles"] = surface["reconstructedTriangles"]
+        if name == "game":
+            stats["lod"] = json.loads((mesh_dir / "surface/game.json").read_text("utf-8"))
+            stats["topology"]["warnings"].extend(stats["lod"]["warnings"])
+        stats_path.write_text(json.dumps(stats, ensure_ascii=False, indent=2), "utf-8")
+        optimized = None
+        if gltfpack := find_tool("gltfpack"):
+            optimized = mesh_dir / f"{stem}.opt.glb"
+            with ctx.stage(f"optimize-{name}", f"{label} GLB 최적화") as stage:
+                # No simplification ratio: this is transport optimization only.
+                stage.run([gltfpack, "-i", final_glb, "-o", optimized, "-noq"])
+        else:
+            ctx.skip_stage(f"optimize-{name}", f"{label} GLB 최적화", "gltfpack이 없음")
+        artifacts.append((name, label, size, final_glb, raw_glb, optimized, stats))
+    with ctx.stage("inspect", "여러 각도 렌더 검수") as stage:
+        command = [sys.executable, "-m", "local_assets_engine.tools.mesh_inspect", "--output", mesh_dir / "inspection"]
+        for name, _label, _size, final_glb, *_ in artifacts:
+            command += ["--mesh", f"{name}={final_glb}"]
+        stage.run(command)
+    assets = []
+    for name, label, size, final_glb, raw_glb, optimized, stats in artifacts:
+        assets.append(ctx.add_asset(
+            kind="mesh", role="final", file=final_glb, preview=mesh_dir / f"inspection/{name}-0.png",
+            meta={"seed": p["meshSeed"], "pipelineType": p["pipelineType"], "textureSize": size,
+                  "targetFaces": p["targetFaces"] if name == "master" else p["gameFaces"],
+                  "sizeMeters": p["sizeMeters"], "stats": stats, "variant": name, "label": label,
+                  "rawFile": ctx.rel(raw_glb), "sourceStateFile": ctx.rel(source),
+                  "optimizedFile": ctx.rel(optimized) if optimized else None,
+                  "optimizedBytes": optimized.stat().st_size if optimized else None,
+                  "inspectionFile": f"mesh/inspection/{name}-contact.png",
+                  "source": p.get("source"), "conceptAsset": concept_asset_id,
+                  "processingVersion": 2},
+        ))
+    return assets[0]
 
 
 def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str | None = None) -> dict[str, Any]:
@@ -127,11 +206,14 @@ def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str |
     final_glb = mesh_dir / "asset.glb"
     stats_path = mesh_dir / "asset.stats.json"
     with ctx.stage("post", "메시 정리 (Blender)") as stage:
-        stage.run([
+        post_args = [
             sys.executable, "-m", "local_assets_engine.tools.blender_post",
             "--input", raw_glb, "--output", final_glb, "--stats", stats_path,
             "--target-faces", p["targetFaces"], "--size", p["sizeMeters"],
-        ], cwd=mesh_dir)
+        ]
+        if p.get("audit"):
+            post_args += ["--audit-dir", mesh_dir / "audit"]
+        stage.run(post_args, cwd=mesh_dir)
     stats = json.loads(stats_path.read_text("utf-8"))
     # generate.py는 GLB와 함께 OBJ 사본을 남긴다. 소품 하나에 100MB가 넘어 보관하지 않는다.
     (mesh_dir / "raw.obj").unlink(missing_ok=True)

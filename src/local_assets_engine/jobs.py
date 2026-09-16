@@ -7,6 +7,7 @@ goes through :meth:`JobStore.update`, which re-reads under one lock.
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import re
 import secrets
@@ -100,7 +101,13 @@ class JobStore:
             raise JobNotFound(job_id) from error
 
     def update(self, job_id: str, mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-        with self._lock:
+        # API reviews/cancellation can update a CLI-owned job in another process.
+        # Lock the read-modify-replace, not only the Python thread.
+        directory = self.job_dir(job_id)
+        if not directory.is_dir():
+            raise JobNotFound(job_id)
+        with self._lock, (directory / ".record.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
             job = self.load(job_id)
             mutate(job)
             self._write(job)
@@ -126,7 +133,13 @@ class JobStore:
             if job["state"] not in ACTIVE_STATES or owner_alive(job.get("owner")):
                 continue
 
-            def close(record: dict[str, Any], was_running: bool = job["state"] != "queued") -> None:
+            def close(record: dict[str, Any]) -> None:
+                nonlocal closed
+                # Recheck under the process lock: a waiting runner may have
+                # claimed this record since the directory snapshot was read.
+                if record["state"] not in ACTIVE_STATES or owner_alive(record.get("owner")):
+                    return
+                was_running = record["state"] != "queued"
                 record["state"] = "failed" if was_running else "cancelled"
                 record["error"] = ("엔진이 다시 시작되어 작업이 중단됐습니다." if was_running
                                    else "엔진이 다시 시작되어 대기 중이던 작업을 취소했습니다.")
@@ -134,9 +147,9 @@ class JobStore:
                 for stage in record["stages"]:
                     if stage.get("state") == "running":
                         stage["state"] = "failed"
+                closed += 1
 
             self.update(job["id"], close)
-            closed += 1
         return closed
 
     def running_job_id(self) -> str | None:

@@ -19,6 +19,7 @@ from .presets import load_presets
 DINOV3_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 # deps/mtlmesh는 cumesh, deps/mtlgemm은 flex_gemm이라는 이름으로 설치된다.
 TRELLIS_METAL_MODULES = ("mtldiffrast", "mtlbvh", "cumesh", "flex_gemm", "o_voxel")
+QUALITY_MODULES = ("point_cloud_utils", "skimage", "xatlas", "scipy", "trimesh")
 
 
 def hub_cache() -> Path:
@@ -94,6 +95,11 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         hint="docs/SETUP.md 2단계")
     add("modelViewer", "앱 3D 미리보기 (model-viewer)", MODEL_VIEWER_JS.exists(), required=False,
         hint="npm install")
+    ok, detail = _run_python(trellis_python(),
+                            "import importlib.util as u; "
+                            f"print(','.join(n for n in {QUALITY_MODULES!r} if not u.find_spec(n)) or 'ready')")
+    add("qualityProcessing", "고품질 표면 재구성·PBR 도구", ok and detail == "ready",
+        detail=detail, hint="scripts/setup_trellis.sh")
 
     if deep:
         ok, detail = _run_python(Path(sys.executable), "import torch; print(torch.backends.mps.is_available())")
@@ -104,14 +110,13 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         found = set(detail.split(",")) if ok else set()
         add("trellisMetal", "TRELLIS Metal 텍스처 가속", {"mtldiffrast", "mtlbvh", "flex_gemm"} <= found,
             detail=detail, required=False,
-            hint="없어도 텍스처는 쓸 수 있다. 켜면 재질 경계가 더 선명해진다 (docs/SETUP.md 2단계)")
+            hint="현재 품질 경로는 CPU 재구성·PBR 굽기를 사용합니다. 설치가 필요하지 않습니다.")
 
     ready = lambda *keys: all(checks[key]["ok"] for key in keys if key in checks)  # noqa: E731
     capabilities = {
         "image2d": ready("appleSilicon", "imageCli", "mps"),
-        "mesh3d": ready("appleSilicon", "trellisEngine", "hfLogin", "bpy", "mps"),
-        # 대체 굽기를 고친 뒤로 Metal은 품질 전제가 아니라 선명도 향상 수단이다.
-        "meshTexture": checks.get("trellisMetal", {}).get("ok", False),
+        "mesh3d": ready("appleSilicon", "trellisEngine", "hfLogin", "bpy", "mps", "qualityProcessing"),
+        "meshTexture": ready("qualityProcessing"),
         "gameReady": ready("gltfpack"),
         # 프리비즈는 Blender만 쓴다. 이미지·3D 모델이 없어도 샷을 잡을 수 있다.
         "previz": ready("bpy"),
@@ -128,7 +133,7 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
 CAPABILITY_LABELS = {
     "image2d": "2D 에셋 생성",
     "mesh3d": "3D 에셋 생성",
-    "meshTexture": "3D 텍스처 Metal 가속 (선택)",
+    "meshTexture": "원본 PBR 텍스처 굽기",
     "gameReady": "게임용 GLB 최적화",
     "previz": "프리비즈 샷 렌더",
 }

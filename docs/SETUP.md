@@ -1,7 +1,7 @@
 # 직접 해야 하는 준비
 
-에이전트가 대신할 수 없는 로그인·승인·설치와, 아직 정하지 않은 2D 모델 선택을
-모았다. 단계마다 끝나면 `npm run doctor`로 확인한다. 기준일은 2026-09-16이다.
+에이전트가 대신할 수 없는 로그인·승인·설치와, 모델 선택 참고 자료을
+모았다. 단계마다 끝나면 `npm run doctor`로 확인한다. 기준일은 2026-09-17이다.
 
 ## 지금 상태
 
@@ -9,7 +9,8 @@
 | --- | --- |
 | 엔진 Python 환경(bpy 5.2.2, mflux 0.19.1, BiRefNet 의존성), gltfpack, Electron | 설치됨 |
 | TRELLIS.2 Mac 엔진 `engines/trellis-mac` | 설치됨. Metal 텍스처 가속은 빠짐 (Xcode 없음) |
-| Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 내려받기 완료 (2026-09-16) |
+| FLUX.2 klein 4B, Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 내려받기 완료 (2026-09-16) |
+| CPU 표면·PBR 도구(scikit-image 0.26.0, point-cloud-utils 0.34.0, xatlas) | 설치됨 (2026-09-17). `scripts/setup_trellis.sh`에 포함 |
 | Hugging Face 로그인, DINOv3 승인 | 완료 (2026-09-16). `npm run doctor`에서 3D 생성 ✓ |
 
 ## 0. 가중치 내려받기가 끊길 때
@@ -47,10 +48,9 @@ DINOv3" 표기가 필요하다는 보고가 있었지만 원문으로 확인하�
 
 **회사 기기라 설치를 보류했다.** 관리 정책을 우회하지 않는다. 필요해지면 IT에 정식으로 요청한다.
 
-원래 이 단계가 없으면 텍스처에 검은 잡티가 깔렸는데, 2026-09-16에 대체 굽기 자체를 고쳐
-그 문제는 해결했다([DECISIONS](DECISIONS.md) 참고). 지금은 Xcode 없이도 텍스처를 쓸 수 있다.
-Metal 래스터라이저를 쓰면 재질 경계가 더 선명해질 여지는 남아 있으므로, 설치가 가능해지면
-아래 순서로 진행하고 같은 입력·시드로 다시 만들어 비교 기록을 남긴다.
+현재 품질 경로는 CPU 표면 재구성과 원본 PBR 굽기를 사용하므로 **Xcode가 필요하지 않다**.
+아래는 이전 Mac 포트의 Metal 경로를 별도로 비교하려는 경우에만 해당한다. 설치만으로 현재
+생성 경로가 바뀌지는 않으며, 도입하려면 같은 입력·시드의 품질·메모리를 다시 검증한다.
 
 1. App Store에서 Xcode를 설치한다. 설치 용량이 10GB 이상이다.
 2. 터미널에서 다음을 차례로 실행한다.
@@ -71,7 +71,8 @@ Metal 래스터라이저를 쓰면 재질 경계가 더 선명해질 여지는 �
    .venv/bin/python -m local_assets_engine run text-to-3d --params '{"subject": "wooden treasure chest"}'
    ```
 2. 첫 실행은 DINOv3 가중치 내려받기가 포함돼 오래 걸린다.
-   결과는 `output/jobs/<작업 ID>/mesh/asset.glb`(정리본)와 `asset.opt.glb`(게임용)이다.
+   결과는 `output/jobs/<작업 ID>/mesh/asset.glb`(품질본)와 `asset.game.glb`(게임용)다.
+   각각의 `.opt.glb`는 전송용 사본이다. 카드에는 실제 GLB 렌더가 보이고 여섯 방향 검수도 제공한다.
 3. 실패하면 앱 작업 카드의 오류와 `output/jobs/<작업 ID>/job.log`를 본다.
    외부 모니터를 여러 대 쓰는 중에 "GPU 감시" 오류가 나면 모니터를 줄이고 다시 시도한다.
 4. 앱의 환경 화면 → 측정 기록에 단계별 시간과 최대 메모리가 쌓인다.
@@ -86,8 +87,8 @@ Metal 래스터라이저를 쓰면 재질 경계가 더 선명해질 여지는 �
 
 ## 4. 2D 모델 정하기
 
-현재 기본값은 임시로 **Z-Image Turbo**다. 2D 조사는 중간에 멈췄으므로 아래 후보를
-직접 비교해 정한다. `config/presets.json`의 `imageModel`만 바꾸면 앱·CLI·javis가 함께 바뀐다.
+현재 기본값은 비교 후 채택한 **FLUX.2 klein 4B**다. 아래 표는 2026-09-16 후보 조사 기록이다.
+다른 모델로 바꾸려면 같은 프롬프트·시드로 다시 비교한다. `config/presets.json`의 `imageModel`만 바꾸면 앱·CLI·javis가 함께 바뀐다.
 
 | 후보 | 라이선스 | 게이트 | 저장소 크기 | 최종 수정 | mflux 명령 | 메모 |
 | --- | --- | --- | --- | --- | --- | --- |

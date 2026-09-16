@@ -14,7 +14,7 @@ const bridge = window.assetsStudio || null;
 const CAPABILITY_LABELS = {
   image2d: "2D 에셋 생성",
   mesh3d: "3D 에셋 생성",
-  meshTexture: "3D 텍스처 Metal 가속 (선택)",
+  meshTexture: "원본 PBR 텍스처 굽기",
   gameReady: "게임용 GLB 최적화",
   previz: "프리비즈 샷 렌더",
 };
@@ -159,6 +159,7 @@ async function submitComposer(event) {
       subject: $("#subject").value, style: $("#style").value, count: $("#count").value, seed: $("#seed").value,
       imagePath: state.imagePath, pipelineType: $("#pipeline").value,
       textureSize: $("#texture").value, targetFaces: $("#faces").value,
+      gameFaces: $("#game-faces").value,
     });
   } catch (error) {
     showFormError(error.message);
@@ -205,7 +206,7 @@ function stageHtml(stage) {
 function thumbHtml(jobId, asset) {
   const src = asset.preview ? fileUrl(jobId, asset.preview) : "";
   const warn = asset.meta?.error ? "물체 없음" : asset.meta?.checks?.touchesEdge ? "가장자리 닿음" : "";
-  const tag = asset.kind === "mesh" ? "3D"
+  const tag = asset.kind === "mesh" ? asset.meta?.label || "3D"
     : asset.kind === "shot" ? asset.meta?.shot || "샷"
     : asset.role === "concept" ? "컨셉" : "";
   return `<button class="thumb${asset.review === "rejected" ? " is-rejected" : ""}" type="button"
@@ -338,6 +339,7 @@ function detailHtml(job, asset) {
   if (asset.kind === "mesh") {
     stage = viewerReady
       ? `<model-viewer src="${fileUrl(job.id, asset.file)}" camera-controls auto-rotate shadow-intensity="0.7"
+          ${meta.processingVersion >= 2 && asset.preview ? `poster="${fileUrl(job.id, asset.preview)}"` : ""}
           exposure="1.05" environment-image="neutral" interaction-prompt="none" alt="${escapeHtml(job.title)}"></model-viewer>`
       : `<div><img src="${fileUrl(job.id, asset.preview)}" alt=""><p class="notice">3D 미리보기를 쓰려면 npm install 이 필요합니다.</p></div>`;
   } else if (asset.kind === "shot") {
@@ -381,13 +383,15 @@ function detailHtml(job, asset) {
     add("렌더 시간", formatDuration(meta.renderSeconds));
   } else {
     const stats = meta.stats || {};
-    if (stats.facesOut != null) add("면 수", `${stats.facesOut.toLocaleString()} (원본 ${stats.facesIn.toLocaleString()})`);
+    add("산출물", meta.label);
+    if (stats.facesOut != null) add("면 수", stats.facesOut.toLocaleString());
+    if (stats.sourceTriangles != null) add("생성 원본 면 수", stats.sourceTriangles.toLocaleString());
     if (Array.isArray(stats.dimensionsMeters)) add("크기 (m)", stats.dimensionsMeters.map((value) => value.toFixed(2)).join(" × "));
     if (stats.textures != null) add("텍스처", `${stats.textures}장 · ${meta.textureSize}px`);
-    add("3D 품질", meta.pipelineType);
+    add("형상 해상도", meta.pipelineType);
     add("시드", meta.seed, true);
     add("GLB", formatBytes(stats.bytes));
-    if (meta.optimizedBytes) add("게임용 GLB", formatBytes(meta.optimizedBytes));
+    if (meta.optimizedBytes) add("최적화 GLB", formatBytes(meta.optimizedBytes));
     if (stats.topology?.warnings?.length) add("자동 검사", stats.topology.warnings.join(" "));
   }
   add("파일", asset.file, true);
@@ -404,11 +408,17 @@ function detailHtml(job, asset) {
     asset.kind === "mesh"
       ? `<button class="secondary" type="button" data-action="previz" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">프리비즈 장면에 넣기</button>`
       : "",
+    asset.kind === "mesh" && (meta.sourceStateFile || job.params?.audit)
+      ? `<button class="secondary" type="button" data-action="refine" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">원본으로 품질 다시 만들기</button>`
+      : "",
+    meta.inspectionFile
+      ? `<a class="secondary" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 검수 보기</a>`
+      : "",
     bridge
       ? `<button class="ghost" type="button" data-action="reveal" data-job="${escapeHtml(job.id)}" data-file="${escapeHtml(asset.file)}">Finder에서 보기</button>`
       : "",
     bridge && meta.optimizedFile
-      ? `<button class="ghost" type="button" data-action="reveal" data-job="${escapeHtml(job.id)}" data-file="${escapeHtml(meta.optimizedFile)}">게임용 GLB 보기</button>`
+      ? `<button class="ghost" type="button" data-action="reveal" data-job="${escapeHtml(job.id)}" data-file="${escapeHtml(meta.optimizedFile)}">최적화 GLB 보기</button>`
       : "",
   ].join("");
 
@@ -416,7 +426,7 @@ function detailHtml(job, asset) {
     <button class="close" type="button" data-action="close" aria-label="닫기">✕</button>
     <div class="detail-stage">${stage}</div>
     <aside class="detail-side">
-      <h3>${escapeHtml(job.title)}</h3>
+      <h3>${escapeHtml(job.title)}${meta.label ? ` · ${escapeHtml(meta.label)}` : ""}</h3>
       <div class="actions">${actions}</div>
       <p class="hint" id="detail-message"></p>
       <dl class="meta">${rows.join("")}</dl>
@@ -472,6 +482,7 @@ async function makeMesh(jobId, assetId) {
         params: {
           source: { jobId, assetId }, pipelineType: $("#pipeline").value,
           textureSize: Number($("#texture").value), targetFaces: Number($("#faces").value),
+          gameFaces: Number($("#game-faces").value),
         },
       },
     });
@@ -493,7 +504,7 @@ async function refreshLibrary() {
     const { assets } = await api(`/api/assets${filter === "all" ? "" : `?review=${filter}`}`);
     grid.innerHTML = assets.length
       ? assets.map((asset) => `<div class="asset-card">${thumbHtml(asset.jobId, asset)}
-          <div class="caption">${escapeHtml(asset.jobTitle)}</div></div>`).join("")
+          <div class="caption">${escapeHtml(asset.jobTitle)}${asset.meta?.label ? ` · ${escapeHtml(asset.meta.label)}` : ""}</div></div>`).join("")
       : `<div class="empty">${filter === "pending" ? "검토할 에셋이 없습니다." : "해당하는 에셋이 없습니다."}</div>`;
   } catch (error) {
     grid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -611,6 +622,13 @@ function wireEvents() {
     if (action === "open") openAsset(job, asset);
     else if (action === "review") setReview(target);
     else if (action === "to3d") makeMesh(job, asset);
+    else if (action === "refine") {
+      target.disabled = true;
+      api("/api/jobs", { method: "POST", body: { recipe: "refine-mesh", params: { source: { jobId: job, assetId: asset } } } })
+        .then(() => { $("#asset-dialog").close(); showView("create"); return refreshJobs(); })
+        .catch((error) => setDetailMessage(error.message))
+        .finally(() => { target.disabled = false; });
+    }
     else if (action === "previz") addToPrevizScene(job, asset);
     else if (action === "reveal") bridge?.reveal(job, target.dataset.file);
     else if (action === "close") $("#asset-dialog").close();
@@ -643,6 +661,11 @@ async function init() {
   wireEvents();
   try {
     state.presets = await api("/api/presets");
+    const defaults = state.presets.mesh.defaults;
+    $("#pipeline").value = defaults.pipelineType;
+    $("#texture").value = String(defaults.textureSize);
+    $("#faces").value = String(defaults.targetFaces);
+    $("#game-faces").value = String(defaults.gameFaces ?? 100000);
   } catch (error) {
     showFormError(error.message);
   }
