@@ -75,6 +75,13 @@ DINOv3" 표기가 필요하다는 보고가 있었지만 원문으로 확인하�
 4. 앱의 환경 화면 → 측정 기록에 단계별 시간과 최대 메모리가 쌓인다.
    `npm run bench`로도 볼 수 있다. 장비 교체 판단의 근거로 쓴다.
 
+   결과 메시는 앱의 3D 미리보기로 보거나, 같은 각도로 렌더해 비교할 수 있다.
+   텍스처 품질처럼 통계로 드러나지 않는 문제는 이렇게 봐야 보인다.
+
+   ```bash
+   .venv/bin/python scripts/preview_glb.py output/jobs/<작업 ID>/mesh/asset.glb preview.png
+   ```
+
 ## 4. 2D 모델 정하기
 
 현재 기본값은 임시로 **Z-Image Turbo**다. 2D 조사는 중간에 멈췄으므로 아래 후보를
