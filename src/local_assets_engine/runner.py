@@ -16,12 +16,15 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .jobs import JobNotFound, JobStore, now_iso
-from .measure import StageCancelled, StageFailed, StageResult, parse_progress, run_measured
+from .measure import (
+    StageCancelled, StageFailed, StageResult, is_gpu_busy, parse_progress, run_measured,
+)
 from .paths import child_env
 from .presets import PresetError, load_presets
 
 FLUSH_INTERVAL_S = 0.5
 LOG_TAIL_LINES = 40
+RETRY_PAUSE_S = 10.0
 _DOWNLOAD_MARKERS = ("Fetching", "Downloading", "download")
 
 
@@ -85,6 +88,7 @@ class Stage:
         span: tuple[float, float] = (0.0, 1.0),
         interpret: Callable[[str], tuple[float | None, str | None] | None] | None = None,
         capture_stdout: bool = False,
+        retries: int = 0,
     ) -> StageResult:
         tracker = UnitTracker(units)
         downloading = {"active": False}
@@ -109,23 +113,33 @@ class Stage:
                 self.progress(scaled(tracker.update(fraction)), detail)
 
         command = Path(str(args[0])).name if len(args) < 3 or str(args[1]) != "-m" else str(args[2])
-        started = time.monotonic()
-        try:
-            result = run_measured(
-                args, cwd=cwd, env=env or child_env(), cancel=self.ctx.cancel,
-                on_line=on_line, on_progress=on_progress, capture_stdout=capture_stdout,
-            )
-        except StageFailed as failure:
+        for attempt in range(retries + 1):
+            tracker = UnitTracker(units)
+            started = time.monotonic()
+            try:
+                result = run_measured(
+                    args, cwd=cwd, env=env or child_env(), cancel=self.ctx.cancel,
+                    on_line=on_line, on_progress=on_progress, capture_stdout=capture_stdout,
+                )
+            except StageFailed as failure:
+                self.processes.append({
+                    "command": command,
+                    "seconds": round(time.monotonic() - started, 2),
+                    "peakMemoryBytes": failure.peak_memory_bytes,
+                })
+                if attempt >= retries or not is_gpu_busy(failure):
+                    raise
+                self.ctx.log_line(f"[재시도 {attempt + 1}/{retries}] {failure}")
+                self.progress(self.fraction, f"GPU가 바빠 다시 시도합니다 ({attempt + 1}/{retries})", force=True)
+                for _ in range(int(RETRY_PAUSE_S * 5)):
+                    self.ctx.check_cancel()
+                    time.sleep(0.2)
+                continue
             self.processes.append({
-                "command": command,
-                "seconds": round(time.monotonic() - started, 2),
-                "peakMemoryBytes": failure.peak_memory_bytes,
+                "command": command, "seconds": result.seconds, "peakMemoryBytes": result.peak_memory_bytes,
             })
-            raise
-        self.processes.append({
-            "command": command, "seconds": result.seconds, "peakMemoryBytes": result.peak_memory_bytes,
-        })
-        return result
+            return result
+        raise AssertionError("unreachable")
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc_type is None:

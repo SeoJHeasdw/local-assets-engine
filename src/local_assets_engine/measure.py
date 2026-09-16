@@ -31,6 +31,16 @@ _TQDM_PERCENT = re.compile(r"(\d{1,3})%\|")
 _LINE_BREAK = re.compile(rb"[\r\n]")
 
 
+# 다른 앱이 GPU를 함께 쓰면 macOS 감시가 긴 Metal 명령을 끊는다. 기기 문제가 아니라
+# 그때의 혼잡이므로 한 번은 다시 해 볼 값어치가 있다.
+GPU_BUSY_SIGNATURES = (
+    "kIOGPUCommandBufferCallbackErrorTimeout",
+    "ImpactingInteractivity",
+    "Command buffer execution failed",
+    "Insufficient Memory",
+)
+
+
 class StageCancelled(Exception):
     """The user stopped the job while this stage was running."""
 
@@ -52,6 +62,11 @@ class StageResult:
     peak_memory_bytes: int | None
     max_rss_bytes: int | None
     stdout: str
+
+
+def is_gpu_busy(failure: "StageFailed") -> bool:
+    text = "\n".join([*failure.tail, str(failure)])
+    return any(signature in text for signature in GPU_BUSY_SIGNATURES)
 
 
 def parse_progress(line: str) -> tuple[float, str | None] | None:

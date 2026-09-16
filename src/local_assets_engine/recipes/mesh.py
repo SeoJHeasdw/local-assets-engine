@@ -106,7 +106,7 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
     with ctx.stage("mesh", "3D 생성 (TRELLIS.2)") as stage:
         stage.progress(0, "파이프라인 불러오는 중", force=True)
         try:
-            stage.run(args, cwd=mesh_dir, interpret=TrellisProgress())
+            stage.run(args, cwd=mesh_dir, interpret=TrellisProgress(), retries=1)
         except StageFailed as failure:
             raise RuntimeError(explain_trellis_failure(failure)) from failure
         raw_glb = mesh_dir / "raw.glb"

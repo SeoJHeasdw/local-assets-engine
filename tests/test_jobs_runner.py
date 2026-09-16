@@ -7,6 +7,7 @@ import pytest
 from local_assets_engine.jobs import JobNotFound, JobStore
 from local_assets_engine.presets import PresetError
 from local_assets_engine.recipes.base import Recipe
+from local_assets_engine import runner as runner_module
 from local_assets_engine.runner import Runner, UnitTracker
 
 
@@ -79,6 +80,56 @@ def test_cancel_running_job_stops_its_process(tmp_path):
     finished = store.load(job["id"])
     assert finished["state"] == "cancelled"
     assert finished["stages"][0]["state"] == "cancelled"
+
+
+def flaky_script(tmp_path, stderr_line, *, fail_always=False):
+    marker = tmp_path / "attempted"
+    script = tmp_path / "flaky.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"marker = pathlib.Path({str(marker)!r})\n"
+        f"if marker.exists() and not {fail_always}:\n"
+        "    print('ok')\n"
+        "else:\n"
+        "    marker.write_text('1')\n"
+        f"    print({stderr_line!r}, file=sys.stderr)\n"
+        "    sys.exit(1)\n",
+        "utf-8",
+    )
+    return script
+
+
+def test_a_busy_gpu_failure_is_retried_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "RETRY_PAUSE_S", 0.0)
+    script = flaky_script(
+        tmp_path,
+        "[METAL] Command buffer execution failed: Caused GPU Timeout Error "
+        "(00000002:kIOGPUCommandBufferCallbackErrorTimeout).",
+    )
+
+    def run(ctx):
+        with ctx.stage("work", "작업") as stage:
+            stage.run([sys.executable, str(script)], retries=1)
+
+    _store, runner = make_runner(tmp_path, run)
+    finished = runner.run_job(runner.create("fake", {})["id"])
+    assert finished["state"] == "done"
+    # 실패한 시도의 측정도 남는다: 프로세스 두 번.
+    assert len(finished["stages"][0]["processes"]) == 2
+
+
+def test_other_failures_are_not_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "RETRY_PAUSE_S", 0.0)
+    script = flaky_script(tmp_path, "모델 파일이 깨졌습니다")
+
+    def run(ctx):
+        with ctx.stage("work", "작업") as stage:
+            stage.run([sys.executable, str(script)], retries=1)
+
+    _store, runner = make_runner(tmp_path, run)
+    finished = runner.run_job(runner.create("fake", {})["id"])
+    assert finished["state"] == "failed"
+    assert len(finished["stages"][0]["processes"]) == 1
 
 
 def test_cancelled_queued_job_never_runs(tmp_path):

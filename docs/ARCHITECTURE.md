@@ -142,6 +142,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `post` | `python -m local_assets_engine.tools.blender_post` | `@@progress` JSON 줄 |
 | `optimize` | `gltfpack -i asset.glb -o asset.opt.glb` | 없음. gltfpack이 없으면 `skipped` |
 
+- 이미지 생성과 3D 생성은 GPU 혼잡 신호(`kIOGPUCommandBufferCallbackErrorTimeout`,
+  `Command buffer execution failed`, `Insufficient Memory`)로 끊기면 10초 뒤 한 번 다시
+  시도한다. 다른 원인의 실패는 바로 멈춘다. 실패한 시도의 측정도 `processes`에 남으므로
+  한 단계에 기록이 여러 개일 수 있고, `seconds`와 `peakMemoryBytes`는 단계 전체 기준이다.
 - `peakMemoryBytes`는 `/usr/bin/time -l`의 peak memory footprint다. Metal 할당이 포함되는지는
   확인하지 않았다(포함으로 추정). 같은 측정 방식의 기록끼리만 비교한다.
 - 모델을 처음 내려받은 실행은 시간 비교에서 빼고 본다.

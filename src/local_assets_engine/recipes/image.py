@@ -105,7 +105,7 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
             args += ["--steps", str(model["steps"])]
         if model.get("quantize"):
             args += ["--quantize", str(model["quantize"])]
-        stage.run(args, cwd=ctx.dir, units=len(seeds))
+        stage.run(args, cwd=ctx.dir, units=len(seeds), retries=1)
         raws = match_generated_files(raw_dir, seeds)
 
     sources = raws
