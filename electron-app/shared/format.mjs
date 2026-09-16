@@ -10,6 +10,7 @@ export const STAGE_STATE_LABELS = {
 export const REVIEW_LABELS = { pending: "검토 대기", approved: "승인", rejected: "거절" };
 export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
+  "repair-mesh": "기존 3D 복구",
 };
 
 export function isActive(job) {

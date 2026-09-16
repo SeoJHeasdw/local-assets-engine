@@ -13,6 +13,34 @@ from pathlib import Path
 from . import progress_line
 
 
+def topology_checks(vertices, triangles):
+    """Inspect geometric adjacency across UV seams, without changing the mesh."""
+    import numpy as np
+
+    # Exporters split vertices at UV/normal seams. Exact coincident positions
+    # should count as one vertex for inspection, but must retain their UVs.
+    _, inverse = np.unique(vertices, axis=0, return_inverse=True)
+    faces = inverse[triangles]
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    canonical = np.sort(edges, axis=1)
+    _, edge_ids, counts = np.unique(canonical, axis=0, return_inverse=True, return_counts=True)
+    direction = np.where(edges[:, 0] < edges[:, 1], 1, -1)
+    balance = np.bincount(edge_ids, weights=direction, minlength=len(counts))
+    checks = {
+        "boundaryEdges": int(np.count_nonzero(counts == 1)),
+        "nonManifoldEdges": int(np.count_nonzero(counts > 2)),
+        "inconsistentWindingEdges": int(np.count_nonzero((counts == 2) & (balance != 0))),
+        "duplicateFaces": len(faces) - len(np.unique(np.sort(faces, axis=1), axis=0)),
+    }
+    checks["warnings"] = [label for key, label in (
+        ("boundaryEdges", "열린 경계가 있어 표면 검토가 필요합니다."),
+        ("nonManifoldEdges", "한 모서리에 여러 면이 겹쳐 있습니다."),
+        ("inconsistentWindingEdges", "이웃 면의 방향이 일치하지 않는 부분이 있습니다."),
+        ("duplicateFaces", "중복 면이 있습니다."),
+    ) if checks[key]]
+    return checks
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path)
@@ -71,6 +99,18 @@ def main(argv: list[str] | None = None) -> int:
     mesh.update()
     obj.name = args.output.stem
 
+    mesh.calc_loop_triangles()
+    triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
+    mesh.loop_triangles.foreach_get("vertices", triangles)
+    checked_coords = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
+    mesh.vertices.foreach_get("co", checked_coords)
+    # Topology inspection does not approve/reject or silently remesh an asset.
+    topology = topology_checks(checked_coords.reshape(-1, 3), triangles.reshape(-1, 3))
+    if args.target_faces and len(mesh.loop_triangles) > args.target_faces:
+        topology["warnings"].append("감축 후에도 요청한 면 수를 넘었습니다.")
+    for warning in topology["warnings"]:
+        print(f"[mesh warning] {warning}", flush=True)
+
     print(progress_line(2, 4, "GLB 내보내는 중"), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=str(args.output), export_format="GLB", export_yup=True)
@@ -92,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         "materials": [material.name for material in mesh.materials if material],
         "textures": len(images),
         "bytes": args.output.stat().st_size,
+        "topology": topology,
     }
     args.stats.write_text(json.dumps(stats, ensure_ascii=False, indent=2), "utf-8")
     print(progress_line(4, 4, f"면 {stats['facesOut']:,}개"), flush=True)

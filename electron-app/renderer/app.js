@@ -373,6 +373,7 @@ function detailHtml(job, asset) {
     add("시드", meta.seed, true);
     add("GLB", formatBytes(stats.bytes));
     if (meta.optimizedBytes) add("게임용 GLB", formatBytes(meta.optimizedBytes));
+    if (stats.topology?.warnings?.length) add("자동 검사", stats.topology.warnings.join(" "));
   }
   add("파일", asset.file, true);
 

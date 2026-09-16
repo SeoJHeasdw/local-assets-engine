@@ -49,16 +49,15 @@ def main() -> None:
         return original(name, *positional, **keywords)
 
     AutoModelForImageSegmentation.from_pretrained = redirected
-    # Metal 없이 도는 대체 굽기는 먼 텍셀을 검게 남기고 그 검은색을 이웃에 번지게 한다.
-    # 표면 전체에 잡티가 생기므로 색을 채우는 함수만 우리 것으로 바꾼다.
-    try:
-        import texture_bake
-        from backends import texture_baker
+    # 대체 경로만 보정한다. Metal 경로의 UV와 좌표축을 두 번 바꾸면 안 된다.
+    # 보정 로드 실패를 무시하면 깨진 GLB를 성공으로 기록하므로 여기서 실패시킨다.
+    import texture_bake
+    import gltf_export
+    from backends import texture_baker
 
-        texture_bake.patch(texture_baker)
-        print("[local-assets] fallback texture baker -> local-assets", flush=True)
-    except ImportError as error:
-        print(f"[local-assets] baker patch skipped: {error}", flush=True)
+    texture_bake.patch(texture_baker)
+    texture_baker.export_glb_with_texture = gltf_export.export_glb_with_texture
+    print(f"[local-assets] KDTree GLB export v{gltf_export.EXPORT_VERSION}", flush=True)
 
     sys.argv = [script, *rest]
     runpy.run_path(script, run_name="__main__")

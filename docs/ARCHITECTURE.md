@@ -13,6 +13,7 @@
 | `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`) |
 | `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
+| `src/local_assets_engine/workers/gltf_export.py` | KDTree GLB 내보내기 계약 보정, 이전 원본 복구(모델 적재 없음) |
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
@@ -85,6 +86,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `image` | `subject`(필수), `preset`, `style`, `count` 1~8, `seed`, `width`·`height` 256~2048(16의 배수로 내림), `removeBackground` | `item-icon`, 4장, 프리셋 크기 |
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
 | `image-to-3d` | `imagePath`(절대 경로) 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
+| `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048, `targetFaces` 0~1,000,000(0은 줄이지 않음), `sizeMeters`, `meshSeed` | `512`, 1024, 30000, 1.0 |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
@@ -149,6 +151,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `mesh` | `engines/trellis-mac/.venv/bin/python workers/trellis_runner.py` | generate.py 출력 표식과 샘플러 막대 3개 |
 | `post` | `python -m local_assets_engine.tools.blender_post` | `@@progress` JSON 줄 |
 | `optimize` | `gltfpack -i asset.glb -o asset.opt.glb` | 없음. gltfpack이 없으면 `skipped` |
+| `repair` | `python workers/gltf_export.py --input ... --output ...` | 없음. 기존 KDTree 원본을 새 작업으로 복구 |
 | `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
 
 - 이미지 생성과 3D 생성은 GPU 혼잡 신호(`kIOGPUCommandBufferCallbackErrorTimeout`,
@@ -168,6 +171,18 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
   원점에 두고 가장 긴 변을 `sizeMeters`로 맞춰 GLB(+Y 위)로 내보낸다.
 - 결과 파일은 `mesh/raw.glb`(TRELLIS 원본), `mesh/asset.glb`(정리본),
   `mesh/asset.opt.glb`(gltfpack), `mesh/asset.stats.json`이다.
+- KDTree 대체 경로의 GLB 내보내기는 래퍼가 `gltf_export.py`로 교체한다. 굽기에 쓴 V와
+  glTF의 이미지 행 좌표를 맞추고, TRELLIS Z-up을 glTF Y-up으로 변환하며 양면 재질로 저장한다.
+  원본 메시 extras의 `local_assets_export: {version: 1, backend: "kdtree"}`가 보정 여부를 표시한다.
+  Metal 경로에는 이 보정을 적용하지 않으며, 래퍼 보정 로드 실패는 작업 실패로 기록한다.
+- 메시 `meta.processingVersion`은 현재 후처리 계약의 버전이다(현재 1). `stats.topology`에는
+  `boundaryEdges`, `nonManifoldEdges`, `inconsistentWindingEdges`, `duplicateFaces`, `warnings`를
+  기록한다. UV 경계의 동일 위치 정점은 검사할 때만 합쳐 세며 파일을 바꾸지 않는다.
+  경고는 에셋 상세에 표시하고 승인·거절은 사람이 정한다.
+- `repair-mesh`는 기존 작업 기록으로 이전 KDTree 경로임을 확인하고, 원본 raw의 내보내기만
+  새 작업 폴더에서 보정한 뒤 동일한 `post`·`optimize` 단계를 실행한다. 모델을 적재하지 않으며
+  각 단계는 동일한 러너와 측정을 거친다. 원본 파일·승인·프리비즈 참조는 바꾸지 않고,
+  새 메시의 `meta.source`가 원본 메시를 가리킨다. 복구본은 검토 대기다.
 
 ## 프리비즈 계약
 

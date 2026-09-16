@@ -20,6 +20,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `image` | 설명 → 이미지 후보 → 배경 제거 → 캔버스 맞춤 또는 픽셀화 | 투명 PNG 후보 |
 | `text-to-3d` | 설명 → 컨셉 이미지 1장 → TRELLIS.2 → Blender 정리 → gltfpack | GLB |
 | `image-to-3d` | 고른 후보나 이미지 파일 → TRELLIS.2 → Blender 정리 → gltfpack | GLB |
+| `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
 | `previz` | 완성된 메시·회색 대역 배치 → 샷 프리셋을 카메라 값으로 풀기 → 스케치 렌더 | 샷별 애니매틱·깊이·윤곽과 샷 값 |
 
 이미지 모델은 FLUX.2 klein 4B, 배경 제거는 BiRefNet, 3D는 TRELLIS.2 Mac 포트, 프리비즈
@@ -74,6 +75,16 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 
 `.venv/bin/python -m local_assets_engine run <레시피> --params '<JSON>'`은 엔진이 떠 있으면
 엔진에 작업을 넣고, 없으면 그 자리에서 실행한다. API 목록은 [ARCHITECTURE](docs/ARCHITECTURE.md)에 있다.
+
+이전 3D 결과가 회전하면 사라지거나 색이 뒤섞였다면, 모델을 다시 돌리지 않고 복구할 수 있다.
+원본과 승인 상태는 보존하고, 보관함에 새 **검토 대기** 에셋을 만든다. 이미 보정된 결과나
+Metal 경로의 결과에는 적용하지 않는다. 서버가 이전 코드를 쓰고 있다면 진행 작업을 마친 뒤
+앱과 엔진을 다시 열어 새 레시피를 불러온다.
+
+```bash
+.venv/bin/python -m local_assets_engine run repair-mesh \
+  --params '{"source": {"jobId": "<기존 3D 작업 ID>", "assetId": "a02"}}'
+```
 
 ## 폴더 안내
 

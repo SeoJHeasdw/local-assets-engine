@@ -116,6 +116,14 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
         if not raw_glb.exists():
             raise RuntimeError("TRELLIS.2가 GLB 파일을 만들지 않았습니다.")
 
+    return finish_mesh(ctx, p, concept_asset_id=concept_asset_id)
+
+
+def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str | None = None) -> dict[str, Any]:
+    """Shared measured postprocessing for new meshes and legacy recovery jobs."""
+    mesh_dir = ctx.dir / "mesh"
+    raw_glb = mesh_dir / "raw.glb"
+    input_path = mesh_dir / "input.png"
     final_glb = mesh_dir / "asset.glb"
     stats_path = mesh_dir / "asset.stats.json"
     with ctx.stage("post", "메시 정리 (Blender)") as stage:
@@ -145,6 +153,7 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
             "optimizedFile": ctx.rel(optimized) if optimized else None,
             "optimizedBytes": optimized.stat().st_size if optimized else None,
             "source": p.get("source"), "conceptAsset": concept_asset_id,
+            "processingVersion": 1,
         },
     )
 
