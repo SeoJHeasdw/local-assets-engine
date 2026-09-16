@@ -25,6 +25,9 @@ from .presets import PresetError, load_presets
 FLUSH_INTERVAL_S = 0.5
 LOG_TAIL_LINES = 40
 RETRY_PAUSE_S = 10.0
+# 조용한 단계(UV 펼치기 등)는 수백 초 동안 아무 줄도 내지 않는다. 그동안에도 살아 있음을
+# 남겨야 다른 엔진이 시작할 때 이 작업을 죽은 것으로 보고 닫지 않는다.
+HEARTBEAT_INTERVAL_S = 30.0
 _DOWNLOAD_MARKERS = ("Fetching", "Downloading", "download")
 
 
@@ -294,6 +297,17 @@ class Runner:
                 event.set()
             return job
 
+    def _beat(self, job_id: str, stop: threading.Event) -> None:
+        def touch(job: dict[str, Any]) -> None:
+            if job.get("state") == "running" and isinstance(job.get("owner"), dict):
+                job["owner"]["heartbeat"] = now_iso()
+
+        while not stop.wait(HEARTBEAT_INTERVAL_S):
+            try:
+                self.store.update(job_id, touch)
+            except (JobNotFound, OSError):
+                return
+
     def run_job(self, job_id: str) -> dict[str, Any]:
         job = self.store.load(job_id)
         if job["state"] != "queued":
@@ -308,6 +322,8 @@ class Runner:
             owner={"pid": os.getpid(), "heartbeat": now_iso()},
         ))
         ctx = JobContext(self.store, job_id, self.presets_loader(), cancel)
+        stop_beat = threading.Event()
+        threading.Thread(target=self._beat, args=(job_id, stop_beat), daemon=True).start()
         state, error = "done", None
         try:
             recipe.run(ctx)
@@ -317,6 +333,7 @@ class Runner:
             state, error = "failed", str(exc) or exc.__class__.__name__
             ctx.log_line(traceback.format_exc())
         finally:
+            stop_beat.set()
             ctx.flush_log()
             with self._lock:
                 self._cancels.pop(job_id, None)

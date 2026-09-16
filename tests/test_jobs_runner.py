@@ -193,3 +193,40 @@ def test_resolve_file_blocks_traversal(tmp_path):
         store.resolve_file(job["id"], "../../secret.txt")
     with pytest.raises(JobNotFound):
         store.job_dir("../etc")
+
+
+def test_a_silent_stage_keeps_the_job_alive(tmp_path, monkeypatch):
+    # 출력이 없는 동안에도 하트비트가 갱신돼야 다른 엔진이 이 작업을 닫지 않는다.
+    monkeypatch.setattr(runner_module, "HEARTBEAT_INTERVAL_S", 0.05)
+    beats = []
+
+    def run(ctx):
+        with ctx.stage("quiet", "조용한 단계"):
+            for _ in range(20):
+                beats.append(ctx.store.load(ctx.job_id)["owner"]["heartbeat"])
+                time.sleep(0.05)
+
+    store, runner = make_runner(tmp_path, run)
+    job = runner.run_job(runner.create("fake", {})["id"])
+    assert job["state"] == "done"
+    assert len(set(beats)) > 1, "조용한 단계에서 하트비트가 멈췄다"
+
+
+def test_a_running_job_survives_another_engine_starting(tmp_path):
+    started, release = threading.Event(), threading.Event()
+
+    def run(ctx):
+        with ctx.stage("quiet", "조용한 단계"):
+            started.set()
+            release.wait(5)
+
+    store, runner = make_runner(tmp_path, run)
+    job = runner.create("fake", {})
+    worker = threading.Thread(target=runner.run_job, args=(job["id"],))
+    worker.start()
+    assert started.wait(5)
+    assert store.recover_interrupted() == 0
+    assert store.load(job["id"])["state"] == "running"
+    release.set()
+    worker.join(10)
+    assert store.load(job["id"])["state"] == "done"
