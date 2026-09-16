@@ -104,13 +104,13 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         found = set(detail.split(",")) if ok else set()
         add("trellisMetal", "TRELLIS Metal 텍스처 가속", {"mtldiffrast", "mtlbvh", "flex_gemm"} <= found,
             detail=detail, required=False,
-            hint="없으면 텍스처에 잡티가 남는다. Xcode 설치 뒤 scripts/setup_trellis.sh (docs/SETUP.md 2단계)")
+            hint="없어도 텍스처는 쓸 수 있다. 켜면 재질 경계가 더 선명해진다 (docs/SETUP.md 2단계)")
 
     ready = lambda *keys: all(checks[key]["ok"] for key in keys if key in checks)  # noqa: E731
     capabilities = {
         "image2d": ready("appleSilicon", "imageCli", "mps"),
         "mesh3d": ready("appleSilicon", "trellisEngine", "hfLogin", "bpy", "mps"),
-        # 형태는 Metal 없이도 나오지만 텍스처는 쓸 수 없는 수준으로 구워진다.
+        # 대체 굽기를 고친 뒤로 Metal은 품질 전제가 아니라 선명도 향상 수단이다.
         "meshTexture": checks.get("trellisMetal", {}).get("ok", False),
         "gameReady": ready("gltfpack"),
     }
@@ -126,7 +126,7 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
 CAPABILITY_LABELS = {
     "image2d": "2D 에셋 생성",
     "mesh3d": "3D 에셋 생성",
-    "meshTexture": "3D 텍스처 품질 (Metal 굽기)",
+    "meshTexture": "3D 텍스처 Metal 가속 (선택)",
     "gameReady": "게임용 GLB 최적화",
 }
 

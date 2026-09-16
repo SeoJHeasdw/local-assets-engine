@@ -11,7 +11,7 @@ const bridge = window.assetsStudio || null;
 const CAPABILITY_LABELS = {
   image2d: "2D 에셋 생성",
   mesh3d: "3D 에셋 생성",
-  meshTexture: "3D 텍스처 품질 (Metal 굽기)",
+  meshTexture: "3D 텍스처 Metal 가속 (선택)",
   gameReady: "게임용 GLB 최적화",
 };
 const PIXEL_FILE = /px(@preview)?\.png$/;
