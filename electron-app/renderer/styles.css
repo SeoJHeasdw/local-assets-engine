@@ -288,7 +288,7 @@ button.is-danger { color: var(--danger); }
 .notice { padding: var(--s3); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-sm); }
 
 /* ---- 환경 ---- */
-.capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); margin-bottom: var(--s5); }
+.capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s3); margin-bottom: var(--s5); }
 .capability { padding: var(--s4); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 .capability span { color: var(--text-3); font-size: var(--fs-xs); }
 .capability strong { display: block; margin-top: var(--s2); font-size: var(--fs-lg); font-weight: 600; }

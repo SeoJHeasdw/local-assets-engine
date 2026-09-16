@@ -8,7 +8,12 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 // Electron preload가 주는 기능. 일반 브라우저로 열면 없고, 파일 고르기·Finder 열기만 빠진다.
 const bridge = window.assetsStudio || null;
 
-const CAPABILITY_LABELS = { image2d: "2D 에셋 생성", mesh3d: "3D 에셋 생성", gameReady: "게임용 GLB 최적화" };
+const CAPABILITY_LABELS = {
+  image2d: "2D 에셋 생성",
+  mesh3d: "3D 에셋 생성",
+  meshTexture: "3D 텍스처 품질 (Metal 굽기)",
+  gameReady: "게임용 GLB 최적화",
+};
 const PIXEL_FILE = /px(@preview)?\.png$/;
 
 const state = {
