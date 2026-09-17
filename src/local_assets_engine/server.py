@@ -15,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, doctor
 from .bench import bench_rows
-from .jobs import REVIEW_STATES, JobNotFound, JobStore, now_iso
+from .jobs import ACTIVE_STATES, REVIEW_STATES, JobNotFound, JobStore, now_iso
+from .library import job_storage, lineage, storage_report, update_library
 from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir, output_dir
 from .presets import PresetError, load_presets
 from .runner import Runner
@@ -145,15 +146,56 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail="에셋을 찾을 수 없습니다.") from error
 
+    @app.post("/api/jobs/{job_id}/assets/{asset_id}/library")
+    def organize_asset(job_id: str, asset_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """즐겨찾기·태그·컬렉션·메모. 파일과 승인 상태는 바꾸지 않는다."""
+        def apply(job: dict[str, Any]) -> None:
+            asset = next((item for item in job["assets"] if item["id"] == asset_id), None)
+            if asset is None:
+                raise JobNotFound(asset_id)
+            update_library(asset, payload)
+
+        try:
+            return store.update(job_id, apply)
+        except PresetError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail="에셋을 찾을 수 없습니다.") from error
+
+    @app.get("/api/jobs/{job_id}/assets/{asset_id}/versions")
+    def asset_versions(job_id: str, asset_id: str) -> dict[str, Any]:
+        try:
+            return lineage(store.list(limit=10_000), job_id, asset_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="에셋을 찾을 수 없습니다.") from error
+
     @app.get("/api/assets")
-    def list_assets(review: str | None = None, kind: str | None = None, limit: int = 500) -> dict[str, Any]:
+    def list_assets(review: str | None = None, kind: str | None = None, favorite: bool | None = None,
+                    collection: str | None = None, tag: str | None = None, limit: int = 500) -> dict[str, Any]:
         assets = []
         for job in store.list(limit=2000):
             for asset in job["assets"]:
                 if (review and asset["review"] != review) or (kind and asset["kind"] != kind):
                     continue
+                if (favorite is not None and bool(asset.get("favorite")) != favorite) or (
+                        collection is not None and (asset.get("collection") or "") != collection) or (
+                        tag and tag not in (asset.get("tags") or [])):
+                    continue
                 assets.append({**asset, "jobId": job["id"], "jobTitle": job["title"], "recipe": job["recipe"]})
         return {"assets": assets[: max(1, min(limit, 2000))]}
+
+    @app.get("/api/storage")
+    def get_storage() -> dict[str, Any]:
+        return storage_report(store, store.list(limit=10_000))
+
+    @app.get("/api/jobs/{job_id}/storage")
+    def get_job_storage(job_id: str) -> dict[str, Any]:
+        """작업 폴더의 파일 분류. 앱이 중간 파일을 휴지통으로 보내기 전에 여기서 다시 확인한다."""
+        try:
+            job = store.load(job_id)
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.") from error
+        return {**job_storage(store.job_dir(job_id), job), "active": job["state"] in ACTIVE_STATES}
 
     @app.get("/files/{job_id}/{relative:path}")
     def job_file(job_id: str, relative: str) -> FileResponse:

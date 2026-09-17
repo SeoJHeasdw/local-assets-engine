@@ -80,3 +80,36 @@ def test_reopening_a_saved_edit_replays_settings_from_its_base(tmp_path):
     with Image.open(store.resolve_file(c['id'],c['assets'][0]['file'])) as im: assert im.getpixel((5,5))==(0,255,0,255)
     with Image.open(store.resolve_file(b['id'],b['assets'][0]['file'])) as im: assert im.getpixel((5,5))==(0,0,255,255)
     assert c['assets'][0]['meta']['source']=={'jobId':b['id'],'assetId':'a01'}
+
+
+def test_layered_plan_validates_layers_regions_and_keeps_every_stamp(tmp_path):
+    store=JobStore(tmp_path/'jobs');upload=save_upload(store,image_bytes('blue',(4,4)))
+    with pytest.raises(PresetError):normalize_plan({'layers':[{'id':'../x','type':'color','to':'#000000'}]},'image',store)
+    with pytest.raises(PresetError):normalize_plan({'layers':[{'id':'a','type':'color','to':'#000000','region':{'strokes':[[0,0,0,1]]}}]},'mesh',store)
+    with pytest.raises(PresetError):normalize_plan({'layers':[{'id':'a','type':'color','to':'#000000'},{'id':'a','type':'color','to':'#000000'}]},'image',store)
+    with pytest.raises(PresetError):normalize_plan({'frame':{'crop':{'x':.8,'y':0,'w':.5,'h':1}}},'image',store)
+    plan,stamps=normalize_plan({'frame':{'crop':'square','padding':.1,'background':'#ffffff','width':64},'layers':[
+        {'id':'color-a','type':'color','mode':'fill','to':'#00ff00','region':{'strokes':[[.25,.5,.2,1]]}},
+        {'id':'logo-a','type':'stamp','uploadId':upload['id'],'x':.2,'y':.2,'size':.1},
+        {'id':'logo-b','type':'stamp','uploadId':upload['id'],'visible':False}]},'image',store)
+    assert [l['id'] for l in plan['layers']]==['color-a','logo-a','logo-b'] and set(stamps)=={'logo-a','logo-b'}
+    assert plan['frame']['crop']=='square' and plan['frame']['width']==64
+    legacy,legacy_stamps=normalize_plan({'recolor':{'enabled':True,'from':'#ff0000','to':'#0000ff'},'overlay':{'enabled':True,'uploadId':upload['id'],'x':.5,'y':.5}},'image',store)
+    assert [l['type'] for l in legacy['layers']]==['color','stamp'] and list(legacy_stamps)==['stamp-1']
+
+
+def test_layered_edit_limits_color_to_the_brushed_region_and_inherits_collection(tmp_path):
+    store=JobStore(tmp_path/'jobs');runner=Runner(store,recipes={r.id:r for r in (IMPORT_IMAGE,EDIT_ASSET)})
+    original=runner.run_job(runner.create('import-image',{'uploadId':save_upload(store,image_bytes('red',(20,20)))['id']})['id'])
+    store.update(original['id'],lambda j:j['assets'][0].update(tags=['ui'],collection='던전',favorite=True))
+    logo=save_upload(store,image_bytes('white',(4,4)))
+    plan={'layers':[{'id':'color-left','type':'color','mode':'match','from':'#ff0000','to':'#0000ff','tolerance':.1,'region':{'strokes':[[.2,.5,.15,1]]}},
+                    {'id':'logo-1','type':'stamp','uploadId':logo['id'],'x':.8,'y':.8,'size':.2}]}
+    edited=runner.run_job(runner.create('edit-asset',{'source':{'jobId':original['id'],'assetId':'a01'},'plan':plan})['id'])
+    assert edited['state']=='done',edited['error']
+    asset=edited['assets'][0]
+    with Image.open(store.resolve_file(edited['id'],asset['file'])) as im:
+        assert im.getpixel((4,10))==(0,0,255,255) and im.getpixel((12,10))==(255,0,0,255) and im.getpixel((16,16))==(255,255,255,255)
+    assert asset['collection']=='던전' and asset['tags']==['ui'] and not asset.get('favorite')
+    assert store.resolve_file(edited['id'],asset['meta']['editStampFiles']['logo-1']).is_file()
+    assert [l['id'] for l in asset['meta']['editPlan']['layers']]==['color-left','logo-1']

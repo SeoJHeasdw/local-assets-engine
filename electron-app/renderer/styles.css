@@ -45,6 +45,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .resizer:focus-visible { outline: none; }
 body.is-resizing { cursor: col-resize; user-select: none; }
 
+/* ---- 창 끌기 ---- */
+/* 창에 제목 막대가 없으므로 맨 위 띠와 화면 머리글을 잡아 창을 옮긴다. 누르거나 입력하는 요소는 끌기에서 뺀다. */
+.window-drag { position: fixed; top: 0; right: 0; left: 0; z-index: 0; height: var(--titlebar-h); -webkit-app-region: drag; }
+.studio-head, .view-head { -webkit-app-region: drag; }
+button, a, input, select, textarea, label, summary, dialog, [role="tab"], [role="button"], [popover], .resizer, .segmented, .chips { -webkit-app-region: no-drag; }
+/* 모달이 열려 있으면 뒤 머리글이 배경 클릭을 가로채지 않게 한다. 맨 위 띠는 그대로 잡힌다. */
+body:has(dialog[open]) :is(.studio-head, .view-head, .pv-bar, .sidebar) { -webkit-app-region: no-drag; }
+
 /* ---- 뼈대 ---- */
 .shell { position: relative; display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; }
 #sidebar-resizer { left: var(--sidebar-w); }
@@ -98,8 +106,9 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .sidebar-foot.busy .pulse { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
 .sidebar-foot.offline .pulse { background: var(--danger); }
 
-.content { overflow: auto; }
-.view { min-height: 100%; padding: 44px var(--s6) var(--s6); }
+/* 위 테두리는 스크롤되지 않는다. 내용이 창 끌기 띠 밑으로 말려 올라가 눌리지 않는 일을 막는다. */
+.content { overflow: auto; border-top: var(--titlebar-h) solid var(--bg); }
+.view { min-height: 100%; padding: calc(44px - var(--titlebar-h)) var(--s6) var(--s6); }
 .view-head { margin-bottom: var(--s5); }
 .view-head.row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--s4); }
 .view-head h1 { margin: 0 0 var(--s1); font-size: var(--fs-2xl); font-weight: 650; letter-spacing: -.02em; }
@@ -176,7 +185,7 @@ button.ghost:disabled, button.ghost:disabled:hover { background: transparent; co
 .view.pv[hidden] { display: none; }
 .pv-bar {
   display: flex; align-items: center; gap: var(--s4); flex: none;
-  padding: 34px var(--s5) var(--s3); border-bottom: 1px solid var(--line); -webkit-app-region: drag;
+  padding: calc(34px - var(--titlebar-h)) var(--s5) var(--s3); border-bottom: 1px solid var(--line); -webkit-app-region: drag;
 }
 .pv-bar button, .pv-renders { -webkit-app-region: no-drag; }
 .pv-title { display: flex; align-items: baseline; gap: var(--s3); flex: none; }

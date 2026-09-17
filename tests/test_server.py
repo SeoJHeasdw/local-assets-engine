@@ -94,3 +94,52 @@ def test_local_image_upload_and_source_validation(api):
     assert client.post('/api/uploads',content=b'not an image').status_code==400
     assert client.post('/api/uploads',content=image.getvalue(),headers={'origin':'https://evil.example'}).status_code==403
     assert client.get('/uploads/invalid').status_code==404
+
+
+def test_assets_are_organized_with_favorites_tags_collections_and_notes(api):
+    client, runner = api
+    job_id = client.post("/api/jobs", json={"recipe": "fake", "params": {"subject": "검"}}).json()["id"]
+    runner.run_job(job_id)
+    url = f"/api/jobs/{job_id}/assets/a01/library"
+    updated = client.post(url, json={"favorite": True, "tags": [" 무기 ", "무기", "UI"], "collection": " 던전  1장 ", "note": "칼날이 선명함"}).json()
+    asset = updated["assets"][0]
+    assert (asset["favorite"], asset["tags"], asset["collection"], asset["note"]) == (True, ["무기", "UI"], "던전 1장", "칼날이 선명함")
+    assert asset["review"] == "pending"
+    assert [a["id"] for a in client.get("/api/assets", params={"favorite": "true", "collection": "던전 1장", "tag": "UI"}).json()["assets"]] == ["a01"]
+    assert client.get("/api/assets", params={"favorite": "false"}).json()["assets"] == []
+    cleared = client.post(url, json={"favorite": False, "tags": [], "collection": ""}).json()["assets"][0]
+    assert "favorite" not in cleared and "tags" not in cleared and "collection" not in cleared
+    assert client.post(url, json={"favorite": "yes"}).status_code == 400
+    assert client.post(url, json={"tags": [f"t{i}" for i in range(21)]}).status_code == 400
+    assert client.post(f"/api/jobs/{job_id}/assets/a99/library", json={"favorite": True}).status_code == 404
+
+
+def test_version_lineage_and_storage_classification(api, tmp_path):
+    client, runner = api
+    store = runner.store
+    root = store.create("fake", {"subject": "상자"}, "상자")
+    directory = store.job_dir(root["id"])
+    (directory / "mesh/surface").mkdir(parents=True)
+    for name, size in (("mesh/asset.glb", 10), ("mesh/source.npz", 20), ("mesh/input.png", 3), ("mesh/surface/full.npz", 40), ("mesh/asset.opt.glb", 5)):
+        (directory / name).write_bytes(b"x" * size)
+    store.update(root["id"], lambda job: job.update(state="done", assets=[{"id": "a01", "kind": "mesh", "role": "final", "file": "mesh/asset.glb", "review": "pending",
+        "meta": {"sourceStateFile": "mesh/source.npz", "optimizedFile": "mesh/asset.opt.glb"}}]))
+    edit = store.create("edit-asset", {"subject": "파란 상자"}, "파란 상자 · 편집본")
+    (store.job_dir(edit["id"]) / "edit").mkdir()
+    (store.job_dir(edit["id"]) / "edit/asset.glb").write_bytes(b"y" * 7)
+    store.update(edit["id"], lambda job: job.update(state="done", assets=[{"id": "a01", "kind": "mesh", "role": "final", "file": "edit/asset.glb", "review": "pending",
+        "createdAt": "2026-09-17T01:00:00+09:00", "meta": {"source": {"jobId": root["id"], "assetId": "a01"},
+        "editPlan": {"layers": [{"type": "color"}, {"type": "stamp", "text": "JAVIS"}]}}}]))
+    versions = client.get(f"/api/jobs/{edit['id']}/assets/a01/versions").json()
+    assert versions["root"] == f"{root['id']}/a01"
+    assert [(v["depth"], v["relation"], v["summary"]) for v in versions["versions"]] == [(0, None, []), (1, "편집", ["색 1", "문구 JAVIS"])]
+    assert client.get(f"/api/jobs/{edit['id']}/assets/a09/versions").status_code == 404
+    storage = client.get(f"/api/jobs/{root['id']}/storage").json()
+    categories = {item["path"]: item["category"] for item in storage["files"]}
+    assert categories["mesh/asset.glb"] == "results" and categories["mesh/source.npz"] == "bases"
+    assert categories["mesh/input.png"] == "bases" and categories["mesh/surface/full.npz"] == "intermediate"
+    assert categories["mesh/asset.opt.glb"] == "copies" and categories["job.json"] == "records" and storage["active"] is False
+    report = client.get("/api/storage").json()
+    row = next(item for item in report["jobs"] if item["jobId"] == root["id"])
+    assert row["intermediate"] == ["mesh/surface/full.npz"] and row["usedBy"] == [edit["id"]]
+    assert report["categories"]["intermediate"] == 40

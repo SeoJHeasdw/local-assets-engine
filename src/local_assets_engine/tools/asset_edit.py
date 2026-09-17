@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 import struct
+import shutil
 import subprocess
 from pathlib import Path
 from PIL import Image
@@ -48,12 +49,12 @@ def rgba_file(image, file, **extras):
     return {'file': str(file), 'width': image.width, 'height': image.height, **extras}
 
 
-def edit(source, output, plan, work, stamp=None):
+def edit(source, output, plan, work, stamps=None):
     work.mkdir(parents=True, exist_ok=True)
     is_mesh = source.suffix.lower() == '.glb'
-    manifest = {'plan': plan, 'textures': []}
-    if stamp:
-        with Image.open(stamp) as image: manifest['stamp'] = rgba_file(image, work / 'stamp.rgba')
+    manifest = {'plan': plan, 'textures': [], 'stamps': {}}
+    for layer_id, stamp in (stamps or {}).items():
+        with Image.open(stamp) as image: manifest['stamps'][layer_id] = rgba_file(image, work / f'stamp-{layer_id}.rgba')
     if is_mesh:
         doc, binary = read_glb(source)
         if doc.get('animations') or doc.get('skins'):
@@ -95,7 +96,7 @@ def edit(source, output, plan, work, stamp=None):
         else: image.save(output)
     if is_mesh: write_glb(output, doc, binary, replacements)
     # Pixel scratch files are temporary copies, not user assets or checkpoints.
-    for file in work.glob('*.rgba'): file.unlink()
+    shutil.rmtree(work, ignore_errors=True)
     return {'width': sizes[0][0], 'height': sizes[0][1], 'bytes': output.stat().st_size}
 
 
@@ -109,7 +110,7 @@ def main():
         with Image.open(source) as image: image.convert('RGBA').save(output)
         with Image.open(output) as image: stats={'width': image.width, 'height': image.height, 'bytes': output.stat().st_size}
     else:
-        stats=edit(source, output, request['plan'], output.parent / 'scratch', request.get('stamp'))
+        stats=edit(source, output, request['plan'], output.parent / 'scratch', request.get('stamps'))
     if output.suffix == '.png':
         from ..imaging import cutout_checks, has_transparency
         with Image.open(output) as image:

@@ -85,3 +85,29 @@ export function buildJobRequest(form) {
   if (form.kind === "3d" && (form.workflow === "direct" || (!form.workflow && count === 1))) return { recipe: "text-to-3d", params: { ...base, count: 1, ...mesh } };
   return { recipe: "image", params: { ...base, count } };
 }
+
+// 대기열에서 이 작업 앞에 있는 작업 수. 엔진은 만든 순서대로 한 줄로 돌린다.
+export function jobsAhead(jobs, jobId) {
+  const target = jobs.find((job) => job.id === jobId);
+  if (target?.state !== "queued") return 0;
+  const created = Date.parse(target.createdAt);
+  return jobs.filter((job) => job.id !== jobId && (["running", "cancelling"].includes(job.state)
+    || (job.state === "queued" && Date.parse(job.createdAt) <= created))).length;
+}
+
+// 기다린 시간(만들어진 뒤 시작까지)과 실제 처리 시간을 나눈다.
+export function jobTimes(job, now = Date.now()) {
+  const created = Date.parse(job.createdAt), started = job.startedAt ? Date.parse(job.startedAt) : null;
+  const finished = job.finishedAt ? Date.parse(job.finishedAt) : null;
+  const waitEnd = started ?? finished ?? now;
+  return {
+    waited: Number.isFinite(created) ? Math.max(0, (waitEnd - created) / 1000) : null,
+    worked: started !== null ? Math.max(0, ((finished ?? now) - started) / 1000) : null,
+  };
+}
+
+// 이전 폴링에서 진행·대기였다가 이번에 끝난 작업. 처음 불러온 목록에서는 알리지 않는다.
+export function newlyFinished(previousStates, jobs) {
+  if (!previousStates) return [];
+  return jobs.filter((job) => isActive({ state: previousStates.get(job.id) }) && !isActive(job));
+}

@@ -18,8 +18,9 @@
 | `src/local_assets_engine/workers/gltf_export.py` | 좌표·UV·PBR GLB 계약, 이전 KDTree 원본 복구 |
 | `src/local_assets_engine/uploads.py` | 20MB·1,677만 픽셀 이하 로컬 이미지 가져오기, 경로 없는 ID |
 | `tools/asset_edit.py`, `tools/edit_pixels.mjs` | 측정 프로세스에서 표면 편집 적용, 원본 형상 버퍼 보존 |
-| `electron-app/shared/editing.mjs`, `glb.mjs` | 미리보기·최종 저장이 공유하는 픽셀 계산과 GLB 읽기 |
-| `electron-app/renderer/editor.js`, `drafts.js` | 에셋 편집 공간과 로컬 임시 편집 보관 |
+| `electron-app/shared/editing.mjs`, `glb.mjs` | 미리보기·최종 저장이 공유하는 레이어 합성(`renderEdit`)·영역 마스크·표면 투영과 GLB 읽기 |
+| `electron-app/renderer/editor.js`, `edit-preview.js`, `drafts.js` | 편집 공간(레이어·손잡이·브러시·작업 내역), 미리보기 Worker, 로컬 임시 편집 보관 |
+| `src/local_assets_engine/library.py` | 즐겨찾기·태그·컬렉션 검증, 버전 계보, 작업 폴더 파일 분류(보관 용량) |
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
@@ -45,6 +46,11 @@ javis · CLI   ──HTTP───▶        │
 - 화면(HTML·JS·CSS)은 엔진이 저장소에서 바로 내보내며 `Cache-Control: no-store`를 붙이고, 앱도
   화면을 띄울 때마다 창 캐시를 비운다. 작업 결과(`/files/`)와 벤더 스크립트는 캐시를 허용한다.
 - 창의 기본 앱 열기는 작업 폴더 안의 `.blend`만 받는다(`assets:open-blend`).
+- 휴지통 보내기(`assets:trash-intermediate`, `assets:trash-job`)는 main이 엔진의
+  `GET /api/jobs/{id}/storage`를 다시 읽어 진행 중이 아닌지, 요청한 경로가 `intermediate`로
+  분류됐는지 확인한 뒤 `shell.trashItem`으로 옮긴다. 지우지 않으므로 Finder 휴지통에서 되살린다.
+- 창에는 제목 막대가 없다(`hiddenInset`). 맨 위 28px 띠와 화면 머리글이 `-webkit-app-region: drag`이고
+  단추·입력·팝업은 `no-drag`다. 끌기 띠는 문서 맨 앞에 있어 뒤에 오는 `no-drag` 요소가 영역을 뚫는다.
 - 엔진이 SIGTERM을 받으면 진행 중인 작업을 중지한다. 단계 프로세스는 자기 세션으로
   실행되므로 그 프로세스 그룹에 SIGTERM을, 3초 뒤에도 남으면 SIGKILL을 보낸다.
 - 엔진이 시작할 때 `queued`로 남은 작업은 `cancelled`, `running`으로 남은 작업은
@@ -83,8 +89,12 @@ javis · CLI   ──HTTP───▶        │
 | `POST /api/jobs` | `{recipe, params}`를 검증해 대기열에 넣는다. 입력 오류는 400 |
 | `GET /api/jobs/{id}` | 작업 기록 |
 | `POST /api/jobs/{id}/cancel` | 대기 작업은 바로 취소, 진행 작업은 중지 요청 |
-| `POST /api/jobs/{id}/assets/{assetId}/review` | `{status}`: `pending`, `approved`, `rejected` |
-| `GET /api/assets?review=&kind=` | 작업을 가로지른 에셋 목록 |
+| `POST /api/jobs/{id}/assets/{assetId}/review` | `{status}`: `pending`, `approved`, `rejected`. 앱은 프리비즈 컷에만 쓴다 |
+| `POST /api/jobs/{id}/assets/{assetId}/library` | `{favorite?, tags?, collection?, note?}`. 태그 20개·40자, 컬렉션 60자, 메모 500자. 빈 값은 필드를 지운다 |
+| `GET /api/jobs/{id}/assets/{assetId}/versions` | 이 이미지·메시의 원본부터 모든 파생 버전: `{current, root, versions[{key, parent, depth, relation, summary, ...}]}` |
+| `GET /api/assets?review=&kind=&favorite=&collection=&tag=` | 작업을 가로지른 에셋 목록 |
+| `GET /api/storage` | 분류별 합계와 작업별 크기, 다른 작업이 원본으로 쓰는지(`usedBy`), 중간 파일 목록 |
+| `GET /api/jobs/{id}/storage` | 작업 폴더의 파일별 크기·분류와 `active` |
 | `GET /files/{id}/{path}` | 해당 작업 폴더 안의 파일만 제공 |
 
 Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 403으로 거절한다.
@@ -99,8 +109,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
-| `import-image` | `uploadId`, `name` | 이미지를 새 검토 대기 에셋으로 등록 |
-| `edit-asset` | `source`, `name`, `plan`, `replaceEdits` | 원본 보존, 새 버전 생성 |
+| `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
+| `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
@@ -145,6 +155,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
 | `owner` | 실행·대기를 맡은 `{pid, heartbeat}`. 시작 복구가 살아 있는 다른 엔진의 작업을 닫지 않게 한다 |
 | `assets[].kind` / `role` | `image`·`mesh`·`shot` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D용 컨셉), `final`(메시) |
+| `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
 | 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`), `label`, `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
@@ -233,34 +244,61 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 `text-to-3d`는 계속 자동 생성을 지원한다. 주 화면에는 결과·간결한 상태를 보여 주고 상세 단계는
 작업 기록 팝업에 표시한다. `job.json` 계측과 환경의 측정 기록은 그대로 유지한다.
 
-`edit-asset`의 `plan`은 다음을 가진다.
+`edit-asset`의 `plan`은 전체 보정과 레이어 목록이다.
 
-- `brightness`, `contrast`, `saturation`: 픽셀 색 조절, 기본 1.
-- `recolor`: `{enabled, from, to, tolerance}`. RGB 거리로 선택하고 기존 명암을 유지한다.
-- `frame`: 2D만 `{turns: 0..3, flipX, crop: original/square/portrait/landscape}`.
-- `overlay`: `{enabled, uploadId, size, rotation, opacity, text?}`. 2D는 `x,y`(0..1),
-  3D는 glTF 모델 좌표의 `position,normal`, 투영 범위 `depth`를 더 가진다. 3D 크기는 미터,
-  2D 크기는 이미지 가로의 비율이다. 업로드 PNG가 실제 글꼴·로고 픽셀을 보존한다.
-- `metallic`, `roughness`: 기존 PBR 계수에 곱할 유지 비율. 기본 1.
+- `brightness`, `contrast`, `saturation`: 픽셀 색 조절. `metallic`, `roughness`: 기존 PBR 계수에 곱할 유지 비율. 기본 1.
+- `frame`(2D만): `{turns 0..3, flipX, crop, ratio, padding 0..0.5, background, width}`. `crop`은 회전·반전한
+  이미지 기준 정규화 사각형 `{x,y,w,h}` 또는 예전 비율 이름(`square`·`portrait`·`landscape`·`wide`), `null`은 원래 크기.
+  `padding`은 자른 영역 긴 변의 비율로 네 방향에 더하고 `background`(없으면 투명)로 채운다. `width`는 출력 가로
+  픽셀(16~4096, 세로는 비율대로이며 4096을 넘지 않게 함께 줄인다). 줄일 때는 칸 평균, 정수배 확대는 최근접 픽셀이다.
+- `layers`(32개 이하, `id`는 영문·숫자·`-`·`_`): 공통 `{id, type, name, visible, locked}`.
+  - `color`: `{mode: match|fill, from, to, tolerance, region}`. `match`는 `from`과 가까운 색만, `fill`은 영역 전체를
+    바꾸며 둘 다 원래 명암을 유지한다. `region`이 `null`이면 에셋 전체, `{strokes: []}`이면 아무 곳도 바꾸지 않는다.
+    브러시 획은 순서대로 칠하기(1)·지우기(0)이고 가장자리 30%가 부드럽다. 2D 획은 `[u, v, 반지름, 모드]`로 **원본
+    이미지** 정규화 좌표(반지름은 원본 가로 비율)라 회전·자르기를 바꿔도 같은 부위다. 3D 획은 `[x, y, z, 반지름(m), 모드]`
+    glTF 모델 좌표 구이며, 삼각형을 UV에 래스터화해 구 안의 표면 텍셀만 고르고 UV 섬 바깥 여백으로 2텍셀 번진다.
+    같은 색이 여러 부위에 있어도 칠한 부위만 바뀐다. 획은 2만 개까지 받는다.
+  - `stamp`(로고·문구): `{uploadId, size, rotation, opacity, text?, textColor?, font?}`. 2D는 출력 이미지 기준 `x,y`와
+    출력 가로 비율 크기, 3D는 미터 크기와 `position, normal, depth, clip`이다. `clip: connected`(새 레이어 기본)는
+    찍은 면과 같은 위치 정점으로 이어진 표면 중 로고 방향을 보고 사각형·깊이 안에 드는 면만 받는다. 자물쇠·손잡이처럼
+    튀어나온 부위에 붙인 로고가 옆면에서 멈춰 뒤 판으로 번지지 않는다. `projection`(예전 편집본)은 범위 안 모든 앞면이다.
+    로고도 UV 섬 경계 여백으로 번져 필터링 때 끊겨 보이지 않는다.
+- 적용 순서: 색 레이어(원본 색에서 고름) → 전체 보정 → 2D 구성 → 로고·문구 레이어(목록 순서). 색 레이어는 로고 위에 오지 않는다.
+- 예전 설정(`recolor` 하나, `overlay` 하나, 문자열 `crop`)은 엔진과 화면이 같은 규칙으로 `color-1`·`stamp-1` 레이어로 옮긴다.
 
-미리보기는 Web Worker, 최종 저장은 측정된 Python→Node 프로세스에서 **같은** `editing.mjs`를
-실행한다. 미리보기 텍스처만 1024px 이내로 표시하며 최종 파일은 원래 텍스처 해상도를 유지한다.
-CanvasTexture의 V 규약은 화면에 적용할 때만 뒤집는다. 저장 PNG와 glTF UV는 그대로다.
+미리보기는 Web Worker, 최종 저장은 측정된 Python→Node 프로세스에서 **같은** `renderEdit`을 실행한다. 미리보기
+텍스처만 1024px 이내로 표시하며 최종 파일은 원래 텍스처 해상도를 유지한다. 2D 미리보기는 출력 크기 조정을 생략한다
+(좌표가 정규화돼 있어 모양은 같다). 형상(`meshContext`: 합친 정점·면·면 법선·경계 상자, 필요할 때 이음매 정점 병합과
+UV 덮개)은 로고나 브러시 영역이 있을 때만 푼다. 1백만 면 상자 기준 1024px 미리보기 한 번에 20~120ms, 4K 저장의
+브러시 영역 계산은 약 1초였다. CanvasTexture의 V 규약은 화면에 적용할 때만 뒤집는다. 저장 PNG와 glTF UV는 그대로다.
 
-3D 로고는 선택한 면 주변을 평면 투영하여 원래 색 텍스처에 합성한다. 이웃 면 방향과 깊이 범위로
-반대편까지 관통하는 것을 막는다. 조각·불리언·형상 변경이나 실제 음각 기능은 아니다. 애니메이션,
-스킨, 압축·특수 UV 메시에는 지원 범위를 명확한 오류로 알린다. 이 프로젝트의 정적 품질본이 대상이다.
-GLB 저장은 이미지 bufferView와 요청한 재질 계수만 바꾸고 모든 형상·UV·노멀·면 인덱스 바이트를 보존한다.
+3D 로고는 선택한 면 주변을 평면 투영하여 원래 색 텍스처에 합성한다. 조각·불리언·형상 변경이나 실제 음각 기능은
+아니며 곡면을 따라 늘여 감싸지도 않는다. 애니메이션, 스킨, 압축·특수 UV 메시에는 지원 범위를 명확한 오류로 알린다.
+이 프로젝트의 정적 품질본이 대상이다. GLB 저장은 이미지 bufferView와 요청한 재질 계수만 바꾸고 모든 형상·UV·노멀·
+면 인덱스 바이트를 보존한다.
 
-결과는 `edit/asset.png` 또는 `edit/asset.glb`, `edit/source.*`(편집 기준), `edit/logo.png`,
-`edit/request.json`, `edit/stats.json`, 3D 검수 이미지다. `meta.source`는 이전 버전을,
-`editBaseFile`, `editStampFile`, `editPlan`은 재편집 기준과 설정을 가리킨다. UI가 `replaceEdits: true`로
-저장하면 기준 파일에 수정된 설정을 재적용하여 로고·보정이 중복으로 구워지지 않는다.
-기본 API 호출은 선택한 현재 파일 위에 새 편집을 적용한다.
+결과는 `edit/asset.png` 또는 `edit/asset.glb`, `edit/source.*`(편집 기준), 레이어마다 `edit/logo-<레이어 id>.png`,
+`edit/request.json`, `edit/stats.json`, 3D 검수 이미지다. 픽셀 계산용 `edit/scratch/`는 저장이 끝나면 지운다.
+`meta.source`는 이전 버전을, `editBaseFile`, `editStampFiles`(레이어 id → 그림), `editPlan`은 재편집 기준과 설정을
+가리킨다(예전 편집본은 `editStampFile` 하나). UI가 `replaceEdits: true`로 저장하면 기준 파일에 수정된 설정을
+재적용하여 로고·보정이 중복으로 구워지지 않는다. 기본 API 호출은 선택한 현재 파일 위에 새 편집을 적용한다.
 
-편집본의 원본 복셀 참조는 그대로 물려주지 않는다. 과거 복셀로 재구성하면 표면 편집이 사라지기
-때문이다. 이전 버전을 열어 원본으로 돌아갈 수 있다. 파일·승인·프리비즈 참조는 덮어쓰지 않고 새
-검토 대기 에셋을 만든다. 미저장 편집은 브라우저 IndexedDB에 따로 보관한다.
+편집본의 원본 복셀 참조는 그대로 물려주지 않는다. 과거 복셀로 재구성하면 표면 편집이 사라지기 때문이다. 이전 버전을
+열어 원본으로 돌아갈 수 있다. 파일·승인·프리비즈 참조는 덮어쓰지 않고 새 에셋을 만든다. 미저장 편집은 브라우저
+IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upload, label}]], selected}`로 따로 보관하고
+변경 0.4초 뒤, 창을 닫거나 앱이 가려질 때(`pagehide`·`visibilitychange`) 쓴다. 만들기 화면의 작성 중 요청은 localStorage에 둔다.
+
+## 버전 계보와 보관 용량
+
+- 버전의 부모는 `meta.source`(편집·재구성·복구·이미지→3D)이고, 없으면 같은 작업의 `meta.conceptAsset`(설명→3D)이다.
+  `lineage`는 현재 에셋에서 뿌리까지 올라간 뒤 뿌리의 모든 자손을 만든 순서로 펼친다. 부모 작업이 지워졌으면
+  `missingParent`로 표시한다.
+- 작업 폴더의 파일 분류: 에셋 `file`·메타의 기타 경로 → `results`, `sourceStateFile`·`editBaseFile`·`editStamp*`·
+  `mesh/input.png`·`mesh/source.json`·`mesh/audit/decoded.npz` → `bases`(다시 만들기에 필요), `rawFile`·`optimizedFile` →
+  `copies`, `preview`·`inspection*` → `previews`, `job.json`·`job.log`·`*.stats.json`·`*.bake.json`·요청/통계 JSON →
+  `records`, `*/surface/*`·`*/lod-work/*`·`*/scratch/*`·`*/audit/*`(나머지) → `intermediate`, 그 밖은 `other`.
+  휴지통으로 보낼 수 있는 것은 `intermediate`와 작업 폴더 전체뿐이다. 다른 작업이 `meta.source`로 가리키는 작업은
+  `usedBy`에 나타나고, 폴더 전체를 보내면 그 버전의 계보에서 부모가 빠진다.
 
 ## 프리비즈 계약
 

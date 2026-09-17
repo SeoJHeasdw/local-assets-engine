@@ -1,6 +1,6 @@
 import {
   JOB_STATE_LABELS, RECIPE_LABELS, REVIEW_LABELS, STAGE_STATE_LABELS,
-  buildJobRequest, elapsedSeconds, escapeHtml, fileUrl, formatBytes, formatDuration, isActive,
+  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, jobTimes, jobsAhead, newlyFinished,
 } from "../shared/format.mjs";
 import { createPreviz } from "./previz.js";
 import { installResizer } from "./resize.js";
@@ -33,8 +33,13 @@ const state = {
   jobs: [],
   signatures: new Map(),
   doctor: null,
-  libraryFilter: "pending",
+  libraryFilter: "all",
+  libraryTag: "",
   view: "create",
+  // 직전 폴링의 작업 상태. 끝난 작업을 알리는 데 쓴다.
+  lastStates: null,
+  // 화면이 직접 결과를 보여 주는 작업(편집 저장·가져오기). 완료 알림을 따로 띄우지 않는다.
+  quietJobs: new Set(),
 };
 
 async function api(path, { method = "GET", body } = {}) {
@@ -57,7 +62,7 @@ const previz = createPreviz({
   goCreate: () => showView("create"),
 });
 
-const editor = createEditor({api, refreshJobs, openAsset, makeMesh, addToPrevizScene, bridge});
+const editor = createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevizScene, bridge, quietJob: (id) => state.quietJobs.add(id) });
 
 // ---- 화면 전환 -------------------------------------------------------------
 
@@ -86,6 +91,43 @@ function setSidebar(closed, { save = true } = {}) {
 }
 
 // ---- 만들기 ----------------------------------------------------------------
+
+// 작성 중인 생성 요청은 앱을 다시 열어도 이어서 쓴다. 기억하지 못해도 만들기는 된다.
+const COMPOSER_KEY = "assets-studio.composer-draft";
+let composerTimer = null;
+function saveComposerDraft() {
+  clearTimeout(composerTimer);
+  composerTimer = setTimeout(() => {
+    const draft = {
+      kind: state.kind, source: state.source, presetId: state.presetId,
+      subject: $("#subject").value, style: $("#style").value, count: $("#count").value, seed: $("#seed").value,
+      workflow: workflow(), removeBackground: $("#remove-background").checked,
+      pipeline: $("#pipeline").value, texture: $("#texture").value, faces: $("#faces").value,
+      image: { uploadId: state.uploadId, imageSource: state.imageSource, imageName: state.imageName, imagePreviewUrl: state.imagePreviewUrl },
+    };
+    try { localStorage.setItem(COMPOSER_KEY, JSON.stringify(draft)); } catch { /* 저장 공간이 없으면 이번 입력만 유지한다 */ }
+  }, 250);
+}
+function restoreComposerDraft() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(COMPOSER_KEY) || "null"); } catch { return; }
+  if (!draft || typeof draft !== "object") return;
+  if (["2d", "3d"].includes(draft.kind)) state.kind = draft.kind;
+  if (["text", "image"].includes(draft.source)) state.source = draft.source;
+  if (draft.presetId && typeof draft.presetId === "object") state.presetId = { ...state.presetId, ...draft.presetId };
+  for (const [id, value] of [["subject", draft.subject], ["style", draft.style], ["seed", draft.seed]]) if (typeof value === "string") $(`#${id}`).value = value;
+  for (const [id, value] of [["count", draft.count], ["pipeline", draft.pipeline], ["texture", draft.texture], ["faces", draft.faces]]) {
+    if (value !== undefined && [...$(`#${id}`).options].some((option) => option.value === String(value))) $(`#${id}`).value = String(value);
+  }
+  const radio = $(`input[name="workflow"][value="${draft.workflow}"]`);
+  if (radio) radio.checked = true;
+  if (typeof draft.removeBackground === "boolean") {
+    $("#remove-background").checked = draft.removeBackground;
+    state.lastPreset = state.presetId[state.kind];
+  }
+  const image = draft.image || {};
+  if (image.uploadId || image.imageSource) Object.assign(state, { uploadId: image.uploadId || null, imageSource: image.imageSource || null, imageName: image.imageName || "", imagePreviewUrl: image.imagePreviewUrl || "" });
+}
 
 function presetsFor(kind) {
   return (state.presets?.presets || []).filter((preset) => preset.kind === kind);
@@ -119,6 +161,7 @@ function renderComposer() {
   $("#preset-field").hidden = fromImage || kind === "3d";
   renderImagePick();
   updateSubmitLabel();
+  saveComposerDraft();
 }
 
 function workflow() { return $('input[name="workflow"]:checked')?.value || "concept"; }
@@ -150,7 +193,7 @@ function renderImagePick() {
 
 function setImage(upload, name) {
   state.imagePath = ""; state.imageSource = null; state.uploadId = upload.id;
-  state.imagePreviewUrl = upload.url; state.imageName = name; renderImagePick();
+  state.imagePreviewUrl = upload.url; state.imageName = name; renderImagePick(); saveComposerDraft();
 }
 async function chooseImage(file) {
   if (!file) return;
@@ -161,7 +204,7 @@ async function chooseFromLibrary() {
   const {assets} = await api("/api/assets?kind=image&limit=200");
   const dialog = popup("3D로 만들 이미지 선택", `<div class="library-pick">${assets.map((a,i) => `<button type="button" data-choice="${i}"><img loading="lazy" src="${fileUrl(a.jobId,a.preview||a.file)}" alt=""><small>${escapeHtml(a.jobTitle)}</small></button>`).join("") || '<p class="hint">먼저 이미지를 만들거나 가져와 주세요.</p>'}</div>`, {wide:true});
   dialog.addEventListener("click", e => { const choice=e.target.closest("[data-choice]"); if(!choice)return; const a=assets[Number(choice.dataset.choice)];
-    state.uploadId=null;state.imagePath="";state.imageSource={jobId:a.jobId,assetId:a.id};state.imageName=a.jobTitle;state.imagePreviewUrl=fileUrl(a.jobId,a.preview||a.file);dialog.close();renderImagePick();});
+    state.uploadId=null;state.imagePath="";state.imageSource={jobId:a.jobId,assetId:a.id};state.imageName=a.jobTitle;state.imagePreviewUrl=fileUrl(a.jobId,a.preview||a.file);dialog.close();renderImagePick();saveComposerDraft();});
 }
 
 function showFormError(message) {
@@ -232,18 +275,24 @@ function thumbHtml(jobId, asset) {
   const tag = asset.kind === "mesh" ? asset.meta?.label || "3D"
     : asset.kind === "shot" ? asset.meta?.shot || "샷"
     : asset.role === "concept" ? "컨셉" : "";
-  return `<button class="thumb${asset.review === "rejected" ? " is-rejected" : ""}" type="button"
+  // 승인·거절은 프리비즈 컷에만 쓴다. 이미지·3D는 즐겨찾기로 고른다.
+  const shot = asset.kind === "shot";
+  return `<button class="thumb${shot && asset.review === "rejected" ? " is-rejected" : ""}" type="button"
       data-action="open" data-job="${escapeHtml(jobId)}" data-asset="${escapeHtml(asset.id)}"
-      title="${escapeHtml(REVIEW_LABELS[asset.review] || "")}">
+      title="${escapeHtml(shot ? REVIEW_LABELS[asset.review] || "" : asset.note || "")}">
     ${src ? `<img src="${src}" alt="" loading="lazy" class="${PIXEL_FILE.test(asset.file) ? "pixel" : ""}">` : ""}
     ${tag ? `<span class="tag">${tag}</span>` : ""}
     ${warn ? `<span class="tag warn">${warn}</span>` : ""}
-    ${asset.review !== "pending" ? `<span class="review-dot ${escapeHtml(asset.review)}"></span>` : ""}
+    ${shot && asset.review !== "pending" ? `<span class="review-dot ${escapeHtml(asset.review)}"></span>` : ""}
+    ${!shot && asset.favorite ? '<span class="favorite-mark" aria-label="즐겨찾기">★</span>' : ""}
   </button>`;
 }
 
 function readablePhase(job) {
-  if (job.state === "queued") return "앞선 작업이 끝나면 시작합니다";
+  if (job.state === "queued") {
+    const ahead = jobsAhead(state.jobs, job.id);
+    return ahead ? `대기 중 · 앞에 ${ahead}개` : "곧 시작합니다";
+  }
   if (job.state === "cancelling") return "작업을 중지하고 있습니다";
   const name = job.stages.findLast(s=>s.state === "running")?.name || "";
   if (name === "generate") return "이미지를 만들고 있습니다";
@@ -254,16 +303,26 @@ function readablePhase(job) {
   if (name === "cutout") return "배경을 정리하고 있습니다";
   return "에셋을 준비하고 있습니다";
 }
+// 대기와 실제 처리 시간을 나눠 적는다. 진행 중이면 renderJobs가 매 폴링마다 숫자만 고친다.
+function timesText(job) {
+  const { waited, worked } = jobTimes(job);
+  if (job.state === "queued") return `${formatDuration(waited)}째 대기`;
+  const parts = [];
+  if (worked !== null) parts.push(`처리 ${formatDuration(worked)}`);
+  if (waited >= 5) parts.push(`대기 ${formatDuration(waited)}`);
+  return parts.join(" · ");
+}
 function jobCardHtml(job) {
-  const elapsed = elapsedSeconds(job.startedAt, job.finishedAt);
   const assets = job.assets.map(asset => thumbHtml(job.id,asset)).join("");
   const title=job.params?.subject || job.title;
   const label=job.recipe === "image" && job.params?.preset === "prop-3d" ? "3D 컨셉" : RECIPE_LABELS[job.recipe] || job.recipe;
+  const images = job.assets.filter((asset) => asset.kind === "image").length;
+  const compare = !isActive(job) && images >= 2 ? `<button class="ghost" type="button" data-action="compare" data-job="${escapeHtml(job.id)}">나란히 비교</button>` : "";
   return `<header class="job-head"><div><div class="job-title">${escapeHtml(title)}</div><div class="job-meta">${escapeHtml(label)} · ${escapeHtml(timeLabel(job.createdAt))}</div></div><span class="state state-${escapeHtml(job.state)}">${escapeHtml(JOB_STATE_LABELS[job.state])}</span></header>
     ${isActive(job) ? `<div class="job-summary"><span class="pulse"></span>${readablePhase(job)}</div>` : ""}
     ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
     ${assets ? `<div class="job-assets">${assets}</div>` : ""}
-    <footer class="job-foot"><button class="ghost" type="button" data-action="record" data-job="${job.id}">작업 기록 ↗</button>${isActive(job)?`<button class="ghost is-danger" type="button" data-action="cancel" data-job="${job.id}" ${job.state==='cancelling'?'disabled':''}>중지</button>`:`<span class="job-meta">${elapsed!==null?formatDuration(elapsed):''}</span>`}</footer>`;
+    <footer class="job-foot"><div class="control-row"><button class="ghost" type="button" data-action="record" data-job="${job.id}">작업 기록 ↗</button>${compare}</div><span class="job-meta job-times" data-job="${escapeHtml(job.id)}">${escapeHtml(timesText(job))}</span>${isActive(job)?`<button class="ghost is-danger" type="button" data-action="cancel" data-job="${job.id}" ${job.state==='cancelling'?'disabled':''}>중지</button>`:""}</footer>`;
 }
 async function openRecord(jobId) {
  const job=await api(`/api/jobs/${jobId}`);
@@ -283,7 +342,7 @@ function renderJobs() {
     let previous = null;
     for (const job of jobs) {
       // 바뀐 카드만 다시 그린다. 매초 전체를 갈아 끼우면 썸네일이 깜빡인다.
-      const signature = JSON.stringify([job.state, job.stages, job.assets, job.error]);
+      const signature = JSON.stringify([job.state, job.stages, job.assets, job.error, jobsAhead(state.jobs, job.id)]);
       let card = cards.get(job.id);
       if (!card) {
         card = document.createElement("article");
@@ -305,18 +364,48 @@ function renderJobs() {
       state.signatures.delete(id);
     }
   }
-  for (const label of $$(".job-elapsed", list)) {
-    if (!label.dataset.finished) label.textContent = formatDuration(elapsedSeconds(label.dataset.started, null));
+  for (const label of $$(".job-times", list)) {
+    const job = jobs.find((item) => item.id === label.dataset.job);
+    if (job && isActive(job)) label.textContent = timesText(job);
   }
-  const active = jobs.filter(isActive).length;
-  $("#queue-summary").textContent = active ? `${active}개 진행·대기` : "";
-  const pending = state.jobs.reduce((sum, job) => sum + job.assets.filter((asset) => asset.review === "pending").length, 0);
-  $("#review-count").textContent = pending ? String(pending) : "";
+  const running = jobs.filter((job) => job.state === "running" || job.state === "cancelling").length;
+  const queued = jobs.filter((job) => job.state === "queued").length;
+  $("#queue-summary").textContent = running || queued ? [running ? `${running}개 진행` : "", queued ? `${queued}개 대기` : ""].filter(Boolean).join(" · ") : "";
+  $("#active-count").textContent = running + queued ? String(running + queued) : "";
+}
+
+// 다른 일을 하는 동안 끝난 작업을 알린다. 창을 보고 있으면 화면 알림, 아니면 macOS 알림.
+function announceFinished(jobs) {
+  for (const job of newlyFinished(state.lastStates, jobs)) {
+    if (job.recipe === "previz" && state.view === "previz") continue;
+    const quiet = state.quietJobs.delete(job.id);
+    const title = job.params?.subject || job.title;
+    const { worked } = jobTimes(job);
+    const headline = job.state === "done" ? `완료: ${title}` : job.state === "failed" ? `실패: ${title}` : `중지됨: ${title}`;
+    const body = job.state === "done"
+      ? [worked !== null ? `처리 ${formatDuration(worked)}` : "", job.assets.length ? `결과 ${job.assets.length}개` : ""].filter(Boolean).join(" · ")
+      : (job.error || "").split("\n")[0];
+    const focused = document.hasFocus();
+    if (!focused && "Notification" in window && Notification.permission !== "denied") {
+      try {
+        const notice = new Notification(headline, { body, silent: job.state !== "done" });
+        notice.onclick = () => {
+          bridge?.focus?.();
+          window.focus();
+          if (job.assets[0]) openAsset(job.id, job.assets[0].id);
+          else openRecord(job.id).catch(() => {});
+        };
+      } catch { /* 알림을 못 띄워도 목록에는 결과가 보인다 */ }
+    }
+    if (focused && !quiet) toast(`${headline}${body ? ` · ${body}` : ""}`);
+  }
+  state.lastStates = new Map(jobs.map((job) => [job.id, job.state]));
 }
 
 async function refreshJobs() {
   try {
     state.jobs = (await api("/api/jobs?limit=40")).jobs;
+    announceFinished(state.jobs);
     renderJobs();
   } catch {
     showOffline();
@@ -517,21 +606,115 @@ async function makeMesh(jobId, assetId) {
 
 // ---- 보관함 -----------------------------------------------------------------
 
+let libraryRequest = 0;
 async function refreshLibrary() {
   const grid = $("#library-grid");
-  const filter = state.libraryFilter;
-  for (const button of $$("#library-filter button")) button.classList.toggle("is-active", button.dataset.filter === filter);
+  const request = ++libraryRequest;
+  for (const button of $$("#library-filter button")) button.classList.toggle("is-active", button.dataset.filter === state.libraryFilter);
   try {
-    const response = await api(`/api/assets${filter === "all" ? "" : `?review=${filter}`}`);
-    const query = $("#library-search").value.trim().toLowerCase(), kind = $("#library-kind").value;
-    const assets = response.assets.filter(a=>(kind === "all" || a.kind === kind) && (!query || a.jobTitle.toLowerCase().includes(query)));
+    const { assets: all } = await api("/api/assets?limit=2000");
+    if (request !== libraryRequest) return;
+    // 컬렉션·태그 목록은 전체 에셋에서 만든다. 걸러도 고를 수 있는 값이 사라지지 않게.
+    const collections = [...new Set(all.map((asset) => asset.collection).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+    const select = $("#library-collection"), chosen = select.value;
+    select.innerHTML = `<option value="">모든 컬렉션</option>${collections.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}<option value="__none__">컬렉션 없음</option>`;
+    select.value = [...select.options].some((option) => option.value === chosen) ? chosen : "";
+    const counts = new Map();
+    for (const asset of all) for (const tag of asset.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
+    const tags = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")).slice(0, 24);
+    if (state.libraryTag && !counts.has(state.libraryTag)) state.libraryTag = "";
+    $("#library-tags").innerHTML = tags.map(([tag, count]) => `<button type="button" class="chip${tag === state.libraryTag ? " is-active" : ""}" data-library-tag="${escapeHtml(tag)}">#${escapeHtml(tag)} <small>${count}</small></button>`).join("");
+    const query = $("#library-search").value.trim().toLowerCase(), kind = $("#library-kind").value, collection = select.value;
+    const assets = all.filter((asset) => (kind === "all" || asset.kind === kind)
+      && (state.libraryFilter !== "favorite" || asset.favorite)
+      && (!collection || (collection === "__none__" ? !asset.collection : asset.collection === collection))
+      && (!state.libraryTag || (asset.tags || []).includes(state.libraryTag))
+      && (!query || [asset.jobTitle, asset.collection, asset.note, ...(asset.tags || [])].some((text) => String(text || "").toLowerCase().includes(query))));
     grid.innerHTML = assets.length
       ? assets.map((asset) => `<div class="asset-card">${thumbHtml(asset.jobId, asset)}
-          <div class="caption">${escapeHtml(asset.jobTitle)}${asset.meta?.label ? ` · ${escapeHtml(asset.meta.label)}` : ""}</div></div>`).join("")
-      : `<div class="empty">${filter === "pending" ? "검토할 에셋이 없습니다." : "해당하는 에셋이 없습니다."}</div>`;
+          ${asset.kind !== "shot" ? `<button type="button" class="card-favorite" data-action="favorite" data-job="${escapeHtml(asset.jobId)}" data-asset="${escapeHtml(asset.id)}" aria-pressed="${Boolean(asset.favorite)}" aria-label="즐겨찾기">★</button>` : ""}
+          <div class="caption">${escapeHtml(asset.jobTitle)}${asset.meta?.label && !asset.jobTitle.endsWith(asset.meta.label) ? ` · ${escapeHtml(asset.meta.label)}` : ""}</div>
+          ${asset.collection || asset.tags?.length ? `<div class="card-tags">${asset.collection ? `<span class="card-collection">${escapeHtml(asset.collection)}</span>` : ""}${(asset.tags || []).slice(0, 3).map((tag) => `<span>#${escapeHtml(tag)}</span>`).join("")}</div>` : ""}</div>`).join("")
+      : `<div class="empty">${all.length ? "조건에 맞는 에셋이 없습니다." : "아직 만든 에셋이 없습니다."}</div>`;
   } catch (error) {
     grid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function toggleFavorite(button) {
+  const next = button.getAttribute("aria-pressed") !== "true";
+  button.setAttribute("aria-pressed", String(next));
+  try {
+    await api(`/api/jobs/${encodeURIComponent(button.dataset.job)}/assets/${encodeURIComponent(button.dataset.asset)}/library`, { method: "POST", body: { favorite: next } });
+    await refreshJobs();
+    if (state.view === "library") refreshLibrary();
+  } catch (error) {
+    button.setAttribute("aria-pressed", String(!next));
+    toast(error.message);
+  }
+}
+
+// ---- 후보 비교 ---------------------------------------------------------------
+
+// 컨셉·2D 후보를 크게 나란히 보고 하나를 고른다. 고른 후보는 즐겨찾기와 메모(고른 이유)로 남는다.
+async function openCompare(jobId) {
+  const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  const candidates = job.assets.filter((asset) => asset.kind === "image");
+  let picked = Math.max(0, candidates.findIndex((asset) => asset.favorite));
+  let focus = null;
+  const concept = job.params?.preset === "prop-3d" || job.recipe === "text-to-3d";
+  const dialog = popup("후보 비교", '<div class="compare-body"></div>', { className: "compare-dialog" });
+  const body = dialog.querySelector(".compare-body");
+  const warn = (asset) => asset.meta?.error ? "물체 없음" : asset.meta?.checks?.touchesEdge ? "가장자리 닿음" : "";
+  function render() {
+    const asset = candidates[picked];
+    const card = (item, index) => `<figure class="compare-card${index === picked ? " is-picked" : ""}">
+        <button type="button" class="compare-image" data-pick="${index}" aria-pressed="${index === picked}"><img src="${fileUrl(job.id, item.preview || item.file)}" alt="후보 ${index + 1}" class="${PIXEL_FILE.test(item.file) ? "pixel" : ""}"></button>
+        <figcaption><span>후보 ${index + 1}${item.meta?.seed !== undefined ? ` · 시드 ${escapeHtml(item.meta.seed)}` : ""}${warn(item) ? ` · <em>${warn(item)}</em>` : ""}${item.favorite ? " · ★" : ""}</span><button type="button" class="ghost" data-zoom="${index}">크게 ⤢</button></figcaption></figure>`;
+    body.innerHTML = `${focus === null
+      ? `<div class="compare-grid count-${Math.min(candidates.length, 4)}">${candidates.map(card).join("")}</div>`
+      : `<div class="compare-focus"><button type="button" class="compare-nav" data-step="-1" aria-label="이전 후보">‹</button>${card(candidates[focus], focus)}<button type="button" class="compare-nav" data-step="1" aria-label="다음 후보">›</button></div>`}
+      <div class="compare-foot">
+        <label class="field"><span class="label">고른 이유 <em>선택 · 후보 ${picked + 1}에 메모로 남습니다</em></span><input data-note maxlength="500" value="${escapeHtml(asset.note || "")}" placeholder="예: 뚜껑 모양이 가장 또렷하고 철띠가 대칭"></label>
+        <div class="control-row">${focus === null ? "" : '<button class="ghost" type="button" data-grid>모두 보기</button>'}
+          <button class="secondary" type="button" data-choose="edit">고르고 편집</button>
+          <button class="${concept ? "secondary" : "primary"}" type="button" data-choose="keep">고르기</button>
+          ${concept ? '<button class="primary" type="button" data-choose="mesh">이 후보로 3D 만들기</button>' : ""}</div>
+      </div>`;
+  }
+  async function choose(action) {
+    const asset = candidates[picked], note = body.querySelector("[data-note]").value;
+    await api(`/api/jobs/${encodeURIComponent(job.id)}/assets/${encodeURIComponent(asset.id)}/library`, { method: "POST", body: { favorite: true, note } });
+    dialog.close();
+    await refreshJobs();
+    if (action === "edit") openAsset(job.id, asset.id);
+    else if (action === "mesh") makeMesh(job.id, asset.id);
+    else toast(`후보 ${picked + 1}을 골랐습니다. 보관함 즐겨찾기에서 찾을 수 있습니다.`);
+  }
+  body.addEventListener("click", (event) => {
+    const pick = event.target.closest("[data-pick]"), zoom = event.target.closest("[data-zoom]"), step = event.target.closest("[data-step]"), action = event.target.closest("[data-choose]");
+    if (pick) { picked = Number(pick.dataset.pick); render(); }
+    else if (zoom) { focus = Number(zoom.dataset.zoom); picked = focus; render(); }
+    else if (step) { focus = (focus + Number(step.dataset.step) + candidates.length) % candidates.length; picked = focus; render(); }
+    else if (event.target.closest("[data-grid]")) { focus = null; render(); }
+    else if (action) choose(action.dataset.choose).catch((error) => toast(error.message));
+  });
+  dialog.addEventListener("keydown", (event) => {
+    if (event.target.matches("input")) return;
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      const delta = event.key === "ArrowRight" ? 1 : -1;
+      picked = (picked + delta + candidates.length) % candidates.length;
+      if (focus !== null) focus = picked;
+      render();
+    } else if (/^[1-8]$/.test(event.key) && Number(event.key) <= candidates.length) {
+      picked = Number(event.key) - 1;
+      if (focus !== null) focus = picked;
+      render();
+    }
+  });
+  // 크게 보기에서 Escape는 창을 닫지 않고 격자로 돌아간다.
+  dialog.addEventListener("cancel", (event) => { if (focus !== null) { event.preventDefault(); focus = null; render(); } });
+  render();
 }
 
 // ---- 환경 -------------------------------------------------------------------
@@ -564,9 +747,75 @@ function benchHtml(rows) {
   </table></div>`;
 }
 
+const STORAGE_ORDER = ["results", "bases", "copies", "previews", "intermediate", "other", "records"];
+function storageHtml(report) {
+  if (!report.jobs.length) return `<div class="empty" style="margin-top: 12px">아직 보관한 작업이 없습니다.</div>`;
+  const total = report.bytes || 1;
+  const categories = STORAGE_ORDER.filter((key) => report.categories[key]);
+  const bar = categories.map((key) => `<i class="storage-${key}" style="width:${Math.max(.4, report.categories[key] / total * 100)}%" data-tip="${escapeHtml(`${report.labels[key]} ${formatBytes(report.categories[key])}`)}"></i>`).join("");
+  const legend = categories.map((key) => `<span><i class="storage-${key}"></i>${escapeHtml(report.labels[key])} <strong>${formatBytes(report.categories[key])}</strong></span>`).join("");
+  const rows = report.jobs.slice(0, state.storageAll ? report.jobs.length : 12).map((job) => {
+    // 1MB보다 작은 중간 파일은 정리할 이유가 없어 보여 주지 않는다.
+    const intermediate = (job.categories.intermediate || 0) >= 1048576 ? job.categories.intermediate : 0;
+    return `<tr><td class="storage-title"><span>${escapeHtml(job.title)}</span><small>${escapeHtml(RECIPE_LABELS[job.recipe] || job.recipe)} · ${escapeHtml(timeLabel(job.createdAt))}${job.usedBy.length ? ` · 다른 버전 ${job.usedBy.length}개의 원본` : ""}</small></td>
+      <td class="num">${formatBytes(job.bytes)}</td><td class="num">${intermediate ? formatBytes(intermediate) : "–"}</td>
+      <td class="storage-actions">${bridge ? `<button class="ghost" type="button" data-storage="reveal" data-job="${escapeHtml(job.jobId)}">Finder</button>` : ""}
+        ${bridge && intermediate && !isActive(job) ? `<button class="ghost" type="button" data-storage="intermediate" data-job="${escapeHtml(job.jobId)}">중간 파일 정리</button>` : ""}
+        ${bridge && !isActive(job) ? `<button class="ghost is-danger" type="button" data-storage="job" data-job="${escapeHtml(job.jobId)}">휴지통으로</button>` : ""}</td></tr>`;
+  }).join("");
+  return `<div class="storage-summary"><strong>${formatBytes(report.bytes)}</strong><span>작업 ${report.jobs.length}개</span>${report.categories.intermediate ? `<span>중간 파일 ${formatBytes(report.categories.intermediate)}</span>` : ""}</div>
+    <div class="storage-bar">${bar}</div><div class="storage-legend">${legend}</div>
+    <div class="table-wrap"><table class="storage-table"><thead><tr><th>작업</th><th>전체</th><th>중간 파일</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${report.jobs.length > 12 ? `<button class="ghost" type="button" data-storage="all">${state.storageAll ? "큰 작업만 보기" : `작업 ${report.jobs.length}개 모두 보기`}</button>` : ""}
+    ${bridge ? "" : '<p class="hint">휴지통으로 보내기는 앱에서만 할 수 있습니다.</p>'}`;
+}
+
+async function refreshStorage() {
+  const container = $("#storage");
+  try {
+    state.storage = await api("/api/storage");
+    container.innerHTML = storageHtml(state.storage);
+  } catch (error) {
+    container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function storageAction(button) {
+  const { storage: action, job: jobId } = button.dataset;
+  if (action === "all") { state.storageAll = !state.storageAll; $("#storage").innerHTML = storageHtml(state.storage); return; }
+  const job = state.storage?.jobs.find((item) => item.jobId === jobId);
+  if (!job) return;
+  if (action === "reveal") { bridge?.reveal(jobId, "job.json"); return; }
+  const intermediate = action === "intermediate";
+  const warning = intermediate
+    ? `<p>생성 과정에서만 쓰인 표면 재구성·감축 작업 파일 ${job.intermediate.length}개(${formatBytes(job.categories.intermediate)})를 휴지통으로 보냅니다.</p><p class="hint">결과물·원본·다시 만들기에 필요한 파일은 그대로 둡니다. 휴지통에서 되살릴 수 있습니다.</p>`
+    : `<p>작업 폴더 전체(${formatBytes(job.bytes)})를 휴지통으로 보냅니다. 이 작업의 결과물도 목록에서 사라집니다.</p>${job.usedBy.length ? `<p class="notice">다른 버전 ${job.usedBy.length}개가 이 작업을 원본으로 씁니다. 그 버전들의 '버전 이력'에서 이 단계가 빠집니다.</p>` : ""}<p class="hint">휴지통에서 되살리면 다시 나타납니다.</p>`;
+  const dialog = popup(intermediate ? "중간 파일 정리" : "작업을 휴지통으로", `<strong>${escapeHtml(job.title)}</strong>${warning}<div class="control-row"><button class="ghost" type="button" data-cancel>취소</button><button class="primary" type="button" data-confirm>휴지통으로 보내기</button></div>`);
+  dialog.querySelector("[data-cancel]").onclick = () => dialog.close();
+  dialog.querySelector("[data-confirm]").onclick = async (event) => {
+    event.target.disabled = true;
+    try {
+      if (intermediate) {
+        const result = await bridge.trashIntermediate(jobId, job.intermediate);
+        toast(`중간 파일 ${result.trashed}개(${formatBytes(result.bytes)})를 휴지통으로 보냈습니다.`);
+      } else {
+        await bridge.trashJob(jobId);
+        toast("작업을 휴지통으로 보냈습니다.");
+        await refreshJobs();
+      }
+      dialog.close();
+      refreshStorage();
+    } catch (error) {
+      toast(error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
+      event.target.disabled = false;
+    }
+  };
+}
+
 async function refreshSystem() {
   const container = $("#doctor");
   container.innerHTML = `<div class="empty">검사하는 중…</div>`;
+  refreshStorage();
   try {
     const [report, bench, info] = await Promise.all([
       api("/api/doctor?deep=true"), api("/api/bench"), bridge?.engineInfo() ?? null,
@@ -604,12 +853,16 @@ function wireEvents() {
   });
   $("#count").addEventListener("change", updateSubmitLabel);
   for (const input of $$('input[name="workflow"]')) input.addEventListener('change', updateSubmitLabel);
+  for (const id of ["subject", "style", "seed"]) $(`#${id}`).addEventListener("input", saveComposerDraft);
+  for (const id of ["count", "pipeline", "texture", "faces", "remove-background"]) $(`#${id}`).addEventListener("change", saveComposerDraft);
+  for (const input of $$('input[name="workflow"]')) input.addEventListener("change", saveComposerDraft);
   $("#open-settings").onclick=()=>$("#settings-dialog").showModal();
   for (const id of ['close-settings','apply-settings']) $('#'+id).onclick=()=>{$('#settings-dialog').close();updateSubmitLabel();};
   $('#remove-background').onchange=updateSubmitLabel;
   $('#prompt-examples').onclick=e=>{const b=e.target.closest('[data-example]');if(b){$('#subject').value=b.dataset.example;$('#subject').focus();}};
   $('#pick-library').onclick=()=>chooseFromLibrary().catch(e=>toast(e.message));
-  $('#import-image').onclick=async()=>{try{const file=await pickFile();if(!file)return;const upload=await uploadBlob(file);const created=await api('/api/jobs',{method:'POST',body:{recipe:'import-image',params:{uploadId:upload.id,name:file.name.replace(/\.[^.]+$/,'')}}});await refreshJobs();const job=await waitJob(api,created.id);await refreshJobs();openAsset(job.id,job.assets[0].id);}catch(error){toast(error.message);}};
+  $('#import-image').onclick=async()=>{try{const file=await pickFile();if(!file)return;const upload=await uploadBlob(file);const created=await api('/api/jobs',{method:'POST',body:{recipe:'import-image',params:{uploadId:upload.id,name:file.name.replace(/\.[^.]+$/,'')}}});state.quietJobs.add(created.id);await refreshJobs();
+    let told=false;const job=await waitJob(api,created.id,{onUpdate:(record)=>{if(record.state==='queued'&&!told){told=true;toast('앞선 작업이 끝나면 가져옵니다. 완료되면 편집 화면이 열립니다.');}}});await refreshJobs();openAsset(job.id,job.assets[0].id);}catch(error){toast(error.message);}};
   $("#composer").addEventListener("submit", submitComposer);
   $("#subject").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) $("#composer").requestSubmit();
@@ -623,6 +876,17 @@ function wireEvents() {
   $("#doctor-refresh").addEventListener("click", refreshSystem);
   $("#library-search").addEventListener("input", refreshLibrary);
   $("#library-kind").addEventListener("change", refreshLibrary);
+  $("#library-collection").addEventListener("change", refreshLibrary);
+  $("#library-tags").addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-library-tag]");
+    if (!chip) return;
+    state.libraryTag = state.libraryTag === chip.dataset.libraryTag ? "" : chip.dataset.libraryTag;
+    refreshLibrary();
+  });
+  $("#storage").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-storage]");
+    if (button) storageAction(button);
+  });
   // 닫을 때 비워야 3D 뷰어가 뒤에서 계속 그리지 않는다.
   $("#asset-dialog").addEventListener("close", () => { $("#asset-detail").innerHTML = ""; });
 
@@ -646,6 +910,8 @@ function wireEvents() {
     const { action, job, asset } = target.dataset;
     if (action === "open") openAsset(job, asset);
     else if (action === "record") openRecord(job).catch(e=>toast(e.message));
+    else if (action === "compare") openCompare(job).catch((error) => toast(error.message));
+    else if (action === "favorite") toggleFavorite(target);
     else if (action === "library") showView("library");
     else if (action === "review") setReview(target);
     else if (action === "to3d") makeMesh(job, asset);
@@ -692,10 +958,10 @@ async function init() {
     $("#pipeline").value = defaults.pipelineType;
     $("#texture").value = String(defaults.textureSize);
     $("#faces").value = String(defaults.targetFaces);
-
   } catch (error) {
     showFormError(error.message);
   }
+  restoreComposerDraft();
   renderComposer();
   await refreshJobs();
   await refreshHealth();

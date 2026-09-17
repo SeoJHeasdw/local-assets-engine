@@ -62,3 +62,22 @@ test("quality request retains an explicitly disabled game variant", () => {
   assert.equal(request.params.textureSize, 4096);
   assert.equal(request.params.gameFaces, 0);
 });
+
+test("queue position, waiting vs processing time and finished jobs are told apart", async () => {
+  const { jobsAhead, jobTimes, newlyFinished } = await import("../../electron-app/shared/format.mjs");
+  const jobs = [
+    { id: "c", state: "queued", createdAt: "2026-09-17T10:02:00+09:00" },
+    { id: "b", state: "queued", createdAt: "2026-09-17T10:01:00+09:00" },
+    { id: "a", state: "running", createdAt: "2026-09-17T10:00:00+09:00", startedAt: "2026-09-17T10:00:30+09:00" },
+  ];
+  assert.equal(jobsAhead(jobs, "c"), 2);
+  assert.equal(jobsAhead(jobs, "b"), 1);
+  assert.equal(jobsAhead(jobs, "a"), 0);
+  const done = { createdAt: "2026-09-17T10:00:00+09:00", startedAt: "2026-09-17T10:01:00+09:00", finishedAt: "2026-09-17T10:04:30+09:00" };
+  assert.deepEqual(jobTimes(done), { waited: 60, worked: 210 });
+  assert.deepEqual(jobTimes({ createdAt: "2026-09-17T10:00:00+09:00" }, Date.parse("2026-09-17T10:00:40+09:00")), { waited: 40, worked: null });
+  const before = new Map([["a", "running"], ["b", "queued"], ["x", "done"]]);
+  const after = [{ id: "a", state: "done" }, { id: "b", state: "running" }, { id: "x", state: "done" }, { id: "n", state: "failed" }];
+  assert.deepEqual(newlyFinished(before, after).map((job) => job.id), ["a"]);
+  assert.deepEqual(newlyFinished(null, after), []);
+});

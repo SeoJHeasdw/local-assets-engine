@@ -44,7 +44,7 @@ export function createStudio({ app, BrowserWindow, dialog, ipcMain, shell, sessi
     healthTimer.unref?.();
   }
 
-  const { registerIpc } = createIpcService({ ipcMain, dialog, shell, state, reconnect: connect });
+  const { registerIpc } = createIpcService({ ipcMain, dialog, shell, state, reconnect: connect, app });
 
   function openWindow() {
     createWindow();

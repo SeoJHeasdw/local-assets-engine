@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import { createEngineService, shouldStopEngine } from "../../electron-app/main/engine.mjs";
-import { resolveBlendFile, resolveJobFile } from "../../electron-app/main/ipc.mjs";
+import { pickIntermediate, resolveBlendFile, resolveJobDir, resolveJobFile } from "../../electron-app/main/ipc.mjs";
 
 // pid_max보다 큰 값이라 실제 프로세스 그룹에 신호가 가지 않는다.
 const IMPOSSIBLE_PID = 99_999_999;
@@ -94,6 +94,18 @@ test("only Blender scenes inside a job folder can be opened with the default app
   assert.equal(resolveBlendFile("/out", "20260916-010203-abcd", "previz/sequence.mp4"), null);
   assert.equal(resolveBlendFile("/out", "20260916-010203-abcd", "../../evil.blend"), null);
   assert.equal(resolveBlendFile("/out", "20260916-010203-abcd", "tool.app"), null);
+});
+
+test("only files the engine classified as intermediate go to the Trash", () => {
+  const storage = { active: false, files: [
+    { path: "mesh/surface/full.npz", bytes: 40, category: "intermediate" },
+    { path: "mesh/asset.glb", bytes: 10, category: "results" },
+  ] };
+  assert.deepEqual(pickIntermediate(storage, ["mesh/surface/full.npz", "mesh/asset.glb", "../../x", "mesh/surface/full.npz"]),
+    { paths: ["mesh/surface/full.npz"], bytes: 40 });
+  assert.throws(() => pickIntermediate({ ...storage, active: true }, ["mesh/surface/full.npz"]), /진행 중/);
+  assert.equal(resolveJobDir("/out", "20260916-010203-abcd"), "/out/jobs/20260916-010203-abcd");
+  assert.equal(resolveJobDir("/out", "../20260916-010203-abcd"), null);
 });
 
 test("the engine stays up while a job is still generating", () => {

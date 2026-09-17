@@ -59,6 +59,7 @@
   --h-md: 40px;
   --h-lg: 48px;
   --sidebar-w: 220px;
+  --titlebar-h: 28px;
 
   --motion: 180ms cubic-bezier(.2, .7, .2, 1);
   --checker-a: #1c1f1a;
