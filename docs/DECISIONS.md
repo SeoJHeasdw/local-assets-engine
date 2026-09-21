@@ -74,14 +74,57 @@ PyTorch 2.14가 C++20을 요구해 빌드 플래그만 바꿨다.
 | --- | --- | --- |
 | BiRefNet `ZhengPeng7/BiRefNet` @ `e2bf8e44` | **채택** | HF 표기 MIT, 게이트 없음. `trust_remote_code` 모델이라 커밋 고정 |
 | RMBG-2.0 `briaai/RMBG-2.0` | **기각** | 비상업 라이선스, 게이트. TRELLIS.2 기본 설정이 불러오므로 실행기에서 BiRefNet으로 교체 |
-| DINOv3 `facebook/dinov3-vitl16-pretrain-lvd1689m` | 필수, 조건 확인 중 | TRELLIS.2의 이미지 조건 모델이라 바꿀 수 없음. 수동 승인 게이트. 상업 조건과 표기 의무 원문 미확인 ([SETUP](SETUP.md) 1단계) |
+| DINOv3 `facebook/dinov3-vitl16-pretrain-lvd1689m` | 필수, 조건 확인 완료 | TRELLIS.2의 이미지 조건 모델. 2026-09-22 모델 저장소 라이선스 원문 재확인: 전 세계 이용 허용, 비상업 한정·한국 제외·매출 상한 없음. 아래 조건 유지 |
 
 2026-09-16 확인: TRELLIS 환경(Python 3.11)에서 `workers/trellis_runner.py`가
 `briaai/RMBG-2.0` 로드 요청을 가로채 BiRefNet(220M 파라미터)을 실제로 불러오는 것을
 확인했다. BiRefNet의 원격 코드가 `einops`·`kornia`·`timm`을 요구하므로
 `scripts/setup_trellis.sh`가 그 환경에 함께 설치한다.
 
+### DINOv3 확인 보완 (2026-09-22)
+
+[사용 중인 모델의 LICENSE.md](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m/blob/main/LICENSE.md)
+원문(2025-08-19 갱신)을 확인했다. 1.a는 전 세계·무상 사용/복제/수정/배포 권리를 부여하며 비상업 한정이나
+한국 제외 문구가 없다. 1.b.i는 DINO Materials 또는 그 파생물을 배포할 때 동일 계약 적용과 계약 사본 제공,
+1.b.ii는 연구 결과 출판 시 DINO 사용 인정을 요구한다. 일반 제품/출력에 “Built with DINOv3”를 붙여야 한다는
+문구는 없다. 이전 SETUP의 미확인 보고를 정정한다. 1.b.iii~v의 법률·개인정보·무역통제·금지 최종 용도와
+역공학 관련 제한은 계속 적용한다. 가중치를 앱과 함께 배포할 때에는 계약 사본을 포함한다.
+
 ## 2D 이미지 모델
+
+### 실사·애니 카테고리와 모델 선택 (2026-09-22)
+
+실사·애니를 게임 아이콘 프롬프트로 처리하면 흰 배경·중앙 물체·배경 제거 지시가 충돌한다. 카테고리와
+전용 종류 프리셋을 추가하고 배경을 보존한다. 카테고리와 가중치는 일대일 관계가 아니므로 기존 범용 모델을
+기본으로 두고, 이미 설치된 Z-Image Turbo를 작업별 비교 선택지로 노출한다. 애니 특화 체크포인트나 LoRA는
+이번에 채택하지 않았다. 특정 화풍의 일관성이 더 필요하면 해당 가중치의 라이선스·Mac 실행·동일 입력 비교를
+별도로 검증한다. 기존 게임/3D 기본 모델·스텝·양자화·해상도는 바꾸지 않는다.
+
+라이선스 원문 재확인(2026-09-22):
+[FLUX.2 klein 4B LICENSE](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/blob/main/LICENSE.md),
+[Z-Image 공식 LICENSE](https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE),
+[Z-Image Turbo 모델 카드](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo).
+두 모델은 Apache-2.0이며 전 세계 사용·판매 관련 권리를 허용하고 한국 제외 조항이 없다. 재배포 시
+라이선스·저작권/NOTICE 유지와 수정 고지를 지킨다. FLUX 9B의 별도 라이선스는 이 선택지에 포함하지 않는다.
+
+실행 검증: 같은 주제(파란 재킷·짧은 검은 머리의 성인 여성이 오후 야외 카페에 앉아 있음), 시드 42,
+768×1024, 8비트, MLX 캐시 8GB, 배경 포함. 실사 두 모델은 **완전히 같은 프롬프트**를 사용했다.
+애니는 같은 주제에 애니 프리셋을 적용한 기능 검증이며 실사와 같은 프롬프트라는 뜻은 아니다.
+
+| 종류·모델 | 생성 시간 | 최대 footprint | 작업 |
+| --- | --- | --- | --- |
+| 실사 · FLUX.2 klein 4B · 4스텝 | 19.91초 | 19.23GiB | `20260922-012805-c2bd` |
+| 실사 · Z-Image Turbo · 9스텝 | 737.11초 | 27.53GiB | `20260922-012825-6be3` |
+| 애니 · FLUX.2 klein 4B · 4스텝 | 18.98초 | 18.53GiB | `20260922-014042-5ab5` |
+
+모든 단계는 기존 Runner·공유 잠금·`/usr/bin/time -l`을 사용했고 네트워크를 오프라인으로 두어 다운로드가
+없었다. mflux sidecar의 실제 모델 저장소·스텝·양자화도 기록과 일치했다. 실사 두 결과 모두 사진 스타일,
+애니 결과는 선화·셀 채색으로 나왔다. FLUX 실사는 지시한 따뜻한 오후 조명이 더 뚜렷했다. 한 장씩의 사례이므로
+일반적인 품질 순위나 화풍 일관성을 입증하지는 않는다. Z 실행 중 시스템 스왑 약 16GiB가 관찰됐으나 다른 앱도
+포함한 전체 수치여서 모델 단독 사용량으로 해석하지 않는다. 추가 Z 애니 비교는 중지했고 기본값 변경은 없다.
+원본 그림·메타데이터·측정과 비교 보고서는 `output/diagnostics/image-categories/REPORT.md`에서 확인한다.
+
+### 이전 비교 기록
 
 | 모델 | 판정 | 근거 |
 | --- | --- | --- |

@@ -24,6 +24,8 @@
 | `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
 | `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
+| `estimates.py` | 같은 생성 조건의 성공 기록 중앙값과 대기열 완료 예상 |
+| `electron-app/renderer/library-batch.js` | 에셋 다중 선택, 일괄 정리, 작업 단위 휴지통 확인 |
 | `electron-app/main/` | 엔진 수명(`engine.mjs`), 창, IPC, 서비스 조립 |
 | `electron-app/renderer/` | 화면. 엔진이 `/`로 제공한다 |
 | `electron-app/shared/` | 요청 조립·표시 형식 같은 공통 계산. 엔진이 `/shared`로 제공한다 |
@@ -85,12 +87,13 @@ javis · CLI   ──HTTP───▶        │
 | `GET /uploads/{id}` | 해당 이미지 PNG. ID로만 조회, 경로 입력 불가 |
 | `GET /api/presets` | `config/presets.json` |
 | `GET /api/bench` | 단계·조건별 소요 시간과 최대 메모리 |
+| `GET /api/estimates` | 진행·대기 작업별 표본 수·처리 중앙값·남은 시간·대기 시간·완료 예상(초), 추정 불가는 null |
 | `GET /api/jobs?limit=100` | 최근 작업 |
 | `POST /api/jobs` | `{recipe, params}`를 검증해 대기열에 넣는다. 입력 오류는 400 |
 | `GET /api/jobs/{id}` | 작업 기록 |
 | `POST /api/jobs/{id}/cancel` | 대기 작업은 바로 취소, 진행 작업은 중지 요청 |
 | `POST /api/jobs/{id}/assets/{assetId}/review` | `{status}`: `pending`, `approved`, `rejected`. 앱은 프리비즈 컷에만 쓴다 |
-| `POST /api/jobs/{id}/assets/{assetId}/library` | `{favorite?, tags?, collection?, note?}`. 태그 20개·40자, 컬렉션 60자, 메모 500자. 빈 값은 필드를 지운다 |
+| `POST /api/jobs/{id}/assets/{assetId}/library` | `{favorite?, tags?, addTags?, removeTags?, collection?, note?}`. 태그 교체·추가·제거 중 하나만 받는다. 태그 20개·40자, 컬렉션 60자, 메모 500자. 빈 값은 필드를 지운다 |
 | `GET /api/jobs/{id}/assets/{assetId}/versions` | 이 이미지·메시의 원본부터 모든 파생 버전: `{current, root, versions[{key, parent, depth, relation, summary, ...}]}` |
 | `GET /api/assets?review=&kind=&favorite=&collection=&tag=` | 작업을 가로지른 에셋 목록 |
 | `GET /api/storage` | 분류별 합계와 작업별 크기, 다른 작업이 원본으로 쓰는지(`usedBy`), 중간 파일 목록 |
@@ -103,7 +106,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 
 | 레시피 | 입력 | 기본값 |
 | --- | --- | --- |
-| `image` | `subject`(필수), `preset`, `style`, `count` 1~8, `seed`, `width`·`height` 256~2048(16의 배수로 내림), `removeBackground` | `item-icon`, 4장, 프리셋 크기 |
+| `image` | `subject`(필수), `preset`, `style`, `imageModel`(등록된 모델 id), `count` 1~8, `seed`, `width`·`height` 256~2048(16의 배수로 내림), `removeBackground` | `item-icon`, 4장, 프리셋 크기 |
 | `text-to-3d` | `image` 입력과 3D 입력. 자동 검사를 통과한 첫 컨셉 이미지로 3D를 만든다 | `prop-3d`, 1장 |
 | `image-to-3d` | `imagePath`(절대 경로), `uploadId`, 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
@@ -116,6 +119,13 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
+
+2D 카테고리는 `imageCategories`(게임·실사·애니), 종류는 `presets[].category`다. 카테고리 없는 기존 2D
+프리셋은 게임으로 표시한다. `imageModel`은 기존 기본 모델 객체, `imageModels`는 추가 선택지 목록이다.
+모델 선택 우선순위는 요청의 `imageModel` → 프리셋의 `imageModel` → 공통 기본이다. 요청 준비 단계가
+서버 설정에서 `imageModelConfig`를 복사해 저장하고 실행은 그 스냅샷을 쓴다. 클라이언트가 보낸 모델 설정은
+받지 않는다. `modelArg`는 mflux의 `--model`에 명시적으로 전달한다. 새 실사·애니 프리셋은 배경 제거를
+기본으로 끄며, 기존 게임·3D의 모델·스텝·해상도는 유지한다. 이미지 메타에 `category`도 기록한다.
 
 ## 작업 기록
 
@@ -289,6 +299,15 @@ IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upl
 변경 0.4초 뒤, 창을 닫거나 앱이 가려질 때(`pagehide`·`visibilitychange`) 쓴다. 만들기 화면의 작성 중 요청은 localStorage에 둔다.
 
 ## 버전 계보와 보관 용량
+
+- 보관함은 현재 보이는 카드만 다중 선택한다. 필터 밖으로 숨겨진 에셋은 선택에서 뺀다. 컬렉션 변경과
+  태그 추가·제거·교체는 각 에셋 API를 순서대로 호출하고, 실패한 항목만 선택을 유지한다. 태그 추가·제거는
+  서버의 작업 잠금 안에서 최신 목록을 읽어 적용한다. 작업 휴지통은 에셋이 속한 작업 id를 중복 제거한 뒤,
+  같은 작업의 미선택 에셋·원본까지 옮긴다는 확인 창을 거쳐 기존 main 검증 통로를 쓴다.
+- 예상 시간은 이미지·설명→3D·이미지→3D·재구성의 같은 모델/출력 조건에서 완료된 기록 3개 이상을 쓴다.
+  실패·재시도·로그에 다운로드가 확인되는 기록은 제외하고 단계 시간 합계의 중앙값에서 처리 경과를 뺀다.
+  대기 작업에는 앞선 작업의 남은 시간도 더한다. 기록 부족·중지·예상 초과 작업이 앞에 있으면 완료 예상은
+  `null`이다. 주제별 난이도·다른 앱의 GPU 사용은 예측하지 못하므로 UI에는 분 단위의 대략적인 값만 표시한다.
 
 - 버전의 부모는 `meta.source`(편집·재구성·복구·이미지→3D)이고, 없으면 같은 작업의 `meta.conceptAsset`(설명→3D)이다.
   `lineage`는 현재 에셋에서 뿌리까지 올라간 뒤 뿌리의 모든 자손을 만든 순서로 펼친다. 부모 작업이 지워졌으면

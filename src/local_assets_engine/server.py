@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, doctor
 from .bench import bench_rows
+from .estimates import estimate_jobs
 from .jobs import ACTIVE_STATES, REVIEW_STATES, JobNotFound, JobStore, now_iso
 from .library import job_storage, lineage, storage_report, update_library
 from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir, output_dir
@@ -107,6 +108,10 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
     @app.get("/api/jobs")
     def list_jobs(limit: int = 100) -> dict[str, Any]:
         return {"jobs": store.list(limit=max(1, min(limit, 500)))}
+
+    @app.get("/api/estimates")
+    def get_estimates() -> dict[str, Any]:
+        return {"jobs": estimate_jobs(store.list(limit=10_000))}
 
     @app.post("/api/jobs", status_code=201)
     def create_job(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

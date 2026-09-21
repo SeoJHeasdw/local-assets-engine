@@ -1,12 +1,13 @@
 import {
   JOB_STATE_LABELS, RECIPE_LABELS, REVIEW_LABELS, STAGE_STATE_LABELS,
-  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, jobTimes, jobsAhead, newlyFinished,
+  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, jobTimes, jobsAhead, newlyFinished, estimateLabel,
 } from "../shared/format.mjs";
 import { createPreviz } from "./previz.js";
 import { installResizer } from "./resize.js";
 import { installTooltips } from "./tooltip.js";
 import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
 import { createEditor } from "./editor.js";
+import { createLibraryBatch } from "./library-batch.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -28,9 +29,11 @@ const state = {
   uploadId: null, imageSource: null, imageName: "",
   source: "text",
   presetId: { "2d": "item-icon", "3d": "prop-3d" },
+  imageModels: {},
   imagePath: "",
   imagePreviewUrl: "",
   jobs: [],
+  estimates: {}, estimatesAt: 0,
   signatures: new Map(),
   doctor: null,
   libraryFilter: "all",
@@ -63,6 +66,7 @@ const previz = createPreviz({
 });
 
 const editor = createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevizScene, bridge, quietJob: (id) => state.quietJobs.add(id) });
+const libraryBatch = createLibraryBatch({ api, bridge, refresh: async () => { await refreshJobs(); await refreshLibrary(); } });
 
 // ---- 화면 전환 -------------------------------------------------------------
 
@@ -100,6 +104,7 @@ function saveComposerDraft() {
   composerTimer = setTimeout(() => {
     const draft = {
       kind: state.kind, source: state.source, presetId: state.presetId,
+      imageModels: state.imageModels,
       subject: $("#subject").value, style: $("#style").value, count: $("#count").value, seed: $("#seed").value,
       workflow: workflow(), removeBackground: $("#remove-background").checked,
       pipeline: $("#pipeline").value, texture: $("#texture").value, faces: $("#faces").value,
@@ -115,6 +120,7 @@ function restoreComposerDraft() {
   if (["2d", "3d"].includes(draft.kind)) state.kind = draft.kind;
   if (["text", "image"].includes(draft.source)) state.source = draft.source;
   if (draft.presetId && typeof draft.presetId === "object") state.presetId = { ...state.presetId, ...draft.presetId };
+  if (draft.imageModels && typeof draft.imageModels === "object") state.imageModels = draft.imageModels;
   for (const [id, value] of [["subject", draft.subject], ["style", draft.style], ["seed", draft.seed]]) if (typeof value === "string") $(`#${id}`).value = value;
   for (const [id, value] of [["count", draft.count], ["pipeline", draft.pipeline], ["texture", draft.texture], ["faces", draft.faces]]) {
     if (value !== undefined && [...$(`#${id}`).options].some((option) => option.value === String(value))) $(`#${id}`).value = String(value);
@@ -133,12 +139,32 @@ function presetsFor(kind) {
   return (state.presets?.presets || []).filter((preset) => preset.kind === kind);
 }
 
+function imageCategory() {
+  return presetsFor("2d").find(p => p.id === state.presetId["2d"])?.category || "game";
+}
+
+function renderImageModel() {
+  const models = [state.presets?.imageModel, ...(state.presets?.imageModels || [])].filter(Boolean);
+  const category = imageCategory();
+  const preset = presetsFor("2d").find(p => p.id === state.presetId["2d"]);
+  const defaultId = preset?.imageModel || state.presets?.imageModel?.id;
+  let selected = state.imageModels[category] || "";
+  if (selected && !models.some(m => m.id === selected)) selected = state.imageModels[category] = "";
+  const model = models.find(m => m.id === (selected || defaultId));
+  $("#image-model").innerHTML = `<option value="">기본 · ${escapeHtml(models.find(m => m.id === defaultId)?.label || "")}</option>`
+    + models.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
+  $("#image-model").value = selected;
+  $("#image-model-hint").textContent = model?.hint || "";
+}
+
 function renderComposer() {
   const { kind, source } = state;
   const fromImage = kind === "3d" && source === "image";
   for (const button of $$("#kind-switch button")) { button.classList.toggle("is-active", button.dataset.kind === kind); button.setAttribute("aria-selected", String(button.dataset.kind === kind)); }
   for (const button of $$("#source-switch button")) button.classList.toggle("is-active", button.dataset.source === source);
   $("#source-switch").hidden = kind !== "3d";
+  $("#category-field").hidden = kind !== "2d";
+  $("#image-model-field").hidden = kind !== "2d";
   $("#preset-field").hidden = fromImage;
   $("#subject-field").hidden = fromImage;
   $("#style-field").hidden = fromImage;
@@ -149,7 +175,9 @@ function renderComposer() {
   $("#image-field").hidden = !fromImage;
   for (const option of $$(".mesh-option")) option.hidden = kind !== "3d";
 
-  const presets = presetsFor(kind);
+  const category = imageCategory();
+  $("#category-chips").innerHTML = (state.presets?.imageCategories || []).map(c => `<button type="button" class="chip${c.id === category ? " is-active" : ""}" data-category="${escapeHtml(c.id)}" aria-pressed="${c.id === category}">${escapeHtml(c.label)}</button>`).join("");
+  const presets = presetsFor(kind).filter(p => kind !== "2d" || (p.category || "game") === category);
   if (!presets.some((preset) => preset.id === state.presetId[kind]) && presets[0]) state.presetId[kind] = presets[0].id;
   $("#preset-chips").innerHTML = presets.map((preset) => `
     <button type="button" class="chip${preset.id === state.presetId[kind] ? " is-active" : ""}" data-preset="${escapeHtml(preset.id)}">
@@ -157,8 +185,12 @@ function renderComposer() {
     </button>`).join("");
   $("#preset-hint").textContent = presets.find((preset) => preset.id === state.presetId[kind])?.hint || "";
   const preset = presets.find(p => p.id === state.presetId[kind]);
+  const examples = preset?.example ? [["예시 넣기", preset.example]] : [["보물상자", "wooden treasure chest with dark iron bands"], ["고양이 주전자", "ceramic teapot shaped like a sleepy cat"], ["이끼 낀 석등", "old stone lantern covered in moss"]];
+  $("#prompt-examples").innerHTML = examples.map(([label, text]) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(label)}</button>`).join("");
+  $("#subject").placeholder = preset?.example ? `예: ${preset.example}` : "예: 둥근 뚜껑과 검은 철띠가 있는 나무 보물상자";
   if (state.lastPreset !== preset?.id) { $("#remove-background").checked = !!preset?.removeBackground; state.lastPreset = preset?.id; }
   $("#preset-field").hidden = fromImage || kind === "3d";
+  renderImageModel();
   renderImagePick();
   updateSubmitLabel();
   saveComposerDraft();
@@ -177,8 +209,10 @@ function updateSubmitLabel() {
   $("#submit").textContent = label;
   $("#submit-hint").textContent = hint;
   const preset = state.presets?.presets.find(p => p.id === state.presetId[state.kind]);
+  const cutout = $("#remove-background").checked;
+  const size = cutout && preset?.canvas ? preset.canvas : preset;
   $("#settings-summary").textContent = state.kind === "3d" ? `고품질 원본 · ${Number($("#texture").value) / 1024}K 텍스처`
-    : `${preset?.pixelate ? preset.pixelate.size + "px 픽셀 아트" : (preset?.canvas?.width || preset?.width || 1024) + "px PNG"} · ${$("#remove-background").checked ? "투명 배경" : "배경 포함"}`;
+    : `${cutout && preset?.pixelate ? preset.pixelate.size + "px 픽셀 아트" : `${size?.width || 1024}×${size?.height || 1024} PNG`} · ${cutout ? "투명 배경" : "배경 포함"}`;
 }
 
 function renderImagePick() {
@@ -220,6 +254,7 @@ async function submitComposer(event) {
   try {
     request = buildJobRequest({
       kind: state.kind, source: state.source, preset: state.presetId[state.kind],
+      imageModel: state.imageModels[imageCategory()] || "",
       subject: $("#subject").value, style: $("#style").value, count: $("#count").value, seed: $("#seed").value,
       imagePath: state.imagePath, imageName:state.imageName, uploadId: state.uploadId, imageSource: state.imageSource, workflow: workflow(),
       removeBackground: $("#remove-background").checked, pipelineType: $("#pipeline").value,
@@ -306,10 +341,12 @@ function readablePhase(job) {
 // 대기와 실제 처리 시간을 나눠 적는다. 진행 중이면 renderJobs가 매 폴링마다 숫자만 고친다.
 function timesText(job) {
   const { waited, worked } = jobTimes(job);
-  if (job.state === "queued") return `${formatDuration(waited)}째 대기`;
+  const estimate = estimateLabel(state.estimates[job.id], job.state);
+  if (job.state === "queued") return [`${formatDuration(waited)}째 대기`, estimate].filter(Boolean).join(" · ");
   const parts = [];
   if (worked !== null) parts.push(`처리 ${formatDuration(worked)}`);
   if (waited >= 5) parts.push(`대기 ${formatDuration(waited)}`);
+  if (isActive(job) && estimate) parts.push(estimate);
   return parts.join(" · ");
 }
 function jobCardHtml(job) {
@@ -405,6 +442,10 @@ function announceFinished(jobs) {
 async function refreshJobs() {
   try {
     state.jobs = (await api("/api/jobs?limit=40")).jobs;
+    if (state.jobs.some(isActive) && Date.now() - state.estimatesAt > 15000) {
+      state.estimatesAt = Date.now();
+      state.estimates = (await api("/api/estimates").catch(() => ({jobs: {}}))).jobs;
+    }
     announceFinished(state.jobs);
     renderJobs();
   } catch {
@@ -636,8 +677,10 @@ async function refreshLibrary() {
           <div class="caption">${escapeHtml(asset.jobTitle)}${asset.meta?.label && !asset.jobTitle.endsWith(asset.meta.label) ? ` · ${escapeHtml(asset.meta.label)}` : ""}</div>
           ${asset.collection || asset.tags?.length ? `<div class="card-tags">${asset.collection ? `<span class="card-collection">${escapeHtml(asset.collection)}</span>` : ""}${(asset.tags || []).slice(0, 3).map((tag) => `<span>#${escapeHtml(tag)}</span>`).join("")}</div>` : ""}</div>`).join("")
       : `<div class="empty">${all.length ? "조건에 맞는 에셋이 없습니다." : "아직 만든 에셋이 없습니다."}</div>`;
+    libraryBatch.render(assets);
   } catch (error) {
     grid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    libraryBatch.render([]);
   }
 }
 
@@ -851,6 +894,16 @@ function wireEvents() {
     state.presetId[state.kind] = chip.dataset.preset;
     renderComposer();
   });
+  $("#category-chips").addEventListener("click", event => {
+    const chip = event.target.closest("[data-category]");
+    if (!chip) return;
+    const preset = presetsFor("2d").find(p => (p.category || "game") === chip.dataset.category);
+    if (preset) { state.presetId["2d"] = preset.id; renderComposer(); }
+  });
+  $("#image-model").addEventListener("change", () => {
+    state.imageModels[imageCategory()] = $("#image-model").value;
+    renderImageModel(); saveComposerDraft();
+  });
   $("#count").addEventListener("change", updateSubmitLabel);
   for (const input of $$('input[name="workflow"]')) input.addEventListener('change', updateSubmitLabel);
   for (const id of ["subject", "style", "seed"]) $(`#${id}`).addEventListener("input", saveComposerDraft);
@@ -859,7 +912,7 @@ function wireEvents() {
   $("#open-settings").onclick=()=>$("#settings-dialog").showModal();
   for (const id of ['close-settings','apply-settings']) $('#'+id).onclick=()=>{$('#settings-dialog').close();updateSubmitLabel();};
   $('#remove-background').onchange=updateSubmitLabel;
-  $('#prompt-examples').onclick=e=>{const b=e.target.closest('[data-example]');if(b){$('#subject').value=b.dataset.example;$('#subject').focus();}};
+  $('#prompt-examples').onclick=e=>{const b=e.target.closest('[data-example]');if(b){$('#subject').value=b.dataset.example;$('#subject').focus();saveComposerDraft();}};
   $('#pick-library').onclick=()=>chooseFromLibrary().catch(e=>toast(e.message));
   $('#import-image').onclick=async()=>{try{const file=await pickFile();if(!file)return;const upload=await uploadBlob(file);const created=await api('/api/jobs',{method:'POST',body:{recipe:'import-image',params:{uploadId:upload.id,name:file.name.replace(/\.[^.]+$/,'')}}});state.quietJobs.add(created.id);await refreshJobs();
     let told=false;const job=await waitJob(api,created.id,{onUpdate:(record)=>{if(record.state==='queued'&&!told){told=true;toast('앞선 작업이 끝나면 가져옵니다. 완료되면 편집 화면이 열립니다.');}}});await refreshJobs();openAsset(job.id,job.assets[0].id);}catch(error){toast(error.message);}};

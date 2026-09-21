@@ -188,3 +188,9 @@
 .version-tree img,.version-blank{flex:none;width:56px;height:56px;object-fit:contain;border-radius:var(--r-sm);background:repeating-conic-gradient(var(--checker-a) 0 25%,var(--checker-b) 0 50%) 0 0/10px 10px;}
 .version-text{display:flex;flex-direction:column;min-width:0;flex:1;}.version-text strong{font-size:13px;font-weight:550;}.version-text small{font-size:11px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.version-text .version-title{color:var(--text-4);}
 .version-badge{flex:none;font-size:10px;color:var(--accent);border:1px solid var(--accent-edge);border-radius:var(--r-full);padding:2px 8px;}
+
+.library-batch { flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+.library-batch > span { margin-right: auto; color: var(--text-3); font-size: 12px; }
+.asset-card.is-selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-select { position: absolute; top: 8px; left: 8px; z-index: 2; display: grid; place-items: center; padding: 7px; border-radius: 7px; background: #181b20e6; cursor: pointer; }
+.card-select input { margin: 0; width: 17px; height: 17px; accent-color: var(--accent); }

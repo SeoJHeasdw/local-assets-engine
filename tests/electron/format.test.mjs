@@ -43,6 +43,21 @@ test("invalid input is rejected before it reaches the engine", () => {
   assert.throws(() => buildJobRequest({ kind: "2d", subject: "a", seed: "-1" }), /시드/);
 });
 
+test("2D model choice reaches the engine without affecting the 3D concept default", () => {
+  const form = {kind: "2d", subject: "a traveler", preset: "anime-character", imageModel: "z-image-turbo", removeBackground: false};
+  assert.equal(buildJobRequest(form).params.imageModel, "z-image-turbo");
+  assert.equal(buildJobRequest(form).params.removeBackground, false);
+  assert.equal(buildJobRequest({...form, kind: "3d", preset: "prop-3d"}).params.imageModel, undefined);
+});
+
+test("estimated time is approximate and never promises zero for an overrun", async () => {
+  const { estimateLabel } = await import("../../electron-app/shared/format.mjs");
+  assert.match(estimateLabel({remainingSeconds: 61, samples: 3}, "running"), /약 2분/);
+  assert.match(estimateLabel({overdue: true, remainingSeconds: null}, "running"), /오래/);
+  assert.match(estimateLabel({completionSeconds: null}, "queued"), /기록 부족/);
+  assert.equal(estimateLabel({}, "cancelling"), "");
+});
+
 test("formatting helpers", () => {
   assert.equal(formatBytes(0), "–");
   assert.equal(formatBytes(1536), "1.5KB");

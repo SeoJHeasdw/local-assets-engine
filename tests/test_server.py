@@ -114,6 +114,23 @@ def test_assets_are_organized_with_favorites_tags_collections_and_notes(api):
     assert client.post(f"/api/jobs/{job_id}/assets/a99/library", json={"favorite": True}).status_code == 404
 
 
+def test_batch_tag_operations_preserve_existing_tags_and_fail_atomically(api):
+    client, runner = api
+    job = runner.run_job(runner.create("fake", {"subject": "x"})["id"])
+    url = f"/api/jobs/{job['id']}/assets/a01/library"
+    client.post(url, json={"tags": ["원본", "보관"]})
+    added = client.post(url, json={"addTags": ["초안", " 원본 "]}).json()["assets"][0]
+    assert added["tags"] == ["원본", "보관", "초안"]
+    removed = client.post(url, json={"removeTags": ["보관"]}).json()["assets"][0]
+    assert removed["tags"] == ["원본", "초안"]
+    assert client.post(url, json={"favorite": True, "addTags": [f"t{i}" for i in range(20)]}).status_code == 400
+    unchanged = runner.store.load(job["id"])["assets"][0]
+    assert unchanged["tags"] == ["원본", "초안"] and "favorite" not in unchanged
+    assert client.post(url, json={"addTags": ["x"], "removeTags": ["y"]}).status_code == 400
+    assert client.post(url, json={"addTags": ["x"]}, headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.get("/api/estimates").json() == {"jobs": {}}
+
+
 def test_version_lineage_and_storage_classification(api, tmp_path):
     client, runner = api
     store = runner.store

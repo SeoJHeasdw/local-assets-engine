@@ -1076,7 +1076,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       const meta = asset.meta || {}, stats = meta.stats || {};
       let collections = [];
       try { collections = [...new Set((await api("/api/assets?limit=2000")).assets.map((item) => item.collection).filter(Boolean))].sort(); } catch { /* 목록 없이도 적을 수 있다 */ }
-      const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut || 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd></dl>
+      const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut || 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
         ${meta.inspectionFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 보기</a>` : ""}
         ${stats.topology?.warnings?.length ? `<p class="notice">${escapeHtml(stats.topology.warnings.join(" "))}</p>` : ""}
         <div class="control-divider"></div><h3>정리</h3>

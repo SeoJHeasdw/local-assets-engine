@@ -1,7 +1,7 @@
 # Local Assets Engine
 
-javis의 생산물 모듈이다. Apple Silicon Mac에서 유료 API나 구독 없이 게임용 2D 에셋과
-3D 메시를 만든다. 현재 환경은 M4 Max 36GB다. 로그인·승인처럼 사용자가 직접 할 준비와
+javis의 생산물 모듈이다. Apple Silicon Mac에서 유료 API나 구독 없이 게임용 2D 에셋,
+실사·애니 이미지와 3D 메시를 만든다. 현재 환경은 M4 Max 36GB다. 로그인·승인처럼 사용자가 직접 할 준비와
 2D 모델 선택은 [SETUP](docs/SETUP.md)에 있다.
 
 다음 개선 후보와 남은 검증 항목은 [IMPROVEMENTS](docs/IMPROVEMENTS.md)에 정리했다.
@@ -19,7 +19,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 
 | 레시피 | 흐름 | 결과 |
 | --- | --- | --- |
-| `image` | 설명 → 이미지 후보 → 배경 제거 → 캔버스 맞춤 또는 픽셀화 | 투명 PNG 후보 |
+| `image` | 설명 → 이미지 후보 → 선택한 종류에 따라 배경 제거·캔버스 맞춤·픽셀화 | 배경 포함 또는 투명 PNG 후보 |
 | `text-to-3d` | 설명 → 컨셉 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본 GLB, 여섯 방향 검수 |
 | `image-to-3d` | 고른 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본 GLB, 여섯 방향 검수 |
 | `refine-mesh` | 저장된 생성 원본 → 출력 설정을 바꿔 표면·PBR 재구성 | 모델 추론 없이 새 품질본 |
@@ -28,7 +28,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
 | `previz` | 완성된 메시·회색 대역 배치 → 샷 프리셋을 카메라 값으로 풀기 → 스케치 렌더 | 샷별 애니매틱·깊이·윤곽과 샷 값 |
 
-이미지 모델은 FLUX.2 klein 4B, 배경 제거는 BiRefNet, 3D는 TRELLIS.2 Mac 포트, 프리비즈
+이미지 기본 모델은 FLUX.2 klein 4B(선택: Z-Image Turbo), 배경 제거는 BiRefNet, 3D는 TRELLIS.2 Mac 포트, 프리비즈
 스케치는 Blender EEVEE다. 종류 프리셋(아이템 아이콘, 캐릭터 스프라이트, 픽셀 아트, UI 요소,
 배경, 3D 소품)과 샷 프리셋(게임 트레일러), 프리비즈 대역(사람, 승용차, 벽, 건물), 모델·기본값은
 `config/presets.json`에서 고친다.
@@ -53,9 +53,11 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 - **만들기**: 3D 소품·2D 이미지를 선택하고 설명을 적는다. 3D는 컨셉을 먼저 골라서 만들거나,
   한 번에 완성하는 방식을 선택한다. 후보 수·스타일·시드는 생성 설정 팝업에 있다. 이미지 파일이나
   보관함의 후보에서 시작할 수도 있다. 기본 생성은 고품질 원본 하나다. 작성 중인 요청은 앱을 다시 열어도 남는다.
+  2D는 **게임 에셋 / 실사 / 애니·일러스트** 카테고리를 고른다. 실사는 인물·제품·풍경, 애니는 캐릭터·일러스트·배경을
+  제공하며 배경을 기본으로 유지한다. 생성 설정의 모델 선택은 카테고리별로 기억한다.
 - **최근 작업**: 결과 이미지와 간결한 진행 상태, 대기 순서와 대기·처리 시간을 본다. 후보가 여럿이면
   "나란히 비교"로 크게 보고 골라 3D로 만든다. 창을 보고 있지 않을 때 끝나면 macOS 알림이 온다.
-  단계별 시간·메모리·로그는 작업 기록을 연다.
+  같은 조건의 성공 기록 3개 이상이면 대략적인 완료 예상도 표시한다. 단계별 시간·메모리·로그는 작업 기록을 연다.
 - **편집**: 에셋을 열면 레이어로 편집한다. "색 바꾸기"는 비슷한 색만 바꾸거나 영역 전체를 칠하고, "칠한 곳만"을
   고르면 브러시로 부위를 정한다(상자 뚜껑만, 자물쇠만). "로고"·"문구"는 여러 개를 쌓아 보이기·잠금·순서·삭제한다.
   2D는 로고를 끌어 옮기고 모서리·손잡이로 크기·회전하며, 구성 탭에서 자유 자르기·여백·배경색·출력 크기를 정한다.
@@ -78,6 +80,8 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 - **보관함**: 즐겨찾기·종류·컬렉션·태그로 거르고 이름·태그·메모로 찾는다. 컬렉션·태그·메모는 편집 화면의
   "정보·정리"에서 붙이고, 편집본은 원본의 컬렉션·태그를 이어받는다. 3D 에셋을 열면 "프리비즈에 넣기"로 그 에셋을
   프리비즈 장면에 넣는다. 승인·거절은 프리비즈 컷 검토에만 쓴다.
+  카드 체크박스로 여러 개를 선택하면 컬렉션·태그를 한 번에 추가·제거·교체할 수 있다. 앱의 "선택 에셋의 작업 정리"는
+  같은 작업의 미선택 에셋까지 포함한 작업 폴더 전체를 휴지통으로 보낸다. 표시된 목록을 확인한 뒤 실행한다.
 - **환경**: 준비 상태 진단, 보관 용량(분류별 크기, 중간 파일·작업을 휴지통으로 보내기), 측정 기록을 본다.
 - 창은 맨 위 띠나 각 화면 머리글을 잡아 옮긴다.
 
@@ -90,6 +94,14 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 curl -s localhost:47831/api/jobs -H 'Content-Type: application/json' \
   -d '{"recipe": "image", "params": {"preset": "item-icon", "subject": "red health potion", "count": 4}}'
 curl -s localhost:47831/api/jobs/<작업 ID>
+
+# 애니 캐릭터 (기본 모델)
+.venv/bin/python -m local_assets_engine run image \
+  --params '{"preset":"anime-character","subject":"an adult traveler in a blue cloak","count":1,"seed":42}'
+
+# 실사 제품 사진, Z-Image Turbo로 비교
+.venv/bin/python -m local_assets_engine run image \
+  --params '{"preset":"photo-product","imageModel":"z-image-turbo","subject":"a green ceramic teapot","count":1,"seed":42}'
 ```
 
 `.venv/bin/python -m local_assets_engine run <레시피> --params '<JSON>'`은 엔진이 떠 있으면

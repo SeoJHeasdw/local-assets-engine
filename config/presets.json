@@ -4,6 +4,8 @@
     "id": "flux2-klein-4b",
     "label": "FLUX.2 klein 4B",
     "command": "mflux-generate-flux2",
+    "modelArg": "flux2-klein-4b",
+    "hint": "기본 모델 · 실사·애니·게임 에셋을 함께 생성",
     "repo": "black-forest-labs/FLUX.2-klein-4B",
     "license": "Apache-2.0",
     "steps": null,
@@ -11,6 +13,26 @@
     "mlxCacheLimitGb": 8,
     "lowRam": false
   },
+  "imageModels": [
+    {
+      "id": "z-image-turbo",
+      "label": "Z-Image Turbo",
+      "command": "mflux-generate-z-image-turbo",
+      "modelArg": "z-image-turbo",
+      "repo": "Tongyi-MAI/Z-Image-Turbo",
+      "license": "Apache-2.0",
+      "hint": "실사 비교용 선택지 · 현재 장비에서 더 오래 걸리고 메모리를 더 사용",
+      "steps": 9,
+      "quantize": 8,
+      "mlxCacheLimitGb": 8,
+      "lowRam": false
+    }
+  ],
+  "imageCategories": [
+    { "id": "game", "label": "게임 에셋" },
+    { "id": "photo", "label": "실사" },
+    { "id": "anime", "label": "애니·일러스트" }
+  ],
   "backgroundRemoval": {
     "repo": "ZhengPeng7/BiRefNet",
     "revision": "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4",
@@ -200,6 +222,48 @@
     ]
   },
   "presets": [
+    {
+      "id": "photo-portrait", "kind": "2d", "category": "photo", "label": "인물 사진",
+      "hint": "자연스러운 피부·빛·렌즈 표현 · 배경 포함",
+      "prompt": "Photorealistic portrait photograph of {subject}, natural skin texture, realistic anatomy, soft natural light, subtle depth of field, photographic color and detail",
+      "example": "an adult woman wearing a denim jacket at a sunlit outdoor cafe",
+      "width": 768, "height": 1024, "removeBackground": false
+    },
+    {
+      "id": "photo-product", "kind": "2d", "category": "photo", "label": "제품 사진",
+      "hint": "재질과 조명을 살린 제품·소품 사진",
+      "prompt": "Photorealistic product photograph of {subject}, physically realistic materials, carefully controlled studio lighting, clean composition, sharp product details, natural contact shadow",
+      "example": "a green ceramic teapot and matching cup on a pale wooden table",
+      "width": 1024, "height": 1024, "removeBackground": false
+    },
+    {
+      "id": "photo-landscape", "kind": "2d", "category": "photo", "label": "풍경 사진",
+      "hint": "공간과 자연광을 살린 가로 사진",
+      "prompt": "Photorealistic landscape photograph of {subject}, realistic natural lighting, rich environmental detail, coherent perspective, photographic colors, wide composition",
+      "example": "a quiet coastal village at sunrise with fishing boats in the harbor",
+      "width": 1344, "height": 768, "removeBackground": false
+    },
+    {
+      "id": "anime-character", "kind": "2d", "category": "anime", "label": "애니 캐릭터",
+      "hint": "선화와 셀 채색을 살린 캐릭터 · 배경 포함",
+      "prompt": "2D anime character illustration of {subject}, expressive character design, clean intentional line art, cel shading, carefully drawn eyes, harmonious colors, hand-drawn animation aesthetic",
+      "example": "an adult adventurer with short silver hair and a blue cloak standing in a sunlit garden",
+      "width": 768, "height": 1024, "removeBackground": false
+    },
+    {
+      "id": "anime-illustration", "kind": "2d", "category": "anime", "label": "애니 일러스트",
+      "hint": "인물과 배경을 함께 그리는 한 장의 장면",
+      "prompt": "2D anime illustration of {subject}, expressive line art, cel shaded characters, richly painted background, harmonious color palette, cinematic composition, hand-drawn animation aesthetic",
+      "example": "an adult traveler and an orange cat waiting at a rural train station in summer",
+      "width": 1024, "height": 1024, "removeBackground": false
+    },
+    {
+      "id": "anime-background", "kind": "2d", "category": "anime", "label": "애니 배경",
+      "hint": "빛과 색을 살린 애니메이션 배경 미술",
+      "prompt": "Hand-painted anime background art of {subject}, rich environmental storytelling, delicate painted details, atmospheric light, harmonious colors, wide composition, no characters",
+      "example": "a quiet coastal village at sunrise with fishing boats in the harbor",
+      "width": 1344, "height": 768, "removeBackground": false
+    },
     {
       "id": "item-icon",
       "kind": "2d",

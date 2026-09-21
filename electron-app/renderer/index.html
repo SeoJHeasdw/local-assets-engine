@@ -38,9 +38,10 @@
           <form class="composer" id="composer" novalidate>
             <div class="segmented kind-cards" id="kind-switch" role="tablist" aria-label="에셋 종류">
               <button type="button" data-kind="3d" role="tab"><span class="kind-symbol">◇</span><strong>3D 소품</strong><small>입체적인 오브젝트</small></button>
-              <button type="button" data-kind="2d" role="tab"><span class="kind-symbol">▧</span><strong>2D 이미지</strong><small>아이콘부터 배경까지</small></button>
+              <button type="button" data-kind="2d" role="tab"><span class="kind-symbol">▧</span><strong>2D 이미지</strong><small>게임 · 실사 · 애니</small></button>
             </div>
             <div class="composer-body"><div class="segmented small" id="source-switch" aria-label="3D 입력"><button type="button" data-source="text">설명으로 시작</button><button type="button" data-source="image">이미지로 시작</button></div>
+            <div class="field" id="category-field" hidden><span class="label">카테고리</span><div class="chips" id="category-chips" aria-label="이미지 카테고리"></div></div>
             <div class="field" id="preset-field"><span class="label">만들 종류</span><div class="chips" id="preset-chips"></div><p class="hint" id="preset-hint"></p></div>
             <div id="workflow-field" class="field"><div class="workflow-options"><label><input type="radio" name="workflow" value="concept" checked><span><strong>컨셉을 고른 뒤 3D로</strong><small>이미지를 먼저 보고 마음에 드는 방향을 선택</small></span></label><label><input type="radio" name="workflow" value="direct"><span><strong>한 번에 3D까지</strong><small>이미지 1장부터 3D 완성까지 자동으로 진행</small></span></label></div></div>
             <label class="field" id="subject-field"><span class="label">어떤 에셋을 만들까요?</span><textarea id="subject" rows="3" placeholder="예: 둥근 뚜껑과 검은 철띠가 있는 나무 보물상자"></textarea></label>
@@ -193,6 +194,7 @@
         </header>
         <div class="library-toolbar"><input type="search" id="library-search" aria-label="에셋 검색" placeholder="이름·태그·메모로 찾기"><select id="library-kind" aria-label="에셋 종류 필터"><option value="all">모든 종류</option><option value="mesh">3D 에셋</option><option value="image">2D·컨셉 이미지</option><option value="shot">프리비즈 샷</option></select><select id="library-collection" aria-label="컬렉션 필터"><option value="">모든 컬렉션</option></select></div>
         <div class="library-tags chips" id="library-tags"></div>
+        <div class="library-batch control-row" id="library-batch" aria-label="보관함 일괄 정리"></div>
         <div class="asset-grid" id="library-grid"></div>
       </section>
 
@@ -217,6 +219,7 @@
   </dialog>
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
   <dialog class="studio-dialog" id="settings-dialog" aria-labelledby="settings-title"><header class="dialog-head"><div><span class="eyebrow">PREFERENCES</span><h2 id="settings-title">생성 설정</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="설정 닫기">✕</button></header><div class="dialog-body">
+    <label class="field" id="image-model-field"><span class="label">이미지 모델</span><select id="image-model"></select><small class="hint" id="image-model-hint"></small></label>
             <label class="field" id="style-field"><span class="label">스타일 <em>선택</em></span><input id="style" placeholder="예: 손으로 그린 듯한 따뜻한 느낌"></label>
     <label class="field" id="count-field"><span class="label">이미지 후보 수</span><select id="count"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></label>
     <label class="field"><span class="label">시드 <em>선택</em></span><input id="seed" inputmode="numeric" placeholder="비워 두면 새로운 결과"></label>

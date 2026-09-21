@@ -7,6 +7,37 @@ from local_assets_engine.presets import load_presets
 from local_assets_engine.recipes.image import build_image_command, match_generated_files
 
 
+def test_model_choice_is_validated_and_snapshotted():
+    from local_assets_engine.presets import PresetError
+    from local_assets_engine.recipes.image import prepare_image_params
+    presets = load_presets()
+    params = prepare_image_params({"subject": "a traveler", "preset": "anime-character", "seed": 7,
+                                   "imageModel": "z-image-turbo", "imageModelConfig": {"command": "bad"}}, presets)
+    assert params["category"] == "anime" and not params["removeBackground"]
+    assert params["canvas"] is None and params["pixelate"] is None
+    presets["imageModels"][0]["steps"] = 100
+    assert params["imageModelConfig"]["steps"] == 9
+    args = build_image_command(params["imageModelConfig"], params, Path("out.png"))
+    assert str(args[0]).endswith("mflux-generate-z-image-turbo")
+    assert args[args.index("--model") + 1] == "z-image-turbo"
+    assert args[args.index("--steps") + 1] == "9"
+    with pytest.raises(PresetError, match="이미지 모델"):
+        prepare_image_params({"subject": "x", "imageModel": "unknown"}, presets)
+
+
+def test_category_presets_keep_background_and_existing_defaults():
+    from local_assets_engine.recipes.image import prepare_image_params
+    presets = load_presets()
+    for preset in presets["presets"]:
+        if preset.get("category") not in ("photo", "anime"):
+            continue
+        params = prepare_image_params({"subject": "a traveler", "preset": preset["id"]}, presets)
+        assert not params["removeBackground"] and params["imageModel"] == "flux2-klein-4b"
+    legacy = prepare_image_params({"subject": "a sword"}, presets)
+    assert legacy["preset"] == "item-icon" and legacy["removeBackground"]
+    assert legacy["canvas"]["width"] == 512
+
+
 def test_image_command_carries_every_seed_and_memory_option():
     model = {"command": "mflux-generate-z-image-turbo", "quantize": 8, "mlxCacheLimitGb": 8, "lowRam": True}
     params = {"prompt": "a sword", "width": 1024, "height": 768, "seeds": [7, 8]}

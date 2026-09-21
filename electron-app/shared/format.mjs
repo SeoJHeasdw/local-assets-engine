@@ -80,6 +80,7 @@ export function buildJobRequest(form) {
   const subject = String(form.subject ?? "").trim();
   if (!subject) throw new Error("무엇을 만들지 적어 주세요.");
   const base = { preset: form.preset, subject, style: String(form.style ?? "").trim(), ...(seed ? { seed: Number(seed) } : {}) };
+  if (form.kind === "2d" && form.imageModel) base.imageModel = form.imageModel;
   if (form.removeBackground !== undefined && form.kind === "2d") base.removeBackground = Boolean(form.removeBackground);
   const count = Number(form.count || 1);
   if (form.kind === "3d" && (form.workflow === "direct" || (!form.workflow && count === 1))) return { recipe: "text-to-3d", params: { ...base, count: 1, ...mesh } };
@@ -110,4 +111,12 @@ export function jobTimes(job, now = Date.now()) {
 export function newlyFinished(previousStates, jobs) {
   if (!previousStates) return [];
   return jobs.filter((job) => isActive({ state: previousStates.get(job.id) }) && !isActive(job));
+}
+
+export function estimateLabel(estimate, state) {
+  if (!estimate || state === "cancelling") return "";
+  if (estimate.overdue) return "예상보다 오래 걸리는 중";
+  const seconds = state === "queued" ? estimate.completionSeconds : estimate.remainingSeconds;
+  if (!Number.isFinite(seconds)) return "예상 시간 기록 부족";
+  return `완료까지 약 ${formatDuration(Math.max(60, Math.ceil(seconds / 60) * 60))} · 기록 ${estimate.samples}개 기준`;
 }

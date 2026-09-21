@@ -42,6 +42,13 @@ def _check_standin(standin: dict[str, Any]) -> None:
 
 def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
     data = json.loads(Path(path).read_text("utf-8"))
+    models = image_models(data)
+    if len({model["id"] for model in models}) != len(models):
+        raise PresetError("이미지 모델 id가 중복됩니다.")
+    categories = data.get("imageCategories", [])
+    category_ids = {category["id"] for category in categories}
+    if len(category_ids) != len(categories):
+        raise PresetError("이미지 카테고리 id가 중복됩니다.")
     seen: set[str] = set()
     for preset in data.get("presets", []):
         preset_id = preset.get("id")
@@ -50,6 +57,10 @@ def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
         seen.add(preset_id)
         if preset.get("kind") not in KINDS:
             raise PresetError(f"{preset_id}: kind는 {KINDS} 중 하나여야 합니다.")
+        if preset.get("category") and preset["category"] not in category_ids:
+            raise PresetError(f"{preset_id}: 알 수 없는 이미지 카테고리입니다.")
+        if preset.get("imageModel"):
+            find_image_model(data, preset["imageModel"])
         if "{subject}" not in preset.get("prompt", ""):
             raise PresetError(f"{preset_id}: prompt에 {{subject}} 자리가 없습니다.")
         if preset.get("pixelate") and not preset.get("removeBackground"):
@@ -77,6 +88,20 @@ def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
         seen.add(standin_id)
         _check_standin(standin)
     return data
+
+
+def image_models(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The existing default plus explicitly configured alternatives."""
+    default = [data["imageModel"]] if data.get("imageModel") else []
+    return default + data.get("imageModels", [])
+
+
+def find_image_model(data: dict[str, Any], model_id: str | None = None) -> dict[str, Any]:
+    model_id = model_id or data["imageModel"]["id"]
+    for model in image_models(data):
+        if model["id"] == model_id:
+            return model
+    raise PresetError(f"알 수 없는 이미지 모델입니다: {model_id}")
 
 
 def find_preset(data: dict[str, Any], preset_id: str, *, kind: str | None = None) -> dict[str, Any]:

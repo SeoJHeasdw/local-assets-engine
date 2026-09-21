@@ -32,6 +32,17 @@ def update_library(asset: dict[str, Any], payload: dict[str, Any]) -> None:
     """Apply favorite/tags/collection/note from an API payload after validating it."""
     if not isinstance(payload, dict):
         raise PresetError("정리할 내용을 보내 주세요.")
+    tag_ops = [name for name in ("tags", "addTags", "removeTags") if name in payload]
+    if len(tag_ops) > 1:
+        raise PresetError("태그 추가·제거·교체 중 하나만 요청해 주세요.")
+    if tag_ops and tag_ops[0] != "tags":
+        operation = tag_ops[0]
+        checked: dict[str, Any] = {}
+        update_library(checked, {"tags": payload[operation]})
+        changed = checked.get("tags", [])
+        current = asset.get("tags", [])
+        tags = current + changed if operation == "addTags" else [tag for tag in current if tag not in changed]
+        payload = {**payload, "tags": tags}
     if "favorite" in payload:
         if not isinstance(payload["favorite"], bool):
             raise PresetError("favorite는 true 또는 false여야 합니다.")

@@ -14,7 +14,7 @@ from typing import Any
 from .paths import (
     MODEL_VIEWER_JS, child_env, engine_bin, find_tool, trellis_generate_script, trellis_python,
 )
-from .presets import load_presets
+from .presets import image_models, load_presets
 
 DINOV3_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 # deps/mtlmesh는 cumesh, deps/mtlgemm은 flex_gemm이라는 이름으로 설치된다.
@@ -79,6 +79,11 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         hint="uv sync")
     add("imageWeights", f"{image_model['label']} 가중치", is_cached(image_model["repo"]), required=False,
         hint="첫 2D 생성 때 자동으로 내려받습니다.")
+    for model in image_models(presets)[1:]:
+        add(f"imageCli:{model['id']}", f"{model['label']} 실행기 (선택)", engine_bin(model["command"]).exists(),
+            required=False, hint="uv sync")
+        add(f"imageWeights:{model['id']}", f"{model['label']} 가중치 (선택)", is_cached(model["repo"]),
+            required=False, hint=f"선택하면 첫 생성 때 내려받습니다: {model['repo']}")
     add("backgroundWeights", "BiRefNet 배경 제거 가중치", is_cached(background["repo"]), required=False,
         hint="첫 배경 제거 때 자동으로 내려받습니다.")
     add("bpy", "Blender 파이썬 모듈 (bpy)", importlib.util.find_spec("bpy") is not None, hint="uv sync")

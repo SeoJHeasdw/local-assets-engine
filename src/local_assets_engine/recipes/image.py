@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +13,7 @@ from PIL import Image
 
 from .. import imaging
 from ..paths import engine_bin
-from ..presets import build_prompt, find_preset
+from ..presets import build_prompt, find_image_model, find_preset
 from .base import Recipe, bool_param, dimension_param, int_param, seed_param
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ def prepare_image_params(
     count = int_param(params, "count", default_count, 1, MAX_CANDIDATES)
     base_seed = seed_param(params, count)
     remove_background = bool_param(params, "removeBackground", bool(preset.get("removeBackground")))
+    model = find_image_model(presets, params.get("imageModel") or preset.get("imageModel"))
     return {
         "preset": preset["id"],
         "subject": subject,
@@ -48,7 +50,10 @@ def prepare_image_params(
         "removeBackground": remove_background,
         "canvas": preset.get("canvas") if remove_background else None,
         "pixelate": preset.get("pixelate") if remove_background else None,
-        "imageModel": presets["imageModel"]["id"],
+        "category": preset.get("category", "game" if preset["kind"] == "2d" else "concept"),
+        "imageModel": model["id"],
+        # 요청이 대기하는 동안 설정 파일이 바뀌어도 선택한 조건으로 실행한다.
+        "imageModelConfig": deepcopy(model),
     }
 
 
@@ -95,6 +100,8 @@ def build_image_command(model: dict[str, Any], p: dict[str, Any], output: Path) 
         "--seed", *[str(seed) for seed in p["seeds"]],
         "--output", str(output), "--metadata",
     ]
+    if model.get("modelArg"):
+        args += ["--model", model["modelArg"]]
     if model.get("steps"):
         args += ["--steps", str(model["steps"])]
     if model.get("quantize"):
@@ -108,7 +115,7 @@ def build_image_command(model: dict[str, Any], p: dict[str, Any], output: Path) 
 
 
 def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "candidate") -> list[dict[str, Any]]:
-    model = ctx.presets["imageModel"]
+    model = p.get("imageModelConfig") or find_image_model(ctx.presets, p.get("imageModel"))
     seeds = p["seeds"]
     raw_dir = ctx.dir / "raw"
     raw_dir.mkdir(exist_ok=True)
@@ -150,7 +157,7 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
             kind="image", role=role, file=record["file"], preview=record["preview"],
             meta={
                 "seed": record["seed"], "preset": p["preset"], "prompt": p["prompt"],
-                "model": p["imageModel"], "width": width, "height": height,
+                "model": model["id"], "category": p.get("category"), "width": width, "height": height,
                 "checks": record["checks"], "error": record["error"], "raw": ctx.rel(record["raw"]),
             },
         )
