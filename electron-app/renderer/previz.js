@@ -4,6 +4,8 @@ import {
   isMoving, moveItem, nextShotId, refocusCuts, sceneSubjects, setSeconds, totalSeconds,
 } from "../shared/previz.mjs";
 import { installResizer } from "./resize.js";
+import { meshPlacement, planDescription, SCENE_STARTERS } from "../shared/previz-start.mjs";
+import { quickPanelHtml, quickStageHtml } from "./previz-quick.js";
 
 const DRAFT_KEY = "assets-studio.previz.draft";
 const LAYOUT_KEY = "assets-studio.previz.layout";
@@ -72,13 +74,16 @@ function standinIcon(kind, dimensions = [1, 1, 1]) {
 
 export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, openAsset, goCreate }) {
   const $ = (selector, root = document) => root.querySelector(selector);
-  const layout = { scene: true, cuts: true, render: false, panel: true, ...storage.read(LAYOUT_KEY) };
+  const layout = { scene: true, cuts: true, render: false, panel: true, mode: "simple", ...storage.read(LAYOUT_KEY) };
   const state = {
     meshes: [],
     placed: [],
     presetId: null,
     cuts: [],
     settings: null,
+    description: "",
+    plannedDescription: "",
+    plan: null,
     selectedAsset: -1,
     selectedCut: 0,
     expandedCut: -1,
@@ -101,7 +106,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   const standinKind = (id) => standins().find((kind) => kind.id === id) || null;
   const renders = () => getJobs().filter((job) => job.recipe === "previz");
   const rendering = () => renders().find(isActive) || null;
-  const selectedRender = () => renders().find((job) => job.id === state.renderId) || renders()[0] || null;
+  // 저장된 영상은 사용자가 기록에서 골랐을 때만 연다. 빈 초안 위에 예전 결과를 자동으로 보여 주지 않는다.
+  const selectedRender = () => renders().find((job) => job.id === state.renderId) || null;
   const renderCuts = (job) => (job?.assets || [])
     .filter((asset) => asset.kind === "shot")
     .sort((a, b) => (a.meta?.order || 0) - (b.meta?.order || 0));
@@ -125,6 +131,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   function saveDraft() {
     storage.write(DRAFT_KEY, {
       placed: state.placed, presetId: state.presetId, cuts: state.cuts, settings: state.settings,
+      description: state.description, plannedDescription: state.plannedDescription, plan: state.plan,
     });
   }
 
@@ -134,6 +141,9 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     state.presetId = presets().some((item) => item.id === saved?.presetId) ? saved.presetId : presets()[0]?.id || null;
     state.cuts = Array.isArray(saved?.cuts) && saved.cuts.length ? saved.cuts : draftFromPreset(preset());
     state.placed = Array.isArray(saved?.placed) ? saved.placed : [];
+    state.description = typeof saved?.description === "string" ? saved.description : "";
+    state.plannedDescription = typeof saved?.plannedDescription === "string" ? saved.plannedDescription : "";
+    state.plan = saved?.plan || null;
   }
 
   function syncPlacedWithMeshes() {
@@ -156,13 +166,71 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     if (cuts) renderCutList();
     if (summary) renderSummaries();
     renderBar();
+    renderQuick();
+    if (!selectedRender()) renderStage();
+  }
+
+  function renderQuick() {
+    $("#pv-quick-content").innerHTML = quickPanelHtml({
+      placed: state.placed, cuts: state.cuts, meshes: state.meshes, standins: standins(), plan: state.plan,
+    });
+    $("#pv-description").value = state.description;
+    $("#pv-examples").innerHTML = SCENE_STARTERS.map((item) => `<button type="button" data-pv="example" data-example="${item.id}">${item.label} ＋</button>`).join("");
+    renderDescriptionStatus();
+  }
+
+  function renderDescriptionStatus() {
+    const pending = state.description.trim() && state.description.trim() !== state.plannedDescription;
+    $("#pv-plan").disabled = !state.description.trim();
+    $("#pv-plan-status").textContent = pending ? "설명을 고쳤습니다. 장면에 반영해 주세요."
+      : state.plannedDescription ? "설명을 반영했습니다. 영상 만들기로 확인하세요." : "대상과 카메라 움직임을 적어 주세요.";
+    if (!selectedRender()) $("#pv-preview-note").textContent = pending && state.placed.length
+      ? "이전 초안입니다. 고친 설명을 장면에 반영해 주세요." : "";
+  }
+
+  function setMode(mode, section = null) {
+    layout.mode = mode === "advanced" ? "advanced" : "simple";
+    if (section) { layout[section] = true; layout.panel = true; }
+    storage.write(LAYOUT_KEY, layout);
+    renderLayout();
+    renderMap();
+    renderStage();
+    if (section) $(`.pv-section[data-section="${section}"]`).scrollIntoView({ block: "start" });
+  }
+
+  function prepareDescription() {
+    const before = snapshot();
+    try {
+      const plan = planDescription(state.description, standins(), preset());
+      state.placed = plan.placed;
+      state.cuts = plan.cuts;
+      state.plan = { summary: plan.summary, notes: plan.notes };
+      state.plannedDescription = state.description.trim();
+    } catch (error) {
+      state.error = error.message;
+      renderBar();
+      $("#pv-plan-status").textContent = error.message;
+      return;
+    }
+    state.selectedAsset = -1;
+    state.selectedCut = 0;
+    state.expandedCut = -1;
+    state.renderId = null;
+    state.inspectShot = null;
+    state.error = "";
+    state.view.auto = true;
+    saveDraft();
+    renderEditor();
+    renderStage();
+    offerUndo(before, "설명으로 배치와 컷을 준비했습니다");
   }
 
   // ---- 되돌리기 -------------------------------------------------------------
 
   // 빼기·초기화는 확인 창으로 흐름을 끊지 않고 바로 한다. 직전 편집 상태 하나를 들고 있다가 알림에서 되돌린다.
   function snapshot() {
-    return clone({ placed: state.placed, presetId: state.presetId, cuts: state.cuts, settings: state.settings });
+    return clone({ placed: state.placed, presetId: state.presetId, cuts: state.cuts, settings: state.settings,
+      description: state.description, plannedDescription: state.plannedDescription, plan: state.plan });
   }
 
   function offerUndo(before, message) {
@@ -189,6 +257,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     dismissUndo();
     saveDraft();
     renderEditor();
+    renderStage();
   }
 
   function renderToast() {
@@ -601,11 +670,12 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       $(selector).disabled = !active;
       $(selector).setAttribute("data-tip", active ? `${tip}. 알림에서 바로 되돌릴 수 있습니다.` : idle);
     }
-    $("#pv-reset-all").disabled = !state.placed.length && !edited() && !settingsChanged() && state.presetId === (presets()[0]?.id || null);
+    $("#pv-reset-all").disabled = !state.placed.length && !state.description && !edited() && !settingsChanged() && state.presetId === (presets()[0]?.id || null);
   }
 
   function blocker() {
-    if (!state.placed.length) return "장면에 3D 에셋이나 대역을 먼저 놓아 주세요.";
+    if (state.description.trim() && state.description.trim() !== state.plannedDescription) return "고친 설명을 ‘설명으로 장면 준비’로 먼저 반영해 주세요.";
+    if (!state.placed.length) return layout.mode === "advanced" ? "장면에 3D 에셋이나 대역을 먼저 놓아 주세요." : "설명을 적고 ‘설명으로 장면 준비’를 눌러 주세요.";
     if (!state.cuts.length) return "컷이 하나 이상 있어야 합니다.";
     return "";
   }
@@ -619,7 +689,8 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     button.disabled = Boolean(reason || running || state.submitting);
     button.classList.toggle("is-busy", Boolean(running || state.submitting));
     button.style.setProperty("--progress", `${percent}%`);
-    button.textContent = state.submitting ? "요청 보내는 중" : running ? `렌더 중 ${percent}%` : "샷 만들기";
+    button.textContent = state.submitting ? "요청 보내는 중" : running ? `만드는 중 ${percent}%`
+      : state.settings.animatic ? "영상 만들기" : "정지 컷 만들기";
     button.setAttribute("data-tip", reason || (running
       ? `${stage?.detail || "준비 중"} · 한 번에 한 작업만 돌아갑니다`
       : `${state.cuts.length}컷 ${totalSeconds(state.cuts).toFixed(1)}초를 렌더합니다. 끝나면 가운데에서 한 편으로 재생됩니다.`));
@@ -663,14 +734,20 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     const cuts = renderCuts(job);
     const sequence = cuts.find((asset) => asset.meta?.sequence)?.meta.sequence;
     const stage = job ? currentStage(job) : null;
-    const key = JSON.stringify([job?.id, job?.state, sequence?.file, isActive(job) ? Math.round((stage?.progress || 0) * 20) : 0, job?.error]);
+    $("#pv-preview-note").textContent = job ? isActive(job) ? "영상을 준비하고 있습니다."
+      : "저장된 결과입니다. 편집한 내용은 다시 만들면 반영됩니다."
+      : state.placed.length && state.description.trim() && state.description.trim() !== state.plannedDescription
+        ? "이전 초안입니다. 고친 설명을 장면에 반영해 주세요." : "";
+    const key = JSON.stringify([job?.id, job?.state, sequence?.file, isActive(job) ? Math.round((stage?.progress || 0) * 20) : 0, job?.error,
+      !job ? [layout.mode, state.placed, state.cuts] : null]);
     if (key === state.keys.screen) return;
     state.keys.screen = key;
     const screen = $("#pv-screen");
     const transport = $("#pv-transport");
 
     if (!job) {
-      screen.innerHTML = stepsHtml();
+      screen.innerHTML = layout.mode === "simple"
+        ? quickStageHtml({ placed: state.placed, cuts: state.cuts, standins: standins(), icon: standinIcon }) : stepsHtml();
       transport.innerHTML = "";
       return;
     }
@@ -840,10 +917,12 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   // ---- 동작 -----------------------------------------------------------------
 
   async function submit() {
+    if (state.submitting || rendering()) return;
     state.error = "";
     let request;
     try {
-      request = buildPrevizRequest({ placed: state.placed, cuts: state.cuts, preset: preset(), settings: state.settings });
+      if (blocker()) throw new Error(blocker());
+      request = buildPrevizRequest({ placed: state.placed, cuts: state.cuts, preset: preset(), settings: state.settings, description: state.description });
     } catch (error) {
       state.error = error.message;
       renderBar();
@@ -867,6 +946,10 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
 
   function loadRender(job) {
     const params = job.params || {};
+    state.description = params.description || "";
+    state.plannedDescription = state.description;
+    state.plan = null;
+    state.error = "";
     const byId = new Map((params.assets || []).map((asset) => [asset.id, asset]));
     state.placed = (params.assets || []).filter((asset) => asset.source || asset.standin).map((asset) => {
       const spot = { x: asset.position?.[0] || 0, y: asset.position?.[1] || 0, yaw: asset.yaw || 0 };
@@ -940,6 +1023,15 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
   }
 
   function renderLayout() {
+    const simple = layout.mode !== "advanced";
+    $("#view-previz").classList.toggle("is-simple", simple);
+    $("#pv-quick").hidden = !simple;
+    for (const button of document.querySelectorAll('[data-pv="mode"]')) {
+      const active = button.dataset.mode === (simple ? "simple" : "advanced");
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    $("#pv-mode-hint").textContent = simple ? "설명 → 장면 확인 → 영상 만들기" : "배치·컷·카메라를 직접 조절합니다.";
     for (const section of document.querySelectorAll(".pv-section")) {
       const open = layout[section.dataset.section];
       section.classList.toggle("is-collapsed", !open);
@@ -960,6 +1052,7 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
     renderSettings();
     renderSummaries();
     renderBar();
+    renderQuick();
   }
 
   function wire() {
@@ -978,7 +1071,24 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       if (!target) return;
       const index = Number(target.dataset.index);
       const action = target.dataset.pv;
-      if (action === "go-create") goCreate();
+      if (action === "mode") setMode(target.dataset.mode);
+      else if (action === "advanced") setMode("advanced", target.dataset.section);
+      else if (action === "plan-description") prepareDescription();
+      else if (action === "example") {
+        const example = SCENE_STARTERS.find((item) => item.id === target.dataset.example);
+        if (!example) return;
+        const input = $("#pv-description");
+        const next = [state.description.trim(), example.text].filter(Boolean).join("\n");
+        if (next.length > 2000) { $("#pv-plan-status").textContent = "설명이 길어서 예시를 더 넣을 수 없습니다."; return; }
+        state.description = next;
+        input.value = next;
+        state.error = "";
+        saveDraft();
+        renderDescriptionStatus();
+        renderBar();
+        input.focus();
+        input.setSelectionRange(next.length, next.length);
+      } else if (action === "go-create") goCreate();
       else if (action === "place") {
         const [jobId, id] = target.dataset.asset.split(":");
         placeAsset(jobId, id);
@@ -1059,6 +1169,35 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       }
     });
 
+    $("#pv-quick").addEventListener("change", (event) => {
+      if (event.target.id !== "pv-quick-hero" || !state.placed.length) return;
+      const before = snapshot();
+      const value = event.target.value;
+      const previous = state.placed[0];
+      if (value.startsWith("standin:")) {
+        const kind = standinKind(value.slice(8));
+        if (!kind) return;
+        state.placed[0] = { standin: kind.id, label: kind.label, dimensions: [...kind.size], x: previous.x, y: previous.y, yaw: previous.yaw };
+      } else {
+        const mesh = state.meshes.find((item) => `${item.jobId}:${item.id}` === value);
+        if (!mesh) return;
+        state.placed[0] = meshPlacement(mesh, previous);
+      }
+      state.view.auto = true;
+      saveDraft();
+      renderEditor();
+      renderStage();
+      offerUndo(before, "주인공을 바꿨습니다");
+    });
+
+    $("#pv-description").addEventListener("input", (event) => {
+      state.description = event.target.value;
+      state.error = "";
+      saveDraft();
+      renderDescriptionStatus();
+      renderBar();
+    });
+
     $("#pv-render").addEventListener("click", submit);
     $("#pv-cut-add").addEventListener("click", () => {
       const source = state.cuts[state.selectedCut];
@@ -1094,11 +1233,16 @@ export function createPreviz({ api, bridge, getJobs, getPresets, refreshJobs, op
       state.cuts = draftFromPreset(preset());
       state.settings = defaults();
       state.selectedAsset = -1;
+      state.description = "";
+      state.plannedDescription = "";
+      state.plan = null;
+      state.renderId = null;
       state.selectedCut = 0;
       state.expandedCut = -1;
       state.view.auto = true;
       saveDraft();
       renderEditor();
+      renderStage();
       offerUndo(before, "편집을 처음 상태로 초기화했습니다");
     });
     $("#pv-fit").addEventListener("click", () => {

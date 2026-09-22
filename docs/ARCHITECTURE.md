@@ -328,6 +328,13 @@ IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upl
 - 앱의 프리비즈 화면은 프리셋을 초안으로 불러와 컷 순서·길이·카메라를 고치고 `shots`로 보낸다. 고친 적이 없으면
   `shots`를 보내지 않아 기록의 `edited`가 거짓이다. 화면의 지도 카메라 계산(`electron-app/shared/previz.mjs`)은
   엔진의 식과 같아야 하며, 같은 에셋·프리셋으로 엔진이 기록한 좌표와 맞는지 테스트가 지킨다.
+- `shared/previz-start.mjs`는 지원하는 한국어 표현만 규칙으로 읽어 배치·컷 초안과 반영 요약·미지원 안내를 만든다.
+  renderer의 `previz-quick.js`가 설명 결과·간편 조절 화면을 그리며 기존 상세 편집과 같은 상태·요청 조립을 쓴다.
+  설명 적용은 렌더를 실행하거나 품질 설정을 바꾸지 않는다. 기존 Runner를 거치는 `previz` 요청만 생성한다.
+  요청의 선택 필드 `description`은 최대 2,000자 문자열로 검증해 `job.json.params`에 보관하는 메모다.
+  엔진은 설명을 재해석하지 않고 검증된 `assets`·`shots`를 사용한다. 렌더를 불러오면 메모도 복원한다.
+  localStorage 초안에는 입력 설명·마지막 적용 설명·해석 요약이 함께 남는다. 적용하지 않은 설명이 있으면
+  이전 배치를 새 설명의 결과로 렌더하지 않도록 UI에서 적용을 안내한다.
 - 샷 프리셋은 `config/presets.json`의 `previz.shotPresets`다. 장르는 코드가 아니라 이 목록이며
   컷 길이·렌즈·움직임·구도 규칙을 정한다. `focus: "hero"`는 장면의 첫 배치(에셋이나 대역)를 가리킨다.
 - 대역은 `previz.standins`다. 부품(`box`·`cylinder`·`sphere`, 원기둥은 `axis`)을 카탈로그 치수 기준

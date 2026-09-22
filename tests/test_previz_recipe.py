@@ -45,6 +45,17 @@ def test_defaults_come_from_the_config_and_can_be_overridden(tmp_path):
     assert other["look"]["clay"] is False
 
 
+def test_description_is_preserved_as_a_note_without_changing_the_render_plan(tmp_path):
+    plain, _ = prepare({}, tmp_path)
+    described, _ = prepare({"description": "  두 사람이 마주 본다.  "}, tmp_path)
+    assert described["description"] == "두 사람이 마주 본다."
+    for key in ("shots", "renderer", "width", "height", "fps", "samples", "clay"):
+        assert described[key] == plain[key]
+    for value in (None, {"prompt": "사람"}, "가" * 2001):
+        with pytest.raises(PresetError, match="설명"):
+            prepare({"description": value}, tmp_path)
+
+
 def test_placement_keeps_meters_and_degrees_as_given(tmp_path):
     store, job_id = mesh_job(tmp_path)
     normalized, _ = PREVIZ.prepare(

@@ -175,7 +175,7 @@ export function setSeconds(cut, seconds) {
 
 // 사람이 고친 장면과 컷을 엔진 요청 하나로 바꾼다. 프리셋 그대로면 컷을 보내지 않아
 // 기록에 "편집"이 붙지 않는다.
-export function buildPrevizRequest({ placed = [], cuts = [], preset = null, settings = {} }) {
+export function buildPrevizRequest({ placed = [], cuts = [], preset = null, settings = {}, description = "" }) {
   if (!placed.length) throw new Error("장면에 3D 에셋이나 대역을 하나 이상 놓아 주세요.");
   if (!cuts.length) throw new Error("컷이 하나 이상 있어야 합니다.");
   const assets = placed.map((item, index) => {
@@ -207,6 +207,7 @@ export function buildPrevizRequest({ placed = [], cuts = [], preset = null, sett
   return {
     recipe: "previz",
     params: {
+      ...(description.trim() ? { description: description.trim() } : {}),
       preset: preset?.id, assets, ...(edited ? { shots: clone(cuts) } : {}),
       renderer: settings.renderer || "eevee", width, height, fps: Number(settings.fps || 12),
       aux: settings.aux || "keys", clay: settings.clay !== false, animatic: settings.animatic !== false,

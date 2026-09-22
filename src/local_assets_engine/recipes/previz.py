@@ -185,7 +185,11 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore")
             shots.append({**shot, "focus": focus, "order": order})
 
     clay = bool_param(params, "clay", defaults["clay"])
+    description = params.get("description", "")
+    if not isinstance(description, str) or len(description) > 2000:
+        raise PresetError("장면 설명은 2,000자 이내의 문자열이어야 합니다.")
     normalized = {
+        **({"description": description.strip()} if description.strip() else {}),
         "preset": preset["id"],
         "edited": edited,
         "assets": assets,
