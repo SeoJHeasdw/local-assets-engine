@@ -15,7 +15,7 @@ from .presets import PresetError
 MAX_TAGS = 20
 RECORD_FILES = frozenset({"job.json", "job.log", ".record.lock", "job.json.tmp"})
 # 다음 작업이 예전 작업 폴더에서 다시 읽는 파일. 에셋 기록에 경로가 없어도 지우면 안 된다.
-BASE_FILES = ("mesh/input.png", "mesh/source.json", "mesh/source.npz", "mesh/audit/decoded.npz")
+BASE_FILES = ("mesh/input.png", "mesh/source.json", "mesh/source.npz", "mesh/audit/decoded.npz", "video/input.png")
 # 생성이 끝난 뒤 어떤 레시피·화면도 읽지 않는 계산 중간물. 사람이 휴지통으로 보낼 수 있다.
 INTERMEDIATE_PATTERNS = ("*/surface/*", "surface/*", "*/lod-work/*", "*/scratch/*", "scratch/*", "*/audit/*")
 CATEGORY_LABELS = {
@@ -25,6 +25,7 @@ CATEGORY_LABELS = {
 RELATION_LABELS = {
     "edit-asset": "편집", "refine-mesh": "원본 재구성", "repair-mesh": "복구",
     "image-to-3d": "3D 변환", "text-to-3d": "3D 변환",
+    "image-to-video": "영상 변환", "text-to-video": "영상 변환",
 }
 
 
@@ -174,7 +175,8 @@ def classify_job_files(job_dir: Path, job: dict[str, Any]) -> list[dict[str, Any
         if asset.get("preview"):
             known.setdefault(asset["preview"], "previews")
         for key, value in _meta_files(asset.get("meta") or {}):
-            category = ("bases" if key in ("sourceStateFile", "editBaseFile", "editStampFile", "editStampFiles")
+            category = ("bases" if key in ("sourceStateFile", "editBaseFile", "editStampFile", "editStampFiles", "inputImage")
+                        else "records" if key in ("requestFile", "resultFile")
                         else "copies" if key in ("rawFile", "optimizedFile")
                         else "previews" if key == "inspectionFile" else "results")
             known.setdefault(value, category)

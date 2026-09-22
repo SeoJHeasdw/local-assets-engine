@@ -10,6 +10,7 @@ from typing import Any
 MIN_SAMPLES = 3
 IMAGE_FIELDS = ("imageModel", "imageModelConfig", "width", "height", "count", "removeBackground", "canvas", "pixelate")
 MESH_FIELDS = ("pipelineType", "textureSize", "targetFaces", "gameFaces", "gameTextureSize", "removeBackground")
+VIDEO_FIELDS = ("videoModel", "videoModelConfig", "width", "height", "frames", "steps", "guidance")
 
 
 def condition_key(job: dict[str, Any]) -> str | None:
@@ -19,13 +20,16 @@ def condition_key(job: dict[str, Any]) -> str | None:
         "text-to-3d": IMAGE_FIELDS + MESH_FIELDS,
         "image-to-3d": MESH_FIELDS,
         "refine-mesh": MESH_FIELDS,
+        "text-to-video": IMAGE_FIELDS + VIDEO_FIELDS + ("concept",),
+        "image-to-video": VIDEO_FIELDS,
     }.get(recipe)
     if fields is None:
         return None
     values = {name: params.get(name) for name in fields}
     # 표시 이름·힌트가 바뀌어도 실행 조건은 같다.
-    if isinstance(values.get("imageModelConfig"), dict):
-        values["imageModelConfig"] = {k: v for k, v in values["imageModelConfig"].items() if k not in ("label", "hint", "license")}
+    for name in ("imageModelConfig", "videoModelConfig"):
+        if isinstance(values.get(name), dict):
+            values[name] = {k: v for k, v in values[name].items() if k not in ("label", "hint", "license")}
     return json.dumps([recipe, values], sort_keys=True, ensure_ascii=False)
 
 

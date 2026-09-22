@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .paths import PRESETS_PATH
 
-KINDS = ("2d", "3d")
+KINDS = ("2d", "3d", "video")
 STANDIN_SHAPES = ("box", "cylinder", "sphere")
 STANDIN_AXES = ("x", "y", "z")
+CAMERA_PARTS = ("shot", "angle", "move")
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 class PresetError(ValueError):
@@ -40,11 +43,34 @@ def _check_standin(standin: dict[str, Any]) -> None:
         raise PresetError(f"{standin_id}: 부품이 차지하는 범위 {[round(span, 3) for span in spans]}가 size {size}와 다릅니다.")
 
 
+def _check_video(data: dict[str, Any]) -> None:
+    models = video_models(data)
+    if len({model["id"] for model in models}) != len(models):
+        raise PresetError("영상 모델 id가 중복됩니다.")
+    for model in models:
+        # 영상 가중치는 수십 GB라 저장소의 main이 바뀌면 다른 모델을 받게 된다. 커밋으로만 고정한다.
+        if not COMMIT.match(str(model.get("revision") or "")):
+            raise PresetError(f"{model['id']}: revision은 40자리 커밋 해시여야 합니다.")
+        width, height, frames = int(model["width"]), int(model["height"]), int(model["frames"])
+        if width % 32 or height % 32 or width * height > int(model["maxPixels"]):
+            raise PresetError(f"{model['id']}: 기본 크기는 32의 배수이고 maxPixels 이하여야 합니다.")
+        if (frames - 1) % 4 or frames > int(model["maxFrames"]):
+            raise PresetError(f"{model['id']}: 프레임 수는 4의 배수 + 1이고 maxFrames 이하여야 합니다.")
+    camera = data.get("video", {}).get("camera", {})
+    for part in CAMERA_PARTS:
+        options = camera.get(part, [])
+        if len({option["id"] for option in options}) != len(options) or any(not option.get("text") for option in options):
+            raise PresetError(f"카메라 {part} 선택지의 id가 중복되거나 문장이 비었습니다.")
+    if default := data.get("video", {}).get("defaultPreset"):
+        find_preset(data, default, kind="video")
+
+
 def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
     data = json.loads(Path(path).read_text("utf-8"))
     models = image_models(data)
     if len({model["id"] for model in models}) != len(models):
         raise PresetError("이미지 모델 id가 중복됩니다.")
+    _check_video(data)
     categories = data.get("imageCategories", [])
     category_ids = {category["id"] for category in categories}
     if len(category_ids) != len(categories):
@@ -102,6 +128,21 @@ def find_image_model(data: dict[str, Any], model_id: str | None = None) -> dict[
         if model["id"] == model_id:
             return model
     raise PresetError(f"알 수 없는 이미지 모델입니다: {model_id}")
+
+
+def video_models(data: dict[str, Any]) -> list[dict[str, Any]]:
+    default = [data["videoModel"]] if data.get("videoModel") else []
+    return default + data.get("videoModels", [])
+
+
+def find_video_model(data: dict[str, Any], model_id: str | None = None) -> dict[str, Any]:
+    if not data.get("videoModel"):
+        raise PresetError("설정에 영상 모델이 없습니다.")
+    model_id = model_id or data["videoModel"]["id"]
+    for model in video_models(data):
+        if model["id"] == model_id:
+            return model
+    raise PresetError(f"알 수 없는 영상 모델입니다: {model_id}")
 
 
 def find_preset(data: dict[str, Any], preset_id: str, *, kind: str | None = None) -> dict[str, Any]:

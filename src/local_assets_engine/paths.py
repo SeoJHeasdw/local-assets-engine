@@ -12,6 +12,7 @@ CONFIG_DIR = ROOT / "config"
 PRESETS_PATH = CONFIG_DIR / "presets.json"
 ENGINES_DIR = ROOT / "engines"
 TRELLIS_DIR = ENGINES_DIR / "trellis-mac"
+VIDEO_DIR = ENGINES_DIR / "video"
 RENDERER_DIR = ROOT / "electron-app" / "renderer"
 SHARED_DIR = ROOT / "electron-app" / "shared"
 MODEL_VIEWER_JS = ROOT / "node_modules" / "@google" / "model-viewer" / "dist" / "model-viewer.min.js"
@@ -40,6 +41,11 @@ def trellis_python() -> Path:
 
 def trellis_generate_script() -> Path:
     return TRELLIS_DIR / "generate.py"
+
+
+def video_python() -> Path:
+    """The video model's own environment (scripts/setup_video.sh)."""
+    return VIDEO_DIR / ".venv" / "bin" / "python"
 
 
 def find_tool(name: str) -> Path | None:

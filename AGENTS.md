@@ -7,12 +7,13 @@
 3. 작업 트리의 기존 수정을 보존한다. 구조·코드 변경 후 `npm run check`를 실행한다.
 
 이 저장소는 javis의 생산물 모듈이다. M4 Max 36GB에서 유료 API·구독 없이 게임용 2D
-에셋과 3D 메시를 만든다. 형제 프로젝트 `edu/local-tts-engine`의 구조와 검사 방식을 따른다.
-엔진 Python은 3.13(`.venv`), TRELLIS는 별도 3.11 환경(`engines/trellis-mac/.venv`)이다.
+에셋과 3D 메시, 짧은 영상을 만든다. 형제 프로젝트 `edu/local-tts-engine`의 구조와 검사 방식을 따른다.
+엔진 Python은 3.13(`.venv`), TRELLIS는 별도 3.11 환경(`engines/trellis-mac/.venv`),
+영상 모델은 별도 3.13 환경(`engines/video/.venv`)이다.
 
 ## 생성·검수 정책
 
-- 무거운 작업은 한 줄로 하나씩 실행한다. 통합 메모리 36GB에서 이미지 모델과 TRELLIS를
+- 무거운 작업은 한 줄로 하나씩 실행한다. 통합 메모리 36GB에서 이미지 모델·TRELLIS·영상 모델을
   동시에 올리지 않는다. 앱·CLI·javis 요청은 모두 같은 엔진 줄을 쓴다.
 - 모든 생성 단계는 별도 프로세스로 `/usr/bin/time -l` 아래에서 돌고, 소요 시간과 최대
   메모리를 `job.json`에 남긴다. 측정을 우회하는 실행 경로를 만들지 않는다. 이 기록이

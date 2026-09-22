@@ -12,11 +12,16 @@
 | FLUX.2 klein 4B, Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 내려받기 완료 (2026-09-16) |
 | CPU 표면·PBR 도구(scikit-image 0.26.0, point-cloud-utils 0.34.0, xatlas) | 설치됨 (2026-09-17). `scripts/setup_trellis.sh`에 포함 |
 | Hugging Face 로그인, DINOv3 승인 | 완료 (2026-09-16). `npm run doctor`에서 3D 생성 ✓ |
+| 영상 모델 Wan2.2 TI2V 5B (환경 `engines/video`, 가중치 34.2GB) | **준비 전.** 엔진 코드는 들어갔다 (2026-09-22). 아래 5단계 |
 
 ## 0. 가중치 내려받기가 끊길 때
 
 2026-09-16 밤에는 회선이 불안정해 큰 파일이 여러 번 끊겼다(DNS 실패, 연결 초기화,
 xet 클라이언트 오류). 받다 만 파일은 이어받을 수 있으니 같은 명령을 다시 실행한다.
+
+단, 이어받기는 **일반 HTTP 방식에서만** 된다. 2026-09-22에 기본(xet) 방식으로 Wan2.2를 받다가 Ctrl+C로 끊었을 때,
+28분 동안 받은 1.86GB가 남지 않았다(xet 조각 캐시 0B, 큰 파일 0개 완료). HTTP 방식은 파일마다 `blobs/*.incomplete`로
+남겨 끊긴 곳부터 받는다. 회선이 불안정하거나 중간에 멈출 수 있으면 `HF_HUB_DISABLE_XET=1`을 붙인다.
 
 ```bash
 # xet 대신 일반 HTTP로 받고, 끊기면 다시 시도한다
@@ -30,7 +35,8 @@ for i in $(seq 1 40); do HF_HUB_DISABLE_XET=1 hf download microsoft/TRELLIS.2-4B
 hf download Tongyi-MAI/Z-Image-Turbo transformer/diffusion_pytorch_model-00001-of-00003.safetensors
 ```
 
-`npm run doctor`의 가중치 항목은 `blobs/*.incomplete`가 남아 있으면 미완료로 본다.
+`npm run doctor`의 가중치 항목은 `blobs/*.incomplete`가 남아 있으면 미완료로 본다. 영상 모델은 여기에 더해
+고정한 커밋의 스냅샷에 모든 샤드가 있는지 본다. 작은 설정 파일만 받아진 상태를 완료로 착각하지 않기 위해서다.
 
 ## 1. Hugging Face 로그인과 DINOv3 승인 — 완료 (2026-09-16)
 
@@ -123,3 +129,35 @@ Qwen3-Image는 오픈웨이트가 없다(2026-09-16 조회에서 저장소 없�
 ```
 
 채택하면 [DECISIONS](DECISIONS.md)에 날짜·출처·비교 결과를 남긴다.
+
+## 5. 영상 모델 준비 (Wan2.2 TI2V 5B)
+
+라이선스는 Apache-2.0이고 로그인·접근 승인이 필요 없다(확인 기록은 [DECISIONS](DECISIONS.md)의 "최종 영상 경로").
+엔진은 작업 안에서 이 가중치를 내려받지 않는다. 34GB를 받는 동안 대기열이 막히지 않게 먼저 받아 둔다.
+
+1. 가중치를 받는다. 34.2GB이며, 끊겨도 이어받도록 HTTP 방식으로 받는다. 커밋은 `config/presets.json`의
+   `videoModel.revision`과 같다.
+   ```bash
+   for i in $(seq 1 40); do HF_HUB_DISABLE_XET=1 .venv/bin/hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
+     --revision b8fff7315c768468a5333511427288870b2e9635 && break; sleep 15; done
+   ```
+2. 실행 환경을 만든다. `engines/video/.venv`(Python 3.13)에 torch 2.14, diffusers 0.40.0, transformers 5.17.0,
+   accelerate, ftfy, sentencepiece, imageio-ffmpeg를 설치한다. torch는 엔진과 같은 버전이라 uv 캐시를 쓰고,
+   나머지를 새로 받는다(수백 MB 안쪽).
+   ```bash
+   scripts/setup_video.sh
+   ```
+3. `npm run doctor`에서 "영상 생성"이 ✓인지 본다. 가중치 항목이 ✗이면 빠진 파일 이름이 함께 나온다.
+4. 첫 측정. 같은 설명·시드로 텍스트 모드와 컨셉 이미지→영상을 한 번씩 만든다. 기본값은 모델 카드 값
+   (1280×704, 121프레임, 50스텝)이라 한 편에 오래 걸릴 수 있다. 앱의 환경 화면 → 측정 기록이나 `npm run bench`로
+   단계별 시간과 최대 메모리를 본다.
+   ```bash
+   .venv/bin/python -m local_assets_engine run text-to-video --params '{"subject":"a red fox in a snowy pine forest",
+     "motion":"the fox trots toward the camera","camera":{"shot":"close-up","angle":"low","move":"dolly-in"},"seed":42,"concept":false}'
+   .venv/bin/python -m local_assets_engine run text-to-video --params '{"subject":"a red fox in a snowy pine forest",
+     "motion":"the fox trots toward the camera","camera":{"shot":"close-up","angle":"low","move":"dolly-in"},"seed":42}'
+   ```
+   메모리가 모자라 끊기면 `"width":832,"height":480` 또는 `"frames":81`로 줄인 결과를 같은 시드로 만든다.
+   결과는 `output/jobs/<작업 ID>/video/`의 `video.mp4`, 보낸 문장·설정·스텝별 시간은 같은 폴더의 `result.json`이다.
+5. 결과를 보고 기본값(해상도·프레임·스텝)을 고른다. 바꾸면 `config/presets.json`의 `videoModel`을 고치고
+   비교 결과를 [DECISIONS](DECISIONS.md)에 남긴다.

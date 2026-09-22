@@ -27,9 +27,11 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `import-image` | 로컬 이미지 가져오기 | 편집하거나 3D로 만들 이미지 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
 | `previz` | 완성된 메시·회색 대역 배치 → 샷 프리셋을 카메라 값으로 풀기 → 스케치 렌더 | 샷별 애니매틱·깊이·윤곽과 샷 값 |
+| `text-to-video` | 설명 → 컨셉 이미지(첫 프레임) → Wan2.2 TI2V 5B | 5초 720p MP4, 첫·가운데·끝 프레임 |
+| `image-to-video` | 고른 이미지(첫 프레임) → Wan2.2 TI2V 5B | 5초 720p MP4, 첫·가운데·끝 프레임 |
 
 이미지 기본 모델은 FLUX.2 klein 4B(선택: Z-Image Turbo), 배경 제거는 BiRefNet, 3D는 TRELLIS.2 Mac 포트, 프리비즈
-스케치는 Blender EEVEE다. 종류 프리셋(아이템 아이콘, 캐릭터 스프라이트, 픽셀 아트, UI 요소,
+스케치는 Blender EEVEE, 영상은 Wan2.2 TI2V 5B(diffusers·MPS)다. 종류 프리셋(아이템 아이콘, 캐릭터 스프라이트, 픽셀 아트, UI 요소,
 배경, 3D 소품)과 샷 프리셋(게임 트레일러), 프리비즈 대역(사람, 승용차, 벽, 건물), 모델·기본값은
 `config/presets.json`에서 고친다.
 자동 검사(물체 유무, 면적, 가장자리 닿음)는 참고 신호다. 고르는 것은 사람이 한다(후보 비교·즐겨찾기).
@@ -125,20 +127,41 @@ Metal 경로의 결과에는 적용하지 않는다. 서버가 이전 코드를 
   --params '{"source": {"jobId": "<기존 3D 작업 ID>", "assetId": "a02"}}'
 ```
 
+영상은 첫 프레임에서 시작한다. 구도(샷 크기·앵글)는 첫 프레임과 영상 설명에, 카메라 움직임은 영상 설명에만
+들어간다. 작업의 `params.videoPrompt`와 영상 에셋의 `meta.prompt`가 모델에 실제로 보낸 문장이다. 고쳐서 다시
+보낼 때는 `videoPrompt`에 넣으면 조립하지 않고 그대로 쓴다. 기본값(1280×704, 121프레임, 50스텝)은 모델 카드 값이며
+이 기기에서 측정한 뒤 정한다. 준비는 [SETUP](docs/SETUP.md)의 5단계다.
+
+```bash
+# 설명 → 컨셉 이미지 → 영상. 가까이·아래에서 올려다보며 다가가기
+.venv/bin/python -m local_assets_engine run text-to-video --params '{"subject":"a red fox in a snowy pine forest",
+  "motion":"the fox trots toward the camera","camera":{"shot":"close-up","angle":"low","move":"dolly-in"},"seed":42}'
+
+# 같은 시드로 컨셉 이미지 없이 텍스트 모드만 (비교용)
+.venv/bin/python -m local_assets_engine run text-to-video --params '{"subject":"a red fox in a snowy pine forest",
+  "motion":"the fox trots toward the camera","camera":{"shot":"close-up","angle":"low","move":"dolly-in"},"seed":42,"concept":false}'
+
+# 보관함의 이미지 → 영상
+.venv/bin/python -m local_assets_engine run image-to-video \
+  --params '{"source":{"jobId":"<이미지 작업 ID>","assetId":"a01"},"motion":"the knight raises a sword","camera":{"move":"orbit"}}'
+```
+
+카메라 선택지는 `config/presets.json`의 `video.camera`(샷 크기 5, 앵글 5, 움직임 11)다.
+
 ## 폴더 안내
 
 | 폴더 | 책임 |
 | --- | --- |
 | `src/local_assets_engine/` | 엔진: HTTP 서버, 작업 기록, 러너, 측정, 진단, CLI |
-| `src/local_assets_engine/recipes/` | 2D·3D·프리비즈 레시피와 입력 검증 |
+| `src/local_assets_engine/recipes/` | 2D·3D·프리비즈·영상 레시피와 입력 검증 |
 | `src/local_assets_engine/tools/` | 단계 프로세스: BiRefNet 배경 제거, Blender 메시 정리·프리비즈 렌더 |
-| `src/local_assets_engine/workers/` | TRELLIS 환경(Python 3.11)에서 도는 실행기 |
+| `src/local_assets_engine/workers/` | TRELLIS 환경(Python 3.11)과 영상 환경(3.13)에서 도는 실행기 |
 | `electron-app/` | 앱. `main`은 엔진 수명·창·IPC, `renderer`는 화면, `shared`는 공통 계산 |
-| `config/presets.json` | 모델, 종류 프리셋, 3D 기본값, 프리비즈 샷 프리셋·대역 |
-| `scripts/` | TRELLIS 설치, 앱 구조 검사 |
+| `config/presets.json` | 모델, 종류 프리셋, 3D 기본값, 프리비즈 샷 프리셋·대역, 영상 카메라 선택지 |
+| `scripts/` | TRELLIS·영상 환경 설치, 앱 구조 검사 |
 | `tests/` | Python 테스트와 `tests/electron/` 앱 테스트 |
 | `docs/` | 구조·데이터 계약, 채택 근거, 수동 준비 |
-| `engines/` | 외부 엔진 클론. Git에서 제외하고 `scripts/setup_trellis.sh`가 만든다 |
+| `engines/` | 외부 엔진 클론과 영상 환경. Git에서 제외하고 `scripts/setup_trellis.sh`·`setup_video.sh`가 만든다 |
 
 ## 로컬 데이터
 

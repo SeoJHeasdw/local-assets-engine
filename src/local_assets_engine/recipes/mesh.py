@@ -10,20 +10,18 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from .. import imaging
-from ..jobs import JobNotFound
 from ..measure import StageFailed, parse_progress, was_killed
 from ..paths import find_tool, trellis_generate_script, trellis_python
 from ..presets import PresetError, find_preset
 from ..runner import UnitTracker
 from .base import Recipe, bool_param, choice_param, float_param, int_param, seed_param
-from .image import generate_candidates, prepare_image_params, run_background_removal
+from .image import generate_candidates, prepare_image_params, resolve_image_source, run_background_removal
 
 if TYPE_CHECKING:
     from ..jobs import JobStore
     from ..runner import JobContext
 
 WORKER = Path(__file__).resolve().parents[1] / "workers" / "trellis_runner.py"
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 class TrellisProgress:
@@ -241,27 +239,8 @@ def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str |
 
 
 def _prepare_image_to_3d(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") -> tuple[dict[str, Any], str]:
-    if params.get("uploadId"):
-        from ..uploads import resolve_upload
-        params = {**params, "imagePath": str(resolve_upload(store, params["uploadId"]))}
-    source = params.get("source")
-    if source:
-        job_id, asset_id = str(source.get("jobId")), str(source.get("assetId"))
-        try:
-            job = store.load(job_id)
-            asset = next(a for a in job["assets"] if a["id"] == asset_id and a["kind"] == "image")
-            image_path = store.resolve_file(job_id, asset["file"])
-        except (JobNotFound, StopIteration) as error:
-            raise PresetError("3D로 바꿀 이미지 후보를 찾을 수 없습니다.") from error
-        subject = job["params"].get("subject") or asset_id
-        source_ref: dict[str, str] | None = {"jobId": job_id, "assetId": asset_id}
-    else:
-        raw = str(params.get("imagePath") or "")
-        image_path = Path(raw).expanduser()
-        if not raw or not image_path.is_absolute() or not image_path.is_file() \
-                or image_path.suffix.lower() not in IMAGE_SUFFIXES:
-            raise PresetError("PNG·JPG·WEBP 이미지 파일의 절대 경로가 필요합니다.")
-        subject, source_ref = " ".join(str(params.get("name") or image_path.stem).split())[:160], None
+    image_path, subject, source_ref = resolve_image_source(
+        params, store, not_found="3D로 바꿀 이미지 후보를 찾을 수 없습니다.")
     normalized = {
         "subject": subject,
         "imagePath": str(image_path),

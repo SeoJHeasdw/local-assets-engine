@@ -16,13 +16,14 @@
 | `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
 | `src/local_assets_engine/workers/quality_*.py` | 원본 표면 재구성, 형상 오차 제한 감축, 최종 UV·PBR 굽기 |
 | `src/local_assets_engine/workers/gltf_export.py` | 좌표·UV·PBR GLB 계약, 이전 KDTree 원본 복구 |
+| `src/local_assets_engine/workers/video_runner.py` | 영상 환경에서 Wan2.2 TI2V를 diffusers(MPS)로 실행, 파이프라인에 보낸 값 기록 |
 | `src/local_assets_engine/uploads.py` | 20MB·1,677만 픽셀 이하 로컬 이미지 가져오기, 경로 없는 ID |
 | `tools/asset_edit.py`, `tools/edit_pixels.mjs` | 측정 프로세스에서 표면 편집 적용, 원본 형상 버퍼 보존 |
 | `electron-app/shared/editing.mjs`, `glb.mjs` | 미리보기·최종 저장이 공유하는 레이어 합성(`renderEdit`)·영역 마스크·표면 투영과 GLB 읽기 |
 | `electron-app/renderer/editor.js`, `edit-preview.js`, `drafts.js` | 편집 공간(레이어·손잡이·브러시·작업 내역), 미리보기 Worker, 로컬 임시 편집 보관 |
 | `src/local_assets_engine/library.py` | 즐겨찾기·태그·컬렉션 검증, 버전 계보, 작업 폴더 파일 분류(보관 용량) |
-| `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 픽셀화, 자동 검사 |
-| `presets.py`, `config/presets.json` | 모델, 종류 프리셋, 3D 기본값 |
+| `src/local_assets_engine/imaging.py` | 모델 없는 이미지 후처리: 캔버스 맞춤, 영상 첫 프레임 자르기, 픽셀화, 자동 검사 |
+| `presets.py`, `config/presets.json` | 이미지·영상 모델, 종류 프리셋, 3D 기본값, 영상 카메라 선택지 |
 | `doctor.py`, `bench.py`, `cli.py` | 진단, 측정 요약, 명령줄 |
 | `estimates.py` | 같은 생성 조건의 성공 기록 중앙값과 대기열 완료 예상 |
 | `electron-app/renderer/library-batch.js` | 에셋 다중 선택, 일괄 정리, 작업 단위 휴지통 확인 |
@@ -41,6 +42,7 @@ javis · CLI   ──HTTP───▶        │
      ┌──────────────┬───────────┴────────┬─────────────────────────┬─────────────────┐
   mflux 이미지   tools.remove_bg     workers/trellis_runner     tools.blender_post   gltfpack
   (.venv)        (.venv, torch MPS)  (trellis-mac/.venv 3.11)   (.venv, bpy)
+     └─ workers/video_runner (engines/video/.venv 3.13, diffusers · torch MPS)
 ```
 
 - 앱은 이미 응답하는 엔진이 있으면 그대로 쓰고, 직접 띄운 엔진만 앱이 끝날 때 끈다.
@@ -74,7 +76,8 @@ javis · CLI   ──HTTP───▶        │
   끌어다 놓은 파일 경로는 preload의 `window.assetsStudio`로만 쓴다.
 - 화면의 `../shared/x.mjs` import는 URL에서 `/shared/x.mjs`가 된다. model-viewer는
   `/vendor/model-viewer.min.js`로 제공하며 없으면 3D 미리보기만 빠진다.
-- `workers/`는 TRELLIS 환경에서 실행되므로 `local_assets_engine`을 import하지 않는다.
+- `workers/`는 TRELLIS·영상 환경에서 실행되므로 `local_assets_engine`을 import하지 않는다. 엔진의 doctor는
+  `video_runner`의 표준 라이브러리 함수(`missing_weight_files`)만 가져다 쓰고, torch·diffusers는 함수 안에서만 import한다.
 - `npm run check:architecture`가 경로 단절·계층 역참조·순환·화면 의존성을 검사한다.
 
 ## HTTP API
@@ -117,6 +120,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |
 | 컷 항목 | `id`(영문·숫자·-·_ 32자), `label`, `purpose`, `move`, `focus`(`hero`·`scene`·에셋 id), `lens`·`lensEnd` 8~300, `seconds` 0.2~60, `ease`, `framing`(`distance`·`azimuth`·`height`·`targetHeight`·`roll`와 각 `...End`, `targetOffset`) | 프리셋 값 |
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
+| `text-to-video` | `subject`(필수), `motion`, `camera`, `style`, `preset`(`kind: "video"` 프리셋), `imageModel`, `seed`, `concept`, `videoPrompt`, `negativePrompt`, 영상 입력 | `video-cinematic`, 컨셉 이미지 1장, `concept: true` |
+| `image-to-video` | `uploadId`, `imagePath`(절대 경로), `source: {jobId, assetId}`(이미지) 중 하나, `subject`(없으면 원본의 설명·파일 이름), `motion`, `camera`, `style`, `seed`, `videoPrompt`, `negativePrompt`, 영상 입력 | 원본이 세로면 세로 크기 |
+| 영상 입력 | `videoModel`(등록된 id), `width`·`height` 256~2048(32의 배수로 내림, 곱이 `maxPixels` 이하), `frames` 5~`maxFrames`(4k+1로 내림), `steps` 1~100, `guidance` 1~20. `camera`는 `{shot, angle, move}`에 `video.camera`의 id | 모델 설정: 1280×704(세로 704×1280), 121프레임, 24fps, 50스텝, 5.0, 공식 부정 프롬프트 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
 
@@ -164,11 +170,12 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
 | `owner` | 실행·대기를 맡은 `{pid, heartbeat}`. 시작 복구가 살아 있는 다른 엔진의 작업을 닫지 않게 한다 |
-| `assets[].kind` / `role` | `image`·`mesh`·`shot` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D용 컨셉), `final`(메시) |
+| `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
 | `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
 | 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`), `label`, `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
+| 영상 `meta` | 아래 영상 계약 참고 |
 
 - 러너와 API가 같은 기록을 고치므로 모든 수정은 `JobStore.update`에서 작업별 파일 잠금과
   스레드 잠금을 잡고 다시 읽은 뒤 임시 파일에 쓰고 교체한다.
@@ -193,8 +200,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `edit`·`import` | `python -m local_assets_engine.tools.asset_edit` + Node.js 픽셀 계산 | 원본을 새 작업에 복사하고 새 버전 저장 |
 | `repair` | `python workers/gltf_export.py --input ... --output ...` | 없음. 기존 KDTree 원본을 새 작업으로 복구 |
 | `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
+| `video` | `engines/video/.venv/bin/python workers/video_runner.py --request video/request.json` | `@@progress` JSON 줄만(가중치 확인·문장 해석·적재·잡음 제거 스텝·복원·저장). 모델 적재의 tqdm 막대는 무시 |
 
-- 이미지 생성과 3D 생성은 GPU 혼잡 신호(`kIOGPUCommandBufferCallbackErrorTimeout`,
+- 이미지·3D·영상 생성은 GPU 혼잡 신호(`kIOGPUCommandBufferCallbackErrorTimeout`,
   `Command buffer execution failed`, `Insufficient Memory`)로 끊기면 10초 뒤 한 번 다시
   시도한다. 다른 원인의 실패는 바로 멈춘다. 실패한 시도의 측정도 `processes`에 남으므로
   한 단계에 기록이 여러 개일 수 있고, `seconds`와 `peakMemoryBytes`는 단계 전체 기준이다.
@@ -246,6 +254,39 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 이미 손실된 형상은 되살리지 못한다. 이전 `audit: true` 작업의 `mesh/audit/decoded.npz`는
 `refine-mesh`의 원본으로 사용할 수 있다. 새 생성은 `audit` 여부와 관계없이 원본을 항상 남긴다.
 진단용 `trellis_audit.py`는 이전 경로 재현용이며 일반 생성 기본 경로는 아니다.
+
+## 영상 계약
+
+1. `text-to-video`는 영상 프리셋(`kind: "video"`)으로 컨셉 이미지 1장을 영상 크기 그대로 만들고(`concept` 에셋),
+   `image-to-video`는 고른 이미지를 쓴다. 엔진이 목표 비율로 가운데를 잘라 줄이고(늘이지 않음) 투명 부분은 흰색에
+   얹어 `video/input.png`로 저장한다. 자른 영역은 `meta.crop`이다. `concept: false`면 첫 프레임 없이 TI2V의 텍스트
+   모드로 만든다(같은 시드 비교용).
+2. 첫 프레임이 구도를 정하므로 카메라의 샷 크기·앵글은 컨셉 이미지 프롬프트에도 넣고, 움직임은 영상 프롬프트에만 넣는다.
+   영상 프롬프트는 `주제. 움직임. 카메라 문장. 스타일.` 순서로 조립해 `params.videoPrompt`에 두고 조각을
+   `videoPromptParts`에 남긴다. 요청에 `videoPrompt`가 있으면 조립하지 않고 공백만 정리해 그대로 보낸다(`videoPromptEdited`).
+3. 레시피가 `video/request.json`을 쓰고 측정 단계 `video`에서 worker를 실행한다. worker는 고정된 커밋의 스냅샷이
+   완전한지(샤드까지) 먼저 확인하고, 없으면 내려받지 않고 SETUP 안내로 실패한다(`HF_HUB_OFFLINE`, `local_files_only`).
+4. UMT5로 문장을 바꾼 뒤 인코더를 내리고, DiT(bf16)를 올려 잡음을 제거한 뒤 내리고, VAE(float32)로 복원한다.
+   `image-to-video`는 `WanImageToVideoPipeline`의 `expand_timesteps` 경로로 첫 프레임 latent를 고정한다. 시드는 CPU
+   생성기라 같은 버전에서 재현된다.
+5. worker가 `video/video.mp4`(H.264, CRF·프리셋은 모델 설정의 `encode`), `first.png`·`middle.png`·`last.png`,
+   `result.json`(보낸 값 `sent`, 단계별 초, 스텝별 초, MPS 드라이버 최대 할당, 버전)을 쓴다.
+6. 엔진이 영상을 `pending` 에셋(`kind: "video"`, `role: "final"`)으로 등록한다. 미리보기는 가운데 프레임이다.
+
+| 영상 `meta` 필드 | 값 |
+| --- | --- |
+| `model`, `repo`, `revision`, `mode` | 모델 id, 저장소·커밋, `i2v`·`t2v` |
+| `pipeline`, `scheduler`, `flowShift` | worker가 실제로 쓴 파이프라인·스케줄러와 flow shift |
+| `prompt`, `negativePrompt` | 파이프라인이 받은 문장(worker 반환값). 다음 요청의 `videoPrompt`로 고쳐 보낸다 |
+| `promptEdited`, `promptParts`, `camera` | 사람이 고친 문장인지, 조립 조각(주제·움직임·카메라 문장·스타일), 고른 카메라 id |
+| `width`, `height`, `frames`, `fps`, `seconds`, `steps`, `guidance`, `seed` | 보낸 생성 조건 |
+| `inputImage`, `crop` | 첫 프레임 파일(`video/input.png`, 보관 분류 `bases`)과 원본에서 자른 영역 |
+| `firstFrame`, `lastFrame` | 첫·끝 프레임 PNG. 끝 프레임은 다음 클립의 시작 이미지로 쓸 수 있다 |
+| `requestFile`, `resultFile` | `video/request.json`, `video/result.json`(스텝별 초 포함, 분류 `records`) |
+| `timings`, `mpsPeakBytes`, `versions` | worker 안의 단계별 초, MPS 드라이버 최대 할당(표본), Python·torch·diffusers·transformers 버전 |
+| `source`, `conceptAsset` | 버전 부모: 원본 이미지 또는 같은 작업의 컨셉 |
+
+단계 측정(`/usr/bin/time -l`)이 최대 메모리의 기준이다. `mpsPeakBytes`는 worker가 스텝마다 읽은 참고값이다.
 
 ## 생성 UI와 표면 편집 계약
 
@@ -304,18 +345,18 @@ IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upl
   태그 추가·제거·교체는 각 에셋 API를 순서대로 호출하고, 실패한 항목만 선택을 유지한다. 태그 추가·제거는
   서버의 작업 잠금 안에서 최신 목록을 읽어 적용한다. 작업 휴지통은 에셋이 속한 작업 id를 중복 제거한 뒤,
   같은 작업의 미선택 에셋·원본까지 옮긴다는 확인 창을 거쳐 기존 main 검증 통로를 쓴다.
-- 예상 시간은 이미지·설명→3D·이미지→3D·재구성의 같은 모델/출력 조건에서 완료된 기록 3개 이상을 쓴다.
+- 예상 시간은 이미지·설명→3D·이미지→3D·재구성·설명→영상·이미지→영상의 같은 모델/출력 조건에서 완료된 기록 3개 이상을 쓴다.
   실패·재시도·로그에 다운로드가 확인되는 기록은 제외하고 단계 시간 합계의 중앙값에서 처리 경과를 뺀다.
   대기 작업에는 앞선 작업의 남은 시간도 더한다. 기록 부족·중지·예상 초과 작업이 앞에 있으면 완료 예상은
   `null`이다. 주제별 난이도·다른 앱의 GPU 사용은 예측하지 못하므로 UI에는 분 단위의 대략적인 값만 표시한다.
 
-- 버전의 부모는 `meta.source`(편집·재구성·복구·이미지→3D)이고, 없으면 같은 작업의 `meta.conceptAsset`(설명→3D)이다.
+- 버전의 부모는 `meta.source`(편집·재구성·복구·이미지→3D·이미지→영상)이고, 없으면 같은 작업의 `meta.conceptAsset`(설명→3D·설명→영상)이다.
   `lineage`는 현재 에셋에서 뿌리까지 올라간 뒤 뿌리의 모든 자손을 만든 순서로 펼친다. 부모 작업이 지워졌으면
   `missingParent`로 표시한다.
 - 작업 폴더의 파일 분류: 에셋 `file`·메타의 기타 경로 → `results`, `sourceStateFile`·`editBaseFile`·`editStamp*`·
-  `mesh/input.png`·`mesh/source.json`·`mesh/audit/decoded.npz` → `bases`(다시 만들기에 필요), `rawFile`·`optimizedFile` →
-  `copies`, `preview`·`inspection*` → `previews`, `job.json`·`job.log`·`*.stats.json`·`*.bake.json`·요청/통계 JSON →
-  `records`, `*/surface/*`·`*/lod-work/*`·`*/scratch/*`·`*/audit/*`(나머지) → `intermediate`, 그 밖은 `other`.
+  `mesh/input.png`·`mesh/source.json`·`mesh/audit/decoded.npz`·`video/input.png`(`inputImage`) → `bases`(다시 만들기에 필요),
+  `rawFile`·`optimizedFile` → `copies`, `preview`·`inspection*` → `previews`, `job.json`·`job.log`·`*.stats.json`·`*.bake.json`·
+  요청/통계 JSON·`requestFile`·`resultFile` → `records`, `*/surface/*`·`*/lod-work/*`·`*/scratch/*`·`*/audit/*`(나머지) → `intermediate`, 그 밖은 `other`.
   휴지통으로 보낼 수 있는 것은 `intermediate`와 작업 폴더 전체뿐이다. 다른 작업이 `meta.source`로 가리키는 작업은
   `usedBy`에 나타나고, 폴더 전체를 보내면 그 버전의 계보에서 부모가 빠진다.
 

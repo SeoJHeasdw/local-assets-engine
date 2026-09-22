@@ -12,14 +12,16 @@ from pathlib import Path
 from typing import Any
 
 from .paths import (
-    MODEL_VIEWER_JS, child_env, engine_bin, find_tool, trellis_generate_script, trellis_python,
+    MODEL_VIEWER_JS, child_env, engine_bin, find_tool, trellis_generate_script, trellis_python, video_python,
 )
 from .presets import image_models, load_presets
+from .workers.video_runner import missing_weight_files
 
 DINOV3_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 # deps/mtlmesh는 cumesh, deps/mtlgemm은 flex_gemm이라는 이름으로 설치된다.
 TRELLIS_METAL_MODULES = ("mtldiffrast", "mtlbvh", "cumesh", "flex_gemm", "o_voxel")
 QUALITY_MODULES = ("point_cloud_utils", "skimage", "xatlas", "scipy", "trimesh")
+VIDEO_MODULES = ("torch", "diffusers", "transformers", "accelerate", "ftfy", "imageio_ffmpeg")
 
 
 def hub_cache() -> Path:
@@ -35,6 +37,15 @@ def is_cached(repo: str) -> bool:
         return False
     # 내려받는 중이면 blobs에 .incomplete 파일이 남는다.
     return not any((folder / "blobs").glob("*.incomplete"))
+
+
+def snapshot_missing(repo: str, revision: str) -> list[str]:
+    """Files the pinned snapshot still lacks. Works for partial downloads that left
+    no ``.incomplete`` file behind (xet transfers)."""
+    folder = hub_cache() / f"models--{repo.replace('/', '--')}"
+    if any((folder / "blobs").glob("*.incomplete")):
+        return ["받는 중인 파일(.incomplete)"]
+    return missing_weight_files(folder / "snapshots" / revision)
 
 
 def _hf_logged_in() -> bool:
@@ -105,6 +116,16 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
                             f"print(','.join(n for n in {QUALITY_MODULES!r} if not u.find_spec(n)) or 'ready')")
     add("qualityProcessing", "고품질 표면 재구성·PBR 도구", ok and detail == "ready",
         detail=detail, hint="scripts/setup_trellis.sh")
+    if video := presets.get("videoModel"):
+        ok, detail = _run_python(video_python(),
+                                "import importlib.util as u; "
+                                f"print(','.join(n for n in {VIDEO_MODULES!r} if not u.find_spec(n)) or 'ready')")
+        add("videoEngine", f"{video['label']} 실행 환경 (diffusers)", ok and detail == "ready",
+            detail=detail, hint="scripts/setup_video.sh")
+        missing = snapshot_missing(video["repo"], video["revision"])
+        add("videoWeights", f"{video['label']} 가중치 (@{video['revision'][:8]})", not missing,
+            detail=", ".join(missing[:2]) + (f" 외 {len(missing) - 2}개" if len(missing) > 2 else ""),
+            hint="docs/SETUP.md의 영상 모델 내려받기 명령 (작업 안에서는 받지 않습니다)")
 
     if deep:
         ok, detail = _run_python(Path(sys.executable), "import torch; print(torch.backends.mps.is_available())")
@@ -125,6 +146,8 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         "gameReady": ready("gltfpack"),
         # 프리비즈는 Blender만 쓴다. 이미지·3D 모델이 없어도 샷을 잡을 수 있다.
         "previz": ready("bpy"),
+        # 가중치는 작업 안에서 내려받지 않으므로 받아 둔 것까지 갖춰야 만들 수 있다.
+        "video": ready("appleSilicon", "videoEngine", "videoWeights", "mps") if "videoEngine" in checks else False,
     }
     return {
         "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -141,6 +164,7 @@ CAPABILITY_LABELS = {
     "meshTexture": "원본 PBR 텍스처 굽기",
     "gameReady": "게임용 GLB 최적화",
     "previz": "프리비즈 샷 렌더",
+    "video": "영상 생성",
 }
 
 

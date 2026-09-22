@@ -10,8 +10,9 @@ from local_assets_engine.recipes.mesh import prepare_mesh_params
 
 def test_repository_presets_are_valid():
     data = load_presets()
-    assert {preset["kind"] for preset in data["presets"]} == {"2d", "3d"}
+    assert {preset["kind"] for preset in data["presets"]} == {"2d", "3d", "video"}
     assert find_preset(data, "prop-3d")["kind"] == "3d"
+    assert find_preset(data, data["video"]["defaultPreset"], kind="video")["removeBackground"] is False
     with pytest.raises(PresetError):
         find_preset(data, "item-icon", kind="3d")
 

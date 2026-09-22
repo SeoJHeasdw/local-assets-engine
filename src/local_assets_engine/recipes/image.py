@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from .. import imaging
+from ..jobs import JobNotFound
 from ..paths import engine_bin
-from ..presets import build_prompt, find_image_model, find_preset
+from ..presets import PresetError, build_prompt, find_image_model, find_preset
 from .base import Recipe, bool_param, dimension_param, int_param, seed_param
 
 if TYPE_CHECKING:
@@ -24,6 +25,34 @@ DEFAULT_PRESET = "item-icon"
 MAX_CANDIDATES = 8
 PIXEL_PREVIEW_PX = 512
 SEED_SUFFIX = re.compile(r"_seed_(\d+)\.png$")
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def resolve_image_source(params: dict[str, Any], store: "JobStore", *, not_found: str) -> tuple[Path, str, dict[str, str] | None]:
+    """An input image from ``uploadId``, ``source: {jobId, assetId}`` or an absolute ``imagePath``.
+
+    Returns the file, a subject for titles and prompts, and the source reference
+    (only for library images) that becomes the new asset's parent version.
+    """
+    if params.get("uploadId"):
+        from ..uploads import resolve_upload
+        params = {**params, "imagePath": str(resolve_upload(store, params["uploadId"]))}
+    source = params.get("source")
+    if source:
+        job_id, asset_id = str(source.get("jobId")), str(source.get("assetId"))
+        try:
+            job = store.load(job_id)
+            asset = next(a for a in job["assets"] if a["id"] == asset_id and a["kind"] == "image")
+            image_path = store.resolve_file(job_id, asset["file"])
+        except (JobNotFound, StopIteration) as error:
+            raise PresetError(not_found) from error
+        return image_path, job["params"].get("subject") or asset_id, {"jobId": job_id, "assetId": asset_id}
+    raw = str(params.get("imagePath") or "")
+    image_path = Path(raw).expanduser()
+    if not raw or not image_path.is_absolute() or not image_path.is_file() \
+            or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+        raise PresetError("PNG·JPG·WEBP 이미지 파일의 절대 경로가 필요합니다.")
+    return image_path, " ".join(str(params.get("name") or image_path.stem).split())[:160], None
 
 
 def prepare_image_params(
@@ -192,7 +221,8 @@ def _prepare(params: dict[str, Any], presets: dict[str, Any], _store: "JobStore"
 
 
 def _run(ctx: "JobContext") -> None:
-    role = "concept" if find_preset(ctx.presets, ctx.params["preset"])["kind"] == "3d" else "candidate"
+    # 3D·영상 프리셋의 결과는 다음 단계의 입력으로 고르는 컨셉이다.
+    role = "concept" if find_preset(ctx.presets, ctx.params["preset"])["kind"] in ("3d", "video") else "candidate"
     generate_candidates(ctx, ctx.params, role=role)
 
 

@@ -62,6 +62,66 @@
       "sizeMeters": 1.0
     }
   },
+  "videoModel": {
+    "id": "wan2.2-ti2v-5b",
+    "label": "Wan2.2 TI2V 5B",
+    "hint": "첫 프레임 이미지와 설명으로 5초 720p 영상",
+    "repo": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    "revision": "b8fff7315c768468a5333511427288870b2e9635",
+    "license": "Apache-2.0",
+    "runtime": "diffusers",
+    "dtype": "bfloat16",
+    "vaeDtype": "float32",
+    "width": 1280,
+    "height": 704,
+    "maxPixels": 901120,
+    "frames": 121,
+    "maxFrames": 121,
+    "fps": 24,
+    "steps": 50,
+    "guidance": 5.0,
+    "maxSequenceLength": 512,
+    "negativePrompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+    "encode": {
+      "codec": "libx264",
+      "crf": 16,
+      "preset": "slow",
+      "pixelFormat": "yuv420p"
+    }
+  },
+  "videoModels": [],
+  "video": {
+    "defaultPreset": "video-cinematic",
+    "camera": {
+      "shot": [
+        { "id": "extreme-wide", "label": "아주 넓게", "text": "extreme wide shot" },
+        { "id": "wide", "label": "넓게", "text": "wide shot" },
+        { "id": "medium", "label": "중간", "text": "medium shot" },
+        { "id": "close-up", "label": "가까이", "text": "close-up shot" },
+        { "id": "extreme-close-up", "label": "아주 가까이", "text": "extreme close-up shot" }
+      ],
+      "angle": [
+        { "id": "eye-level", "label": "눈높이", "text": "eye-level angle" },
+        { "id": "low", "label": "아래에서 올려다보기", "text": "low-angle shot looking up" },
+        { "id": "high", "label": "위에서 내려다보기", "text": "high-angle shot looking down" },
+        { "id": "top-down", "label": "바로 위", "text": "top-down overhead view" },
+        { "id": "dutch", "label": "기울임", "text": "dutch angle, tilted horizon" }
+      ],
+      "move": [
+        { "id": "static", "label": "고정", "text": "static camera, locked-off shot" },
+        { "id": "dolly-in", "label": "다가가기", "text": "the camera slowly dollies in toward the subject" },
+        { "id": "dolly-out", "label": "물러나기", "text": "the camera slowly dollies out, revealing the surroundings" },
+        { "id": "pan-left", "label": "왼쪽으로 돌리기", "text": "the camera pans slowly to the left" },
+        { "id": "pan-right", "label": "오른쪽으로 돌리기", "text": "the camera pans slowly to the right" },
+        { "id": "tilt-up", "label": "위로 올려보기", "text": "the camera tilts up" },
+        { "id": "tilt-down", "label": "아래로 내려보기", "text": "the camera tilts down" },
+        { "id": "orbit", "label": "주위 돌기", "text": "the camera orbits around the subject" },
+        { "id": "tracking", "label": "따라가기", "text": "tracking shot, the camera follows the subject" },
+        { "id": "crane-up", "label": "위로 솟기", "text": "the camera cranes up and rises above the scene" },
+        { "id": "handheld", "label": "핸드헬드", "text": "handheld camera with subtle natural shake" }
+      ]
+    }
+  },
   "previz": {
     "renderers": ["eevee", "workbench", "cycles"],
     "auxModes": ["keys", "all", "none"],
@@ -352,6 +412,39 @@
         "height": 1024,
         "padding": 0.08
       }
+    },
+    {
+      "id": "video-cinematic",
+      "kind": "video",
+      "label": "실사 영화",
+      "hint": "실사 영화 장면으로 첫 프레임을 만든 뒤 영상으로",
+      "prompt": "Cinematic film still of {subject}, photorealistic, natural motivated lighting, realistic materials and textures, coherent perspective, shallow depth of field, widescreen composition, no text, no watermark",
+      "videoStyle": "cinematic live-action film, photorealistic, natural lighting",
+      "width": 1280,
+      "height": 704,
+      "removeBackground": false
+    },
+    {
+      "id": "video-anime",
+      "kind": "video",
+      "label": "애니메이션",
+      "hint": "애니 작화로 첫 프레임을 만든 뒤 영상으로",
+      "prompt": "2D anime film frame of {subject}, expressive clean line art, cel shading, richly painted background, cinematic widescreen composition, no text, no watermark",
+      "videoStyle": "2D anime film, clean line art, cel shading",
+      "width": 1280,
+      "height": 704,
+      "removeBackground": false
+    },
+    {
+      "id": "video-game",
+      "kind": "video",
+      "label": "게임 시네마틱",
+      "hint": "게임 트레일러 풍의 3D 렌더 장면으로",
+      "prompt": "Stylized 3D game cinematic frame of {subject}, polished real-time render, dramatic lighting, detailed environment, widescreen composition, no text, no UI, no watermark",
+      "videoStyle": "stylized 3D game cinematic, polished real-time render",
+      "width": 1280,
+      "height": 704,
+      "removeBackground": false
     }
   ]
 }

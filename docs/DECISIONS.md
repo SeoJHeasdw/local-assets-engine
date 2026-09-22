@@ -16,6 +16,7 @@
 | 2026-09-16 | 엔진 재시작 시 대기 작업을 다시 돌리지 않음. 사용자가 모르는 사이 GPU를 오래 점유하지 않기 위해 |
 | 2026-09-16 | OCR은 이 저장소가 아니라 javis 공용 인식 모듈에 둔다. 결과물 검수용 VLM은 그 모듈과 공유할 수 있음 |
 | 2026-09-16 | GPU 혼잡으로 끊긴 단계는 10초 뒤 1회만 자동 재시도한다. 이 기기는 Chrome·VS Code·Claude와 함께 쓰므로 macOS GPU 감시가 한가할 때면 끝났을 작업을 끊는다(첫 3D 시도가 이미지 생성 322초에서 끊김). 다른 원인의 실패는 즉시 멈춰 원인을 가린다 |
+| 2026-09-22 | 영상 생성을 별도 엔진이 아니라 이 엔진의 레시피(`text-to-video`, `image-to-video`)로 넣는다. 36GB에서 FLUX·TRELLIS와 같은 한 줄 대기열을 써야 동시에 올라가지 않고, 측정·보관함·doctor를 그대로 쓴다. 근거와 라이선스는 아래 "최종 영상 경로" |
 
 ## 3D 생성 모델
 
@@ -386,6 +387,54 @@ EXR을 쓰고 다시 변환하는 것보다 싸고 결과가 예측 가능하다
 출처: [Wan2.2-TI2V-5B 모델 카드](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B),
 [FastVideo](https://github.com/hao-ai-lab/FastVideo),
 [LTX-Video 모델 카드](https://huggingface.co/Lightricks/LTX-Video) (모두 2026-09-16 확인).
+
+#### 원문 재확인과 영상 엔진 채택 (2026-09-22)
+
+사용자가 text-to-video를 이 엔진의 레시피로 넣기로 했다. 별도 엔진·저장소로 빼지 않고 한 줄 대기열·측정·
+보관함·doctor를 그대로 쓴다. 기준: 상업 이용, 이용 지역(한국), 이 기기에서 도는 경로.
+
+| 모델·도구 | 판정 | 원문 근거 |
+| --- | --- | --- |
+| Wan2.2-TI2V-5B, Diffusers판 `Wan-AI/Wan2.2-TI2V-5B-Diffusers` @ `b8fff731` | **채택(기본 후보)** | 두 모델 카드의 License Agreement가 Apache 2.0이고 "생성물에 대한 권리를 주장하지 않는다"고 적는다. 카드가 가리키는 LICENSE.txt는 HF 저장소에 없어 [GitHub Wan2.2 LICENSE.txt](https://github.com/Wan-Video/Wan2.2/blob/main/LICENSE.txt)를 대조했다. 표준 Apache-2.0 전문과 같고 지역·매출·비상업 조항이 없다. 게이트 없음 |
+| 텍스트 인코더 `google/umt5-xxl` | 조건 확인 | HF 표기 Apache-2.0, 게이트 없음. Diffusers판에 포함돼 따로 받지 않는다 |
+| FastVideo 코드 @ `d995516d`, FastMetal-5B-QAD @ `5e4819ec` | 보류(선택 경로) | 코드 저장소 Apache-2.0, 가중치 카드 표기 Apache-2.0(Wan2.2 TI2V 5B를 DMD2 3스텝으로 증류한 INT8). 다만 [MLX 실행 스크립트](https://github.com/hao-ai-lab/FastVideo/blob/d995516da00c24105aa841df1e690d3cd8a6c173/examples/inference/basic/mlx_wan22_generate.py)에 이미지 입력이 없어 텍스트→영상만 되고, 기본 복원이 근사 디코더(TAEHV)다. 두 레시피 모두 첫 프레임에서 시작하므로 지금은 쓰지 않는다. text_encoder·vae 파일은 Diffusers판과 해시까지 같아 DiT(5.3GB)만 더 받으면 비교할 수 있다 |
+| FastMetal-14B-QAD | 보류 | Apache-2.0 표기지만 Wan2.1 T2V 14B 기반이라 이미지→영상이 없다. 42.3GB |
+| MiniMax H3와 파생(FastH3, XGEN-JING, HyperFlow 등) | **기각** | [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE)(2026-08-02) I.5가 적용 지역에서 EU·영국·**대한민국**·미국을 빼고 V.4가 지역 밖 사용과 결과물 사용을 금지한다. FastH3의 LICENSE는 이 원문과 바이트까지 같고, 증류 모델은 I.11의 Model Derivatives다. 9/16 이후 HF에서 주목받은 영상 모델은 대부분 이 계열이었다 |
+| LTX-2.5 (`Lightricks/LTX-2.5`, 2026-07-23) | 보류 | [LTX-2.x Community License](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x)(2026-08-11) 2.1이 전 세계를 허용하고 한국 제외가 없다. 연 매출 1,000만 달러 이상인 주체는 유료 계약이 필요하다. 회사 기기에서 회사 업무로 쓰면 회사 매출이 기준이 된다. 22B + Gemma4 12B 인코더라 36GB에서는 TI2V-5B보다 무겁다. 자동 승인 게이트 |
+| diffusers 0.40.0 | 채택 | Apache-2.0(PyPI). `WanImageToVideoPipeline`이 TI2V-5B의 `expand_timesteps`(첫 프레임을 latent 첫 칸에 고정)를 지원한다 |
+
+실행 경로는 **diffusers + PyTorch MPS**로 정했다.
+
+- FastVideo MLX는 위 이유로 두 레시피를 할 수 없다. 원본 50스텝과 원래 VAE를 쓰는 경로가 품질 기준선이 된다.
+- 걱정은 1280×704·121프레임의 attention이 27,280토큰이라는 점이었다. 엔진 torch 2.14로 같은 크기(24헤드·128차원, bf16)의 `scaled_dot_product_attention`만 떼어 쟀다. 호출 한 번이 0.82초, 최대 footprint는 1.36GB였다. 토큰 수 제곱의 행렬을 만들지 않으므로 메모리 문제는 없다.
+- 예상 시간은 실측 전 추정이라 기록하지 않는다. 설치 뒤 측정해 이 표 아래에 남긴다.
+
+Python은 엔진과 같은 **3.13**으로 별도 환경(`engines/video/.venv`)에 둔다.
+
+- GPU 계산은 MPS 커널이 정하므로 3.11과 3.13 사이에 성능 차이가 없다. torch·diffusers·transformers 모두 3.13 휠이 있다.
+- 같은 3.13·torch 2.14면 uv 캐시의 torch를 다시 받지 않는다.
+- 엔진 환경과 나누는 이유는 버전 범위다. mflux가 transformers·huggingface-hub·mlx 범위를 고정하고, diffusers는 이와 따로 움직인다.
+
+메모리 순서: UMT5-XXL(bf16 약 11GB)로 문장을 바꾼 뒤 내리고, DiT를 올려 잡음을 제거한 뒤 내리고, VAE(float32,
+모델 카드와 같음)로 복원한다. 복원은 파이프라인의 비-latent 출력과 같은 식을 쓴다(diffusers 0.40.0 고정).
+가중치는 작업 안에서 내려받지 않는다(`local_files_only`, `HF_HUB_OFFLINE`). 34GB를 저속 회선에서 받다가 대기열을
+몇 시간 막지 않게 하기 위해서다.
+
+기본값은 모델 카드 값이다: 1280×704, 121프레임(24fps 5.04초), 50스텝, guidance 5.0, Wan 공식 부정 프롬프트.
+**아직 이 기기에서 측정하지 않은 임시 기본값**이다. 같은 프롬프트·시드로 텍스트 모드와 컨셉 이미지→영상,
+필요하면 줄인 해상도·프레임을 측정해 보여 주고 사용자가 고른다.
+
+shot-to-video는 보류한다.
+
+- TI2V-5B는 첫 프레임과 글만 받는다. 프리비즈 대표 프레임(`files.key`)은 컷의 **가운데** 프레임이다.
+- 그대로 넣으면 카메라 움직임 중간부터 시작하고, 점토 스케치의 모습이 이어질 가능성이 크다.
+- 깊이·윤곽을 조건으로 쓰려면 별도 제어 모델이 필요하다. 사용자는 구도·각도를 먼저 프롬프트로 제어해 보고, 부족할 때 다시 보기로 했다.
+- 레시피의 카메라 선택지(샷 크기·앵글·움직임)는 그 확인을 위한 것이다.
+
+| 도구 | 라이선스와 메모 |
+| --- | --- |
+| accelerate 1.15.0, ftfy 6.3.1, sentencepiece 0.2.2 | Apache-2.0 (PyPI 표기, 2026-09-22) |
+| imageio-ffmpeg 0.6.0 | 래퍼는 BSD-2-Clause. 휠에 ffmpeg 실행 파일이 들어 있으나 그 빌드의 라이선스는 README에 없다. 설치 뒤 `ffmpeg -version`의 구성(`--enable-gpl` 여부)을 확인한다. Blender처럼 도구로만 쓰고, 앱에 묶어 배포할 때 재검토 |
 
 ## 도구
 

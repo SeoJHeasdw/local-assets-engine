@@ -56,6 +56,23 @@ def fit_to_canvas(image: Image.Image, width: int, height: int, padding: float = 
     return canvas
 
 
+def cover(image: Image.Image, width: int, height: int,
+          background: tuple[int, int, int] = (255, 255, 255)) -> tuple[Image.Image, dict[str, int]]:
+    """Center-crop to the target aspect, then resize: an opaque RGB frame of exactly
+    width×height and the crop box in source pixels. Stretching would distort
+    what the video model continues from; transparent pixels sit on ``background``."""
+    rgba = image.convert("RGBA")
+    flat = Image.new("RGBA", rgba.size, (*background, 255))
+    flat.alpha_composite(rgba)
+    scale = max(width / flat.width, height / flat.height)
+    crop_w = min(flat.width, round(width / scale))
+    crop_h = min(flat.height, round(height / scale))
+    left, top = (flat.width - crop_w) // 2, (flat.height - crop_h) // 2
+    box = {"x": left, "y": top, "width": crop_w, "height": crop_h}
+    framed = flat.crop((left, top, left + crop_w, top + crop_h)).convert("RGB")
+    return framed.resize((width, height), Image.Resampling.LANCZOS), box
+
+
 def pixelate(image: Image.Image, size: int, colors: int) -> Image.Image:
     """Downscale so the longest side is ``size`` and limit the palette."""
     rgba = image.convert("RGBA")
