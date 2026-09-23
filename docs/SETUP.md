@@ -12,7 +12,8 @@
 | FLUX.2 klein 4B, Z-Image Turbo, TRELLIS.2, BiRefNet 가중치 | 내려받기 완료 (2026-09-16) |
 | CPU 표면·PBR 도구(scikit-image 0.26.0, point-cloud-utils 0.34.0, xatlas) | 설치됨 (2026-09-17). `scripts/setup_trellis.sh`에 포함 |
 | Hugging Face 로그인, DINOv3 승인 | 완료 (2026-09-16). `npm run doctor`에서 3D 생성 ✓ |
-| 영상 모델 Wan2.2 TI2V 5B (환경 `engines/video`, 가중치 34.2GB) | **준비 전.** 엔진 코드는 들어갔다 (2026-09-22). 아래 5단계 |
+| 영상 모델 Wan2.2 TI2V 5B (환경 `engines/video`, 가중치 34.2GB) | 설치됨 (2026-09-24). 가중치 sha256 확인, `npm run doctor`에서 영상 생성 ✓. 아래 5단계의 4번(첫 측정) 진행 중 |
+| 3스텝 증류판 FastWan2.2-TI2V-5B 트랜스포머 (10.0GB) | 사용자가 내려받음 (2026-09-24). 엔진 연결 전. 다음 작업 시작 때 sha256 `a1cf4acd5d02…`로 완료를 확인한다. 아래 6단계 |
 
 ## 0. 가중치 내려받기가 끊길 때
 
@@ -161,3 +162,16 @@ Qwen3-Image는 오픈웨이트가 없다(2026-09-16 조회에서 저장소 없�
    결과는 `output/jobs/<작업 ID>/video/`의 `video.mp4`, 보낸 문장·설정·스텝별 시간은 같은 폴더의 `result.json`이다.
 5. 결과를 보고 기본값(해상도·프레임·스텝)을 고른다. 바꾸면 `config/presets.json`의 `videoModel`을 고치고
    비교 결과를 [DECISIONS](DECISIONS.md)에 남긴다.
+
+## 6. 3스텝 증류판 받기 (FastWan2.2-TI2V-5B)
+
+1280×704·121프레임을 50스텝으로 만들면 이 기기에서 1시간 30분 넘게 걸린다(측정과 판단은
+[DECISIONS](DECISIONS.md)의 "첫 측정"). 같은 모델을 3스텝으로 증류한 판의 트랜스포머만 받는다. 라이선스는
+Apache-2.0이고 게이트가 없다. text_encoder·vae는 원본과 sha256이 같아서 받지 않는다(원본 캐시를 쓴다).
+
+```bash
+for i in $(seq 1 40); do HF_HUB_DISABLE_XET=1 .venv/bin/hf download FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers \
+  --revision 3e187042a324f6f5fb68fd22110a78725253de8f --include "transformer/*" && break; sleep 15; done
+```
+
+엔진은 아직 이 모델을 쓰지 않는다. 3스텝 샘플러와 VAE 타일 복원을 넣은 뒤 앱의 영상 모델 선택지에 나온다.

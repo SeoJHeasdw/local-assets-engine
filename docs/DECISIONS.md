@@ -436,6 +436,39 @@ shot-to-video는 보류한다.
 | accelerate 1.15.0, ftfy 6.3.1, sentencepiece 0.2.2 | Apache-2.0 (PyPI 표기, 2026-09-22) |
 | imageio-ffmpeg 0.6.0 | 래퍼는 BSD-2-Clause. 휠에 ffmpeg 실행 파일이 들어 있으나 그 빌드의 라이선스는 README에 없다. 설치 뒤 `ffmpeg -version`의 구성(`--enable-gpl` 여부)을 확인한다. Blender처럼 도구로만 쓰고, 앱에 묶어 배포할 때 재검토 |
 
+#### 첫 측정 (2026-09-24, M4 Max 36GB)
+
+같은 설명·시드(여우, `seed 42`, 텍스트 모드)로 엔진 줄에서 쟀다. 작업 폴더는 `output/jobs/`에 있다.
+
+| 작업 | 설정 | 설명 해석 | 적재 | 잡음 제거 | VAE 복원 | 최대 메모리 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `20260924-022100-0c23` | 512×288·17프레임·4스텝 | 19초 | 19초 | 8초 | 8초 | 27.7GB |
+| `20260924-022604-033f` | 1280×704·17프레임·50스텝 | 9초 | 18초 | 560초 (스텝당 11.2초) | 328초 | **48.2GB** |
+
+- 4스텝·512×288 결과는 색 잡음이었다. 원인은 설정이다. 같은 입력을 CPU와 MPS에 넣어 비교하니 UMT5 차이 1.8%,
+  DiT 0.5~1.8%로 bf16 오차 범위였고, VAE 왕복은 PSNR 35dB였다. 1280×704·50스텝 결과는 설명대로 나왔다.
+- **VAE 복원이 36GB를 넘는다.** 1280×704 fp32로 잠재 프레임 하나(출력 4프레임)를 복원하는 데 25GB 넘게 필요하다
+  (상한 25.3GB에서 PyTorch 7~15GB + MPS 내부 11GB로 메모리 부족). 기본 상한(권장 작업 메모리 28GB × 1.7 = 47.7GB)까지
+  스왑으로 버티므로 잠재 프레임 5개에 345초가 걸린다. 조각마다 캐시를 비워도 같다.
+- 512px 타일 복원(겹침 128px)과 `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.9`를 함께 쓰면 같은 잠재값 5개가 73초·최대 25.4GB이고
+  스왑이 없다. 통째 복원 대비 PSNR 53.8dB, 평균 차이 0.25/255, 최대 38/255(타일 경계). 256px 타일은 타일 모양이
+  많아 MPS 내부 캐시가 커지면서 같은 상한에서 메모리 부족이 났다. **적용 보류**: 출력 픽셀이 바뀌므로 사용자 승인 후 넣는다.
+- 1280×704·121프레임(27,280토큰)은 아직 돌리지 않았다. 추정은 스텝당 약 110초(선형 연산을 토큰 수로 늘리고,
+  떼어 잰 attention 0.82초 × 30층 × 2)로 50스텝 약 1시간 30분, 타일 복원 약 8분이다. 사용자가 보류했다.
+
+#### 3스텝 증류판 FastWan2.2-TI2V-5B 재확인 (2026-09-24)
+
+비용은 모델 크기보다 스텝 수 × CFG(50 × 2 = DiT 100회)에서 온다. 같은 모델을 증류한 판을 다시 봤다.
+
+| 모델 | 판정 | 원문 근거 |
+| --- | --- | --- |
+| `FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers` @ `3e187042` | 비교 후보 | [모델 카드](https://huggingface.co/FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers) 표기 Apache-2.0, 게이트 없음(LICENSE 파일은 저장소에 없다). Wan2.2-TI2V-5B-Diffusers에 DMD만 적용해 3스텝(`1000,757,522`), CFG 없음, 121×704×1280에서 학습. 트랜스포머는 표준 `WanTransformer3DModel` 한 파일(10.0GB)이고, text_encoder·vae는 원본과 sha256이 같다. 이미지→영상은 원본과 같은 `expand_timesteps` 구조지만 증류는 텍스트→영상으로만 했으므로 확인이 필요하다 |
+| FastMetal-5B-QAD (MLX) | 보류 유지 | [MLX 스크립트](https://github.com/hao-ai-lab/FastVideo/blob/d995516da00c24105aa841df1e690d3cd8a6c173/examples/inference/basic/mlx_wan22_generate.py)는 2026-08-25 이후 바뀌지 않았다. 여전히 이미지 입력이 없다 |
+
+샘플러는 [FastVideo `wan22_sample.py`](https://github.com/hao-ai-lab/FastVideo/blob/d995516da00c24105aa841df1e690d3cd8a6c173/fastvideo/mlx_runtime/wan22_sample.py)와 같게 한다.
+`FlowMatchEulerDiscreteScheduler(shift=5)`의 timesteps를 `1000 - step`으로 뽑고, 매 스텝 x0 = x − σ·v를 예측한 뒤
+다음 σ로 새 잡음과 섞는다. 마지막 스텝은 x0를 그대로 쓴다.
+
 ## 도구
 
 2026-09-16 품질 우선 재구성 구현을 위해 TRELLIS Python 환경에 scikit-image 0.26.0과
