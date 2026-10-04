@@ -23,6 +23,7 @@ dependencies = [
     "transformers>=5.17.0",
     "trimesh>=5.1.0",
     "uvicorn[standard]>=0.53.0",
+    "urllib3>=2.8.0,<3",
 ]
 
 [project.scripts]

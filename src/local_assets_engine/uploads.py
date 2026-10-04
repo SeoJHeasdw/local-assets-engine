@@ -10,15 +10,21 @@ MAX_UPLOAD = 20 * 1024 * 1024
 ID_PATTERN = re.compile(r'^[0-9a-f]{32}$')
 
 
-def upload_dir(store): return store.root.parent / 'uploads'
+def upload_dir(store):
+    parent = store.root.parent.resolve()
+    folder = parent / 'uploads'
+    if folder.is_symlink() or folder.resolve().parent != parent:
+        raise PresetError('이미지 보관 폴더 경로가 올바르지 않습니다.')
+    return folder
 
 
 def resolve_upload(store, upload_id):
     if not isinstance(upload_id, str) or not ID_PATTERN.fullmatch(upload_id):
         raise PresetError('이미지를 다시 골라 주세요.')
     path = upload_dir(store) / f'{upload_id}.png'
-    if not path.is_file(): raise PresetError('가져온 이미지를 찾을 수 없습니다.')
-    return path
+    if path.is_symlink() or not path.is_file() or path.resolve().parent != upload_dir(store).resolve():
+        raise PresetError('가져온 이미지를 찾을 수 없습니다.')
+    return path.resolve()
 
 
 def save_upload(store, data):
@@ -32,7 +38,8 @@ def save_upload(store, data):
             image = ImageOps.exif_transpose(image).convert('RGBA')
             upload_id=secrets.token_hex(16); path=upload_dir(store)/f'{upload_id}.png'
             path.parent.mkdir(parents=True,exist_ok=True)
-            image.save(path)
+            with path.open('xb') as handle:
+                image.save(handle, format='PNG')
             return {'id':upload_id,'width':image.width,'height':image.height,'url':f'/uploads/{upload_id}'}
     except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError) as error:
         raise PresetError('유효한 PNG·JPG·WEBP 이미지를 골라 주세요.') from error

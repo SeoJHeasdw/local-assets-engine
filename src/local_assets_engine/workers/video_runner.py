@@ -31,6 +31,10 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
+try:
+    from .model_cache import json_file, weight_files_missing
+except ImportError:
+    from model_cache import json_file, weight_files_missing
 
 PROGRESS_PREFIX = "@@progress "
 PROGRESS_TOTAL = 1000
@@ -68,26 +72,22 @@ def missing_weight_files(snapshot: Path) -> list[str]:
     """Files a diffusers snapshot still lacks. An interrupted download leaves the
     small files in place, so a non-empty folder alone does not mean it is usable."""
     snapshot = Path(snapshot)
-    if not (snapshot / "model_index.json").is_file():
+    if json_file(snapshot / "model_index.json") is None:
         return ["model_index.json"]
     missing: list[str] = []
     for component in COMPONENTS:
         folder = snapshot / component
         if component == "tokenizer":
-            if not (folder / "tokenizer.json").is_file() and not (folder / "spiece.model").is_file():
+            if json_file(folder / "tokenizer.json") is None and not (
+                    (folder / "spiece.model").is_file() and (folder / "spiece.model").stat().st_size > 0):
                 missing.append(f"{component}/tokenizer.json")
             continue
         config = "scheduler_config.json" if component == "scheduler" else "config.json"
-        if not (folder / config).is_file():
+        if json_file(folder / config) is None:
             missing.append(f"{component}/{config}")
         if component == "scheduler":
             continue
-        indexes = sorted(folder.glob("*.safetensors.index.json"))
-        if indexes:
-            shards = set(json.loads(indexes[0].read_text("utf-8"))["weight_map"].values())
-            missing += [f"{component}/{shard}" for shard in sorted(shards) if not (folder / shard).is_file()]
-        elif not any(folder.glob("*.safetensors")):
-            missing.append(f"{component}/*.safetensors")
+        missing.extend(f"{component}/{name}" for name in weight_files_missing(folder))
     return missing
 
 

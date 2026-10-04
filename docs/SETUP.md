@@ -71,12 +71,27 @@ hf download Tongyi-MAI/Z-Image-Turbo transformer/diffusion_pytorch_model-00001-o
 
 ## 3. 첫 3D 확인
 
+3D 작업 안에서는 가중치를 내려받지 않는다. doctor에서 고정 가중치가 빠졌다면 로그인·DINOv3 승인 후
+아래 명령으로 먼저 준비한다. 가중치 합계는 약 **18GB**다(TRELLIS.2 16.2GB, decoder 148MB,
+DINOv3 1.21GB, BiRefNet 444MB; 설정 파일 별도). 같은 커밋은 캐시를 재사용한다.
+
+```bash
+HF_HUB_DISABLE_XET=1 .venv/bin/hf download microsoft/TRELLIS.2-4B --revision af44b45f2e35a493886929c6d786e563ec68364d
+HF_HUB_DISABLE_XET=1 .venv/bin/hf download microsoft/TRELLIS-image-large --revision 25e0d31ffbebe4b5a97464dd851910efc3002d96 --include 'ckpts/ss_dec_conv3d_16l8_fp16.*'
+HF_HUB_DISABLE_XET=1 .venv/bin/hf download facebook/dinov3-vitl16-pretrain-lvd1689m --revision ea8dc2863c51be0a264bab82070e3e8836b02d51
+HF_HUB_DISABLE_XET=1 .venv/bin/hf download ZhengPeng7/BiRefNet --revision e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4
+```
+
+doctor는 설정 JSON, safetensors 헤더·전체 데이터 길이, 인덱스의 샤드와 TRELLIS의 선언된 checkpoint를
+확인한다. 이는 빈 파일·끊긴 파일의 준비 검사이며 전체 payload SHA-256 재계산이나 실제 생성의
+메모리 안정성 검증을 뜻하지 않는다.
+
 1. `./app.sh`로 앱을 연다. 3D 소품 → 설명으로 시작 → 한 번에 3D까지 → "3D 만들기".
    터미널로는 다음과 같다.
    ```bash
    .venv/bin/python -m local_assets_engine run text-to-3d --params '{"subject": "wooden treasure chest"}'
    ```
-2. 첫 실행은 DINOv3 가중치 내려받기가 포함돼 오래 걸린다.
+2. 첫 실행은 모델 적재·셰이더 준비가 포함돼 오래 걸릴 수 있다.
    기본 결과는 `output/jobs/<작업 ID>/mesh/asset.glb`(품질본) 하나다.
    각각의 `.opt.glb`는 전송용 사본이다. 카드에는 실제 GLB 렌더가 보이고 여섯 방향 검수도 제공한다.
 3. 실패하면 앱 작업 카드의 오류와 `output/jobs/<작업 ID>/job.log`를 본다.

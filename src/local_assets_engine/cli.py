@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from contextlib import contextmanager
 from typing import Any
 
 DEFAULT_PORT = 47831
@@ -52,7 +54,36 @@ def _print_progress(load_job) -> dict[str, Any]:
         time.sleep(1)
 
 
+@contextmanager
+def _termination_signals():
+    """Route SIGTERM and Ctrl+C through cleanup; repeated signals cannot skip it."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    interrupted = False
+
+    def stop(_sig, _frame):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+
+    try:
+        for sig in previous:
+            signal.signal(sig, stop)
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def _run(recipe: str, raw_params: str) -> int:
+    with _termination_signals():
+        return _run_with_cleanup(recipe, raw_params)
+
+
+def _run_with_cleanup(recipe: str, raw_params: str) -> int:
     params = json.loads(Path(raw_params[1:]).read_text("utf-8") if raw_params.startswith("@") else raw_params)
     if _server_running():
         # 서버가 떠 있으면 같은 줄에 세운다. 두 곳에서 동시에 모델을 올리면 메모리가 넘친다.
@@ -60,6 +91,9 @@ def _run(recipe: str, raw_params: str) -> int:
         job_id = job["id"]
         print(f"엔진 서버에 작업을 넣었습니다: {job_id}")
         try:
+            job = _print_progress(lambda: _api("GET", f"/api/jobs/{job_id}"))
+        except KeyboardInterrupt:
+            _api("POST", f"/api/jobs/{job_id}/cancel")
             job = _print_progress(lambda: _api("GET", f"/api/jobs/{job_id}"))
         except (urllib.error.URLError, OSError) as error:
             # 앱을 닫으면 그 앱이 띄운 엔진도 함께 사라진다. 역추적 대신 어디를 볼지 알린다.
@@ -75,12 +109,14 @@ def _run(recipe: str, raw_params: str) -> int:
         runner = Runner(store)
         job = runner.create(recipe, params)
         print(f"작업을 시작합니다: {job['id']} ({store.job_dir(job['id'])})")
-        worker = threading.Thread(target=runner.run_job, args=(job["id"],), daemon=True)
+        worker = threading.Thread(target=runner.run_job, args=(job["id"],), daemon=False)
         worker.start()
         try:
             job = _print_progress(lambda: store.load(job["id"]))
         except KeyboardInterrupt:
             runner.cancel(job["id"])
+        finally:
+            runner.shutdown()
             worker.join()
             job = store.load(job["id"])
     print(f"결과: {job['state']}" + (f" · {job['error']}" if job.get("error") else ""))

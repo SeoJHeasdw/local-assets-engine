@@ -20,7 +20,7 @@ from .jobs import JobNotFound, JobStore, now_iso
 from .measure import (
     StageCancelled, StageFailed, StageResult, is_gpu_busy, parse_progress, run_measured,
 )
-from .paths import child_env
+from .paths import child_env, generation_lock_path
 from .presets import PresetError, load_presets
 
 FLUSH_INTERVAL_S = 0.5
@@ -29,7 +29,9 @@ RETRY_PAUSE_S = 10.0
 # 조용한 단계(UV 펼치기 등)는 수백 초 동안 아무 줄도 내지 않는다. 그동안에도 살아 있음을
 # 남겨야 다른 엔진이 시작할 때 이 작업을 죽은 것으로 보고 닫지 않는다.
 HEARTBEAT_INTERVAL_S = 30.0
-_DOWNLOAD_MARKERS = ("Fetching", "Downloading", "download")
+# Hugging Face also prints "Fetching" when every file is already cached.
+_DOWNLOAD_MARKERS = ("downloading", "내려받", "다운로드")
+_MODEL_FILE_PROGRESS_MARKERS = (*_DOWNLOAD_MARKERS, "fetching")
 
 
 class UnitTracker:
@@ -95,14 +97,16 @@ class Stage:
         retries: int = 0,
     ) -> StageResult:
         tracker = UnitTracker(units)
-        downloading = {"active": False}
+        downloading = {"active": False, "label": "모델 파일 확인 중"}
 
         def scaled(fraction: float) -> float:
             return span[0] + (span[1] - span[0]) * fraction
 
         def on_line(_stream: str, line: str) -> None:
             self.ctx.log_line(line)
-            downloading["active"] = any(marker in line for marker in _DOWNLOAD_MARKERS)
+            downloading["active"] = any(marker in line.lower() for marker in _MODEL_FILE_PROGRESS_MARKERS)
+            downloading["label"] = ("모델 파일 내려받는 중" if any(marker in line.lower() for marker in _DOWNLOAD_MARKERS)
+                                    else "모델 파일 확인 중")
             if interpret is None:
                 return
             result = interpret(line)
@@ -112,7 +116,7 @@ class Stage:
 
         def on_progress(fraction: float, detail: str | None) -> None:
             if downloading["active"]:
-                self.progress(self.fraction, f"모델 파일 내려받는 중 {round(fraction * 100)}%")
+                self.progress(self.fraction, f"{downloading['label']} {round(fraction * 100)}%")
             elif interpret is None:
                 self.progress(scaled(tracker.update(fraction)), detail)
 
@@ -124,13 +128,20 @@ class Stage:
                 result = run_measured(
                     args, cwd=cwd, env=env or child_env(), cancel=self.ctx.cancel,
                     on_line=on_line, on_progress=on_progress, capture_stdout=capture_stdout,
+                    lease_fds=self.ctx.lease_fds,
                 )
-            except StageFailed as failure:
-                self.processes.append({
-                    "command": command,
-                    "seconds": round(time.monotonic() - started, 2),
-                    "peakMemoryBytes": failure.peak_memory_bytes,
-                })
+            except (StageFailed, StageCancelled) as failure:
+                if failure.launched:
+                    self.processes.append({
+                        "command": command,
+                        "state": "cancelled" if isinstance(failure, StageCancelled) else "failed",
+                        "seconds": failure.seconds if failure.seconds is not None else round(time.monotonic() - started, 2),
+                        "peakMemoryBytes": failure.peak_memory_bytes,
+                        "maxRssBytes": failure.max_rss_bytes, "returnCode": failure.code,
+                        "measurementUnavailableReason": failure.measurement_unavailable_reason,
+                    })
+                if isinstance(failure, StageCancelled):
+                    raise
                 if attempt >= retries or not is_gpu_busy(failure):
                     raise
                 self.ctx.log_line(f"[재시도 {attempt + 1}/{retries}] {failure}")
@@ -141,6 +152,8 @@ class Stage:
                 continue
             self.processes.append({
                 "command": command, "seconds": result.seconds, "peakMemoryBytes": result.peak_memory_bytes,
+                "maxRssBytes": result.max_rss_bytes, "state": "done", "returnCode": 0,
+                "measurementUnavailableReason": result.measurement_unavailable_reason,
             })
             return result
         raise AssertionError("unreachable")
@@ -173,15 +186,21 @@ class Stage:
 
 
 class JobContext:
-    def __init__(self, store: JobStore, job_id: str, presets: dict[str, Any], cancel: threading.Event):
+    def __init__(self, store: JobStore, job_id: str, presets: dict[str, Any], cancel: threading.Event,
+                 *, lease_fds: Sequence[int] = ()):
         self.store = store
         self.job_id = job_id
         self.presets = presets
         self.cancel = cancel
+        self.lease_fds = tuple(lease_fds)
         self.dir = store.job_dir(job_id)
         self.params: dict[str, Any] = store.load(job_id)["params"]
         self._tail: collections.deque[str] = collections.deque(maxlen=LOG_TAIL_LINES)
         self._log_lock = threading.Lock()
+        self._had_downloads = bool(store.load(job_id).get("hadDownloads"))
+        # An explicit false distinguishes this collector from legacy loggers
+        # that discarded download progress bars before recording evidence.
+        self.mutate(lambda job: job.setdefault("hadDownloads", False))
 
     def stage(self, name: str, label: str) -> Stage:
         return Stage(self, name, label)
@@ -199,7 +218,7 @@ class JobContext:
         def apply(job: dict[str, Any]) -> None:
             fn(job)
             # 기록을 쓸 때마다 살아 있음을 남긴다. 다른 엔진이 시작해도 닫히지 않는다.
-            if job.get("state") == "running" and isinstance(job.get("owner"), dict):
+            if job.get("state") in {"running", "cancelling"} and isinstance(job.get("owner"), dict):
                 job["owner"]["heartbeat"] = now_iso()
 
         return self.store.update(self.job_id, apply)
@@ -210,6 +229,9 @@ class JobContext:
             raise StageCancelled()
 
     def log_line(self, line: str) -> None:
+        if not self._had_downloads and any(marker in line.lower() for marker in _DOWNLOAD_MARKERS):
+            self.mutate(lambda job: job.__setitem__("hadDownloads", True))
+            self._had_downloads = True
         # 진행 막대는 초당 수십 번 다시 그려진다. 기록에는 막대가 아닌 줄만 남긴다.
         if parse_progress(line) is not None and "|" in line:
             return
@@ -246,13 +268,15 @@ class JobContext:
 
 class Runner:
     def __init__(self, store: JobStore, *, recipes: dict[str, Any] | None = None,
-                 presets_loader: Callable[[], dict[str, Any]] = load_presets):
+                 presets_loader: Callable[[], dict[str, Any]] = load_presets,
+                 machine_lock_path: Path | None = None):
         if recipes is None:
             from .recipes import RECIPES
             recipes = RECIPES
         self.store = store
         self.recipes = recipes
         self.presets_loader = presets_loader
+        self.machine_lock_path = Path(machine_lock_path) if machine_lock_path is not None else generation_lock_path()
         self.current_job_id: str | None = None
         self._queue: queue.Queue[str] = queue.Queue()
         self._cancels: dict[str, threading.Event] = {}
@@ -285,14 +309,18 @@ class Runner:
         recipe = self.recipes.get(recipe_id)
         if recipe is None:
             raise PresetError(f"알 수 없는 레시피입니다: {recipe_id}")
-        normalized, title = recipe.prepare(dict(params or {}), self.presets_loader(), self.store)
-        return self.store.create(recipe_id, normalized, title)
+        with self.store.namespace():
+            self.store.assert_sources_available(params)
+            normalized, title = recipe.prepare(dict(params or {}), self.presets_loader(), self.store)
+            self.store.assert_sources_available(normalized)
+            return self.store.create(recipe_id, normalized, title,
+                                     owner={"pid": os.getpid(), "heartbeat": now_iso()})
 
     def submit(self, recipe_id: str, params: dict[str, Any] | None) -> dict[str, Any]:
-        job = self.create(recipe_id, params)
-        job = self.store.update(job["id"], lambda record: record.update(
-            owner={"pid": os.getpid(), "heartbeat": now_iso()}))
         with self._lock:
+            if self._stopping.is_set():
+                raise PresetError("엔진이 종료 중입니다.")
+            job = self.create(recipe_id, params)
             self._pending.add(job["id"])
         self._queue.put(job["id"])
         return job
@@ -325,7 +353,7 @@ class Runner:
 
     def _beat(self, job_id: str, stop: threading.Event, cancel: threading.Event) -> None:
         def touch(job: dict[str, Any]) -> None:
-            if job.get("state") == "running" and isinstance(job.get("owner"), dict):
+            if job.get("state") in {"running", "cancelling"} and isinstance(job.get("owner"), dict):
                 job["owner"]["heartbeat"] = now_iso()
 
         last_beat = time.monotonic()
@@ -340,35 +368,58 @@ class Runner:
                 return
 
     def run_job(self, job_id: str) -> dict[str, Any]:
-        # Separate CLI processes also share this lane. A thread-local queue
-        # alone cannot keep two model processes off the same 36GB machine.
-        with (self.store.root / ".engine.lock").open("a") as lane:
+        # Store ownership and the machine lane serve different purposes. A
+        # second checkout/output directory still shares this machine's memory.
+        paths = (self.store.root / ".engine.lock", self.machine_lock_path,
+                 self.store.job_dir(job_id) / ".process.lock")
+        lanes = []
+        try:
+            self.machine_lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            for path in paths:
+                fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                lanes.append(fd)
             last_queued_beat = 0.0
             while True:
                 job = self.store.load(job_id)
                 if job["state"] != "queued":
                     return job
+                if self._stopping.is_set():
+                    return self.cancel(job_id)
                 if time.monotonic() - last_queued_beat >= HEARTBEAT_INTERVAL_S:
                     def queued_owner(record):
                         if record["state"] == "queued":
                             record["owner"] = {"pid": os.getpid(), "heartbeat": now_iso()}
                     self.store.update(job_id, queued_owner)
                     last_queued_beat = time.monotonic()
+                acquired = []
                 try:
-                    fcntl.flock(lane, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
+                    for lane in lanes:
+                        fcntl.flock(lane, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        acquired.append(lane)
+                    # Children retain these same flock descriptions on abrupt
+                    # controller death; another engine cannot overlap them.
+                    return self._run_in_lane(job_id, lease_fds=acquired)
                 except BlockingIOError:
-                    time.sleep(0.2)
-            try:
-                return self._run_in_lane(job_id)
-            finally:
-                fcntl.flock(lane, fcntl.LOCK_UN)
+                    pass
+                finally:
+                    for lane in reversed(acquired):
+                        fcntl.flock(lane, fcntl.LOCK_UN)
+                time.sleep(0.2)
+        except JobNotFound:
+            raise
+        except Exception as exc:  # noqa: BLE001 - failures before claim also terminate
+            def fail(record):
+                if record["state"] in {"queued", "running", "cancelling"}:
+                    record.update(state="failed", error=str(exc) or exc.__class__.__name__, finishedAt=now_iso())
+            return self.store.update(job_id, fail)
+        finally:
+            for lane in lanes:
+                os.close(lane)
 
-    def _run_in_lane(self, job_id: str) -> dict[str, Any]:
+    def _run_in_lane(self, job_id: str, *, lease_fds: Sequence[int] = ()) -> dict[str, Any]:
         job = self.store.load(job_id)
         if job["state"] != "queued":
             return job
-        recipe = self.recipes[job["recipe"]]
         cancel = threading.Event()
         def claim(record):
             if record["state"] == "queued":
@@ -380,23 +431,43 @@ class Runner:
         with self._lock:
             self._cancels[job_id] = cancel
             self.current_job_id = job_id
-        ctx = JobContext(self.store, job_id, self.presets_loader(), cancel)
+            if self._stopping.is_set():
+                cancel.set()
+        ctx = None
         stop_beat = threading.Event()
-        threading.Thread(target=self._beat, args=(job_id, stop_beat, cancel), daemon=True).start()
+        beat = None
         state, error = "done", None
         try:
-            recipe.run(ctx)
+            # Initialization failures also pass through terminal-state cleanup.
+            ctx = JobContext(self.store, job_id, self.presets_loader(), cancel, lease_fds=lease_fds)
+            beat = threading.Thread(target=self._beat, args=(job_id, stop_beat, cancel), daemon=True)
+            beat.start()
+            ctx.check_cancel()
+            self.recipes[job["recipe"]].run(ctx)
+            ctx.check_cancel()
         except StageCancelled:
             state = "cancelled"
         except Exception as exc:  # noqa: BLE001 - every failure must land in job.json
             state, error = "failed", str(exc) or exc.__class__.__name__
-            ctx.log_line(traceback.format_exc())
+            if ctx is not None:
+                try:
+                    ctx.log_line(traceback.format_exc())
+                except Exception:  # noqa: BLE001 - logging must not bypass cleanup
+                    pass
         finally:
             stop_beat.set()
-            ctx.flush_log()
-            with self._lock:
-                self._cancels.pop(job_id, None)
-                self.current_job_id = None
+            if beat is not None:
+                beat.join()
+            try:
+                if ctx is not None:
+                    ctx.flush_log()
+            except Exception as exc:  # noqa: BLE001 - still clear ownership state
+                state, error = "failed", error or str(exc) or exc.__class__.__name__
+            finally:
+                with self._lock:
+                    self._cancels.pop(job_id, None)
+                    if self.current_job_id == job_id:
+                        self.current_job_id = None
         return self.store.update(job_id, lambda record: record.update(
             state=state, error=error, finishedAt=now_iso()))
 

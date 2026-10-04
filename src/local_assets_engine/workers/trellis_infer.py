@@ -10,7 +10,7 @@ import runpy
 import time
 
 
-def run(script, arguments, output, model_revision=None):
+def run(script, arguments, output, model_revision=None, model_provenance=None, configure_models=None):
     # Only the upstream module's setup is needed; its main reduces the mesh
     # before it writes GLB. Surface conversion runs in another measured process.
     runpy.run_path(script, run_name="__local_assets_setup__")
@@ -38,6 +38,8 @@ def run(script, arguments, output, model_revision=None):
     started = time.perf_counter()
     config = hf_hub_download("microsoft/TRELLIS.2-4B", "pipeline.json", revision=model_revision)
     model_dir = str(Path(config).parent)
+    if configure_models:
+        configure_models(model_dir)
     pipeline = Pipeline.from_pretrained(model_dir)
     load_seconds = time.perf_counter() - started
     print(f"Loaded in {load_seconds:.1f}s", flush=True)
@@ -68,6 +70,7 @@ def run(script, arguments, output, model_revision=None):
         "sampling": {"structure": pipeline.sparse_structure_sampler_params,
                      "shape": pipeline.shape_slat_sampler_params, "texture": pipeline.tex_slat_sampler_params},
         "torch": torch.__version__,
+        "models": model_provenance or {},
     }
     target.with_suffix(".json").write_text(json.dumps(metadata, indent=2), "utf-8")
     print(f"Saved: {target}", flush=True)

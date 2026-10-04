@@ -5,7 +5,7 @@ from local_assets_engine.estimates import estimate_jobs
 
 def record(id, state="done", seconds=120, **params):
     return {"id": id, "recipe": "image", "params": {"imageModel": "flux", "width": 1024, "count": 1, **params},
-            "state": state, "createdAt": f"2026-09-22T00:0{id}:00+00:00",
+            "state": state, "hadDownloads": False, "createdAt": f"2026-09-22T00:0{id}:00+00:00",
             "startedAt": "2026-09-22T01:00:00+00:00" if state == "running" else None,
             "stages": [{"state": "done", "seconds": seconds, "processes": [{}]}] if state == "done" else []}
 
@@ -33,3 +33,21 @@ def test_failures_retries_downloads_and_insufficient_samples_are_excluded():
     jobs[2]["logTail"] = ["Downloading weights"]
     result = estimate_jobs(jobs)["6"]
     assert result["samples"] == 2 and result["medianSeconds"] is None
+
+
+def test_durable_download_flag_and_full_legacy_log_survive_tail_eviction(tmp_path):
+    from local_assets_engine.jobs import JobStore
+    from local_assets_engine.estimates import has_downloads
+    store = JobStore(tmp_path / "jobs")
+    job = store.create("image", {}, "legacy")
+    log = store.job_dir(job["id"]) / "job.log"
+    log.write_text("Downloading weights\n" + "normal output\n" * 100)
+    job["logTail"] = ["normal output"] * 60
+    assert has_downloads(job, store=store)
+    log.write_text("Fetching 2 files: cached\n")
+    assert has_downloads(job, store=store)
+    assert has_downloads(job)
+    job["hadDownloads"] = False
+    assert not has_downloads(job, store=store)
+    job["hadDownloads"] = True
+    assert has_downloads(job, store=store)

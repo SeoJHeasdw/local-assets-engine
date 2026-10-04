@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
+import secrets
+import re
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, doctor
 from .bench import bench_rows
 from .estimates import estimate_jobs
-from .jobs import ACTIVE_STATES, REVIEW_STATES, JobNotFound, JobStore, now_iso
-from .library import job_storage, lineage, storage_report, update_library
-from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir, output_dir
+from .jobs import ACTIVE_STATES, REVIEW_STATES, JobBusy, JobNotFound, JobStore, now_iso
+from .library import job_dependents, job_storage, lineage, storage_report, update_library
+from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir
 from .presets import PresetError, load_presets
 from .runner import Runner
 from .uploads import MAX_UPLOAD, save_upload, resolve_upload
@@ -27,7 +30,29 @@ LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 
 def _hostname(value: str) -> str:
-    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+    try:
+        parsed = urlsplit(f"http://{value}")
+        parsed.port
+        if parsed.username is not None or parsed.password is not None or parsed.path or parsed.query or parsed.fragment:
+            return ""
+        return parsed.hostname or ""
+    except ValueError:
+        return ""
+
+
+def same_origin(origin: str, url: str) -> bool:
+    if any(character.isspace() for character in origin):
+        return False
+    try:
+        given, expected = urlsplit(origin), urlsplit(url)
+        return (given.scheme in ("http", "https") and given.scheme == expected.scheme
+                and given.hostname in LOCAL_HOSTS and given.hostname == expected.hostname
+                and (given.port or (443 if given.scheme == "https" else 80))
+                == (expected.port or (443 if expected.scheme == "https" else 80))
+                and given.username is None and given.password is None
+                and not given.path and not given.query and not given.fragment)
+    except ValueError:
+        return False
 
 
 def create_app(*, store: JobStore | None = None, runner: Runner | None = None, start_runner: bool = True) -> FastAPI:
@@ -53,8 +78,10 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
         origin = request.headers.get("origin")
         if host not in LOCAL_HOSTS:
             return JSONResponse({"detail": "로컬 요청만 받습니다."}, status_code=403)
-        if origin and origin != "null" and _hostname(origin.split("://", 1)[-1]) not in LOCAL_HOSTS:
+        if origin is not None and not same_origin(origin, str(request.url)):
             return JSONResponse({"detail": "다른 출처의 요청은 받지 않습니다."}, status_code=403)
+        if request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
+            return JSONResponse({"detail": "다른 사이트의 요청은 받지 않습니다."}, status_code=403)
         return await call_next(request)
 
     @app.middleware("http")
@@ -72,7 +99,7 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
         # 프로세스가 살아 있으면 진행 중으로 읽는다.
         return {"ok": True, "version": __version__,
                 "currentJob": runner.current_job_id or store.running_job_id(),
-                "outputDir": str(output_dir())}
+                "outputDir": str(store.root.parent)}
 
     @app.get("/api/doctor")
     def get_doctor(deep: bool = False) -> dict[str, Any]:
@@ -86,9 +113,9 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
     async def upload_image(request: Request):
         data = bytearray()
         async for chunk in request.stream():
-            data.extend(chunk)
-            if len(data) > MAX_UPLOAD:
+            if len(data) + len(chunk) > MAX_UPLOAD:
                 raise HTTPException(status_code=413, detail="20MB 이하의 이미지를 골라 주세요.")
+            data.extend(chunk)
         try:
             return save_upload(store, data)
         except PresetError as error:
@@ -111,14 +138,20 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
 
     @app.get("/api/estimates")
     def get_estimates() -> dict[str, Any]:
-        return {"jobs": estimate_jobs(store.list(limit=10_000))}
+        return {"jobs": estimate_jobs(store.list(limit=10_000), store=store)}
 
     @app.post("/api/jobs", status_code=201)
     def create_job(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        if "params" in payload and not isinstance(payload["params"], dict):
+            raise HTTPException(status_code=400, detail="params는 설정 객체여야 합니다.")
         try:
             return runner.submit(str(payload.get("recipe") or ""), payload.get("params") or {})
         except PresetError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except JobBusy as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except JobNotFound as error:
+            raise HTTPException(status_code=400, detail="요청의 원본 작업이나 파일을 찾을 수 없습니다.") from error
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
@@ -137,7 +170,7 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
     @app.post("/api/jobs/{job_id}/assets/{asset_id}/review")
     def review_asset(job_id: str, asset_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         status = payload.get("status")
-        if status not in REVIEW_STATES:
+        if not isinstance(status, str) or status not in REVIEW_STATES:
             raise HTTPException(status_code=400, detail=f"status는 {sorted(REVIEW_STATES)} 중 하나여야 합니다.")
 
         def apply(job: dict[str, Any]) -> None:
@@ -200,7 +233,61 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
             job = store.load(job_id)
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.") from error
-        return {**job_storage(store.job_dir(job_id), job), "active": job["state"] in ACTIVE_STATES}
+        referenced, active_referenced = job_dependents(store, store.list(limit=None))
+        return {**job_storage(store.job_dir(job_id), job),
+                "active": job["state"] in ACTIVE_STATES or store.process_in_use(job_id),
+                "usedBy": sorted(referenced.get(job_id, set())),
+                "activeUsedBy": sorted(active_referenced.get(job_id, set())),
+                "trashReserved": bool(job.get("trashReservation"))}
+
+    @app.post("/api/jobs/{job_id}/trash/reserve")
+    def reserve_trash(job_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+        token = payload.get("token", secrets.token_hex(16))
+        owner_pid = payload.get("ownerPid")
+        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+            raise HTTPException(status_code=400, detail="정리 예약 값을 확인해 주세요.")
+        if owner_pid is not None and (isinstance(owner_pid, bool) or not isinstance(owner_pid, int) or owner_pid <= 0):
+            raise HTTPException(status_code=400, detail="정리 요청 소유자를 확인해 주세요.")
+        paths = payload.get("paths")
+        if paths is not None and (not isinstance(paths, list) or not paths
+                                  or not all(isinstance(path, str) for path in paths)):
+            raise HTTPException(status_code=400, detail="정리할 파일은 경로 목록이어야 합니다.")
+
+        def validate(job):
+            _, active_referenced = job_dependents(store, store.list(limit=None))
+            if active_referenced.get(job_id):
+                raise JobBusy("대기 또는 진행 중인 작업이 이 원본을 사용합니다. 완료 후 정리해 주세요.")
+            if paths is not None:
+                allowed = {item["path"] for item in job_storage(store.job_dir(job_id), job)["files"]
+                           if item["category"] == "intermediate"}
+                if not set(paths) <= allowed:
+                    raise PresetError("생성 중간 파일만 정리할 수 있습니다.")
+
+        try:
+            store.reserve_trash(job_id, token, validate=validate, paths=paths, owner_pid=owner_pid)
+            return {"token": token, "paths": paths}
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.") from error
+        except JobBusy as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except PresetError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/trash/finish")
+    def finish_trash(job_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, bool]:
+        token = payload.get("token")
+        failed = payload.get("failed", False)
+        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token) or not isinstance(failed, bool):
+            raise HTTPException(status_code=400, detail="정리 예약 값을 확인해 주세요.")
+        try:
+            store.finish_trash(job_id, token, failed=failed)
+            return {"ok": True}
+        except JobBusy as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.") from error
 
     @app.get("/files/{job_id}/{relative:path}")
     def job_file(job_id: str, relative: str) -> FileResponse:

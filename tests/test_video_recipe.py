@@ -225,7 +225,10 @@ def test_doctor_counts_only_complete_pinned_snapshots(tmp_path, monkeypatch):
     assert doctor.snapshot_missing(repo, revision) == ["model_index.json"]
     fake_snapshot(folder / "snapshots" / revision, skip="vae/diffusion_pytorch_model.safetensors")
     assert doctor.snapshot_missing(repo, revision) == ["vae/*.safetensors"]
-    (folder / "snapshots" / revision / "vae/diffusion_pytorch_model.safetensors").write_text("")
+    import shutil
+    # A filename alone is insufficient: supply a complete synthetic tensor.
+    shutil.copyfile(folder / "snapshots" / revision / "text_encoder/model-00001-of-00002.safetensors",
+                    folder / "snapshots" / revision / "vae/diffusion_pytorch_model.safetensors")
     assert doctor.snapshot_missing(repo, revision) == []
     (folder / "blobs").mkdir()
     (folder / "blobs/abc.incomplete").write_text("")

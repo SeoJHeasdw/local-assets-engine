@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {
   defaults,adjustPixels,frameImage,overlayImage,projectOverlay,migratePlan,renderEdit,colorLayer,stampLayer,
   outputToSource,sourceToOutput,frameLayout,imageRegionMask,meshContext,texturedFaces,surfaceRegionMask,stampFaces,needsGeometry,
@@ -71,6 +73,24 @@ test('layers apply in order, hidden layers are skipped and legacy plans render t
  assert.equal(migratePlan({frame:{crop:'square'}}).frame.crop,'square');
  assert.equal(needsGeometry(migrated),true);assert.equal(needsGeometry(defaults()),false);
 });
+test('each color layer selects and shades from the original while later layers composite above it',()=>{
+ const image=solid(1,1,[255,0,0,128]);
+ const blue=colorLayer({id:'blue',from:'#ff0000',to:'#0000ff',tolerance:.01});
+ const green=colorLayer({id:'green',from:'#ff0000',to:'#00ff00',tolerance:.01});
+ assert.deepEqual(pixel(renderEdit(image,{...defaults(),layers:[blue,green]}),0,0),[0,255,0,128]);
+ assert.deepEqual(pixel(renderEdit(image,{...defaults(),layers:[blue,{...green,from:'#0000ff'}]}),0,0),[0,0,255,128]);
+ const gray={width:2,height:1,data:new Uint8ClampedArray([60,60,60,255,180,180,180,255])};
+ const fillBlue=colorLayer({id:'fill-blue',mode:'fill',to:'#0000ff'}),fillGreen=colorLayer({id:'fill-green',mode:'fill',to:'#00ff00'});
+ assert.deepEqual(renderEdit(gray,{...defaults(),layers:[fillBlue,fillGreen]}).data,renderEdit(gray,{...defaults(),layers:[fillGreen]}).data);
+});
+test('region highlighting is applied after all color selection and tone corrections',()=>{
+ const image=solid(1,1,[255,0,0,123]);
+ const plan={...defaults(),brightness:.7,layers:[colorLayer({id:'a',from:'#ff0000',to:'#0000ff',tolerance:.01}),colorLayer({id:'b',from:'#ff0000',to:'#00ff00',tolerance:.01})]};
+ const ordinary=renderEdit(image,plan),expected=new Uint8ClampedArray(ordinary.data);
+ for(let k=0;k<3;k++)expected[k]=expected[k]*.55+[255,179,92][k]*.45;
+ assert.deepEqual(renderEdit(image,plan,{highlight:'a'}).data,expected);
+ assert.deepEqual(image.data,new Uint8ClampedArray([255,0,0,123]));
+});
 
 // 20×20cm 판 앞에 3cm 튀어나온 10cm 자물쇠. 옆면이 판과 정점을 공유한다.
 function chestWithLock() {
@@ -115,6 +135,22 @@ test('a surface brush masks only nearby texels and bleeds into the UV margin',()
  const plan={...defaults(),layers:[colorLayer({mode:'fill',to:'#0000ff',region:{strokes:[[-.35,0,0,.1,1]]}})]};
  const out=renderEdit(solid(64,64,[200,200,200,255]),plan,{context,texture:{materials:[0]}});
  assert.equal(pixel(out,Math.floor(.075*64),32)[0],0);assert.equal(pixel(out,Math.floor(.425*64),32)[0],200);
+});
+test('sparse brush lookup preserves the pre-optimization paint, erase and UV margin pixels',()=>{
+ const plane={positions:new Float64Array([-.5,-.5,0,.5,-.5,0,.5,.5,0,-.5,.5,0]),uv:new Float64Array([.1,.1,.9,.1,.9,.9,.1,.9]),indices:new Float64Array([0,1,2,0,2,3]),material:0};
+ const strokes=[[0,0,0,.3,1],[.1,0,0,.1,0],[-.25,.1,0,.15,1],[0,-.2,0,.12,0]];
+ // These full mask digests were recorded from the former dense lookup before
+ // changing candidate enumeration; pixel weights and UV dilation must stay exact.
+ const expected=new Map([[16,'008771fbf2bbcdc7adaa849414ecd4651ce42e40b3654545f6b40febbd7fadb2'],[32,'f7b93358baee8bf5a672c5bc92f8c850abe28851b68a4ecf721a12bcf9461687'],[64,'b8ef756ff1b27acc972b309e3feefb320860f9c12cbbc5f0a5c57763b02cbb28']]);
+ for(const [size,digest] of expected){const c=meshContext([plane]),mask=surfaceRegionMask(c,texturedFaces(c,[0]),size,size,{strokes});assert.equal(createHash('sha256').update(mask).digest('hex'),digest);}
+});
+test('one fine stroke on one large triangle finishes without scanning empty grid cells',()=>{
+ const url=new URL('../../electron-app/shared/editing.mjs',import.meta.url).href;
+ const script=`import {meshContext,texturedFaces,surfaceRegionMask} from ${JSON.stringify(url)};
+ const c=meshContext([{positions:new Float64Array([0,0,0,1,0,0,0,1,0]),uv:new Float64Array([0,0,1,0,0,1]),indices:new Float64Array([0,1,2]),material:0}]);
+ const mask=surfaceRegionMask(c,texturedFaces(c,[0]),16,16,{strokes:[[.21875,.21875,0,.0001,1]]});console.log(mask[3*16+3]);`;
+ const result=spawnSync(process.execPath,['--input-type=module','-e',script],{encoding:'utf8',timeout:1500});
+ assert.ifError(result.error);assert.equal(result.status,0,result.stderr);assert.equal(result.stdout.trim(),'255');
 });
 test('concept-first is explicit even with one candidate, imported sources work',()=>{
  const form={kind:'3d',source:'text',preset:'prop-3d',subject:'chest',count:1,workflow:'concept',gameFaces:0};

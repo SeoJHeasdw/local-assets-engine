@@ -1,4 +1,5 @@
 import json
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,7 @@ from local_assets_engine.workers import video_runner as worker
 
 
 def fake_snapshot(root: Path, *, skip: str | None = None) -> Path:
-    """The file layout of a diffusers Wan snapshot with empty weight files."""
+    """The file layout of a diffusers snapshot with small valid weight files."""
     files = {
         "model_index.json": "{}",
         "scheduler/scheduler_config.json": "{}",
@@ -31,7 +32,11 @@ def fake_snapshot(root: Path, *, skip: str | None = None) -> Path:
             continue
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        if name.endswith(".safetensors"):
+            header = json.dumps({"fixture": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}).encode()
+            path.write_bytes(struct.pack("<Q", len(header)) + header + b"\0" * 4)
+        else:
+            path.write_text(text)
     return root
 
 

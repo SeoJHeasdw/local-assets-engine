@@ -36,9 +36,11 @@ FRAMING_RANGES = {
 def _number(value: Any, name: str, low: float, high: float, default: float) -> float:
     if value in (None, ""):
         return default
+    if isinstance(value, bool):
+        raise PresetError(f"{name}는 숫자여야 합니다.")
     try:
         number = float(value)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise PresetError(f"{name}는 숫자여야 합니다.") from error
     if not low <= number <= high:
         raise PresetError(f"{name}는 {low}~{high} 사이여야 합니다.")
@@ -67,6 +69,8 @@ def _placement(raw: Any, index: int, store: "JobStore", presets: dict[str, Any])
     if not isinstance(raw, dict):
         raise PresetError("배치 항목 형식이 올바르지 않습니다.")
     source = raw.get("source")
+    if source is not None and not isinstance(source, dict):
+        raise PresetError("source는 {jobId, assetId} 형식이어야 합니다.")
     standin: dict[str, Any] = {}
     file: Path | None = None
     reference: dict[str, str] | None = None
@@ -90,7 +94,7 @@ def _placement(raw: Any, index: int, store: "JobStore", presets: dict[str, Any])
             raise PresetError("GLB·glTF 파일의 절대 경로가 필요합니다.")
         label = file.stem
     position = raw.get("position") or (0.0, 0.0, 0.0)
-    if len(position) != 3:
+    if not isinstance(position, (list, tuple)) or len(position) != 3:
         raise PresetError("position은 [x, y, z] 세 값이어야 합니다.")
     asset_id = str(raw.get("id") or ("hero" if index == 0 else f"asset{index + 1}"))
     if not SAFE_ID.match(asset_id):

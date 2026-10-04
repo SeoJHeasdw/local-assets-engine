@@ -8,6 +8,7 @@ import { installTooltips } from "./tooltip.js";
 import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
 import { createEditor } from "./editor.js";
 import { createLibraryBatch } from "./library-batch.js";
+import { showVersionHistory } from "./versions.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -499,6 +500,9 @@ function detailHtml(job, asset) {
           ${meta.processingVersion >= 2 && asset.preview ? `poster="${fileUrl(job.id, asset.preview)}"` : ""}
           exposure="1.05" environment-image="neutral" interaction-prompt="none" alt="${escapeHtml(job.title)}"></model-viewer>`
       : `<div><img src="${fileUrl(job.id, asset.preview)}" alt=""><p class="notice">3D 미리보기를 쓰려면 npm install 이 필요합니다.</p></div>`;
+  } else if (asset.kind === "video") {
+    stage = `<video src="${fileUrl(job.id, asset.file)}" controls loop autoplay muted playsinline
+      ${asset.preview ? `poster="${fileUrl(job.id, asset.preview)}"` : ""}></video>`;
   } else if (asset.kind === "shot") {
     const aux = ["depth", "line"].flatMap((name) => (meta.files?.[name] || []).slice(1, 2));
     stage = `<div class="shot-stage">
@@ -526,6 +530,12 @@ function detailHtml(job, asset) {
     if (meta.checks?.coverage != null) add("물체 면적", `${Math.round(meta.checks.coverage * 100)}%`);
     if (meta.checks?.touchesEdge) add("자동 검사", "원본에서 물체가 가장자리에 닿음 (잘렸을 수 있음)");
     add("자동 검사", meta.error);
+  } else if (asset.kind === "video") {
+    add("모델", meta.model);
+    add("크기", `${meta.width}×${meta.height}px`);
+    add("길이", `${meta.seconds}초 · ${meta.frames}프레임 · ${meta.fps}fps`);
+    add("시드", meta.seed, true);
+    add("생성 설정", `${meta.steps}스텝 · guidance ${meta.guidance}`);
   } else if (asset.kind === "shot") {
     const point = (value) => value?.position?.map((number) => number.toFixed(2)).join(", ");
     add("컷", `${meta.label || ""} · ${meta.purpose || ""}`);
@@ -559,6 +569,9 @@ function detailHtml(job, asset) {
   const actions = [
     reviewButton("approved", "승인", "approve"),
     reviewButton("rejected", "거절", "reject"),
+    asset.kind === "video"
+      ? `<button class="secondary" type="button" data-action="versions" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">버전 이력</button>`
+      : "",
     asset.kind === "image"
       ? `<button class="secondary" type="button" data-action="to3d" data-job="${escapeHtml(job.id)}" data-asset="${escapeHtml(asset.id)}">3D로 만들기</button>`
       : "",
@@ -800,11 +813,13 @@ function storageHtml(report) {
   const rows = report.jobs.slice(0, state.storageAll ? report.jobs.length : 12).map((job) => {
     // 1MB보다 작은 중간 파일은 정리할 이유가 없어 보여 주지 않는다.
     const intermediate = (job.categories.intermediate || 0) >= 1048576 ? job.categories.intermediate : 0;
+    const inUse = job.active || isActive(job) || Boolean(job.activeUsedBy?.length) || Boolean(job.trashReserved);
     return `<tr><td class="storage-title"><span>${escapeHtml(job.title)}</span><small>${escapeHtml(RECIPE_LABELS[job.recipe] || job.recipe)} · ${escapeHtml(timeLabel(job.createdAt))}${job.usedBy.length ? ` · 다른 버전 ${job.usedBy.length}개의 원본` : ""}</small></td>
       <td class="num">${formatBytes(job.bytes)}</td><td class="num">${intermediate ? formatBytes(intermediate) : "–"}</td>
       <td class="storage-actions">${bridge ? `<button class="ghost" type="button" data-storage="reveal" data-job="${escapeHtml(job.jobId)}">Finder</button>` : ""}
-        ${bridge && intermediate && !isActive(job) ? `<button class="ghost" type="button" data-storage="intermediate" data-job="${escapeHtml(job.jobId)}">중간 파일 정리</button>` : ""}
-        ${bridge && !isActive(job) ? `<button class="ghost is-danger" type="button" data-storage="job" data-job="${escapeHtml(job.jobId)}">휴지통으로</button>` : ""}</td></tr>`;
+        ${bridge && intermediate && !inUse ? `<button class="ghost" type="button" data-storage="intermediate" data-job="${escapeHtml(job.jobId)}">중간 파일 정리</button>` : ""}
+        ${bridge && !inUse ? `<button class="ghost is-danger" type="button" data-storage="job" data-job="${escapeHtml(job.jobId)}">휴지통으로</button>` : ""}
+        ${job.activeUsedBy?.length ? '<span class="hint">대기·진행 작업이 사용 중</span>' : ""}</td></tr>`;
   }).join("");
   return `<div class="storage-summary"><strong>${formatBytes(report.bytes)}</strong><span>작업 ${report.jobs.length}개</span>${report.categories.intermediate ? `<span>중간 파일 ${formatBytes(report.categories.intermediate)}</span>` : ""}</div>
     <div class="storage-bar">${bar}</div><div class="storage-legend">${legend}</div>
@@ -829,6 +844,9 @@ async function storageAction(button) {
   const job = state.storage?.jobs.find((item) => item.jobId === jobId);
   if (!job) return;
   if (action === "reveal") { bridge?.reveal(jobId, "job.json"); return; }
+  if (job.active || isActive(job) || job.activeUsedBy?.length || job.trashReserved) {
+    toast("대기 또는 진행 중인 작업이 사용하는 원본은 완료 후 정리해 주세요."); return;
+  }
   const intermediate = action === "intermediate";
   const warning = intermediate
     ? `<p>생성 과정에서만 쓰인 표면 재구성·감축 작업 파일 ${job.intermediate.length}개(${formatBytes(job.categories.intermediate)})를 휴지통으로 보냅니다.</p><p class="hint">결과물·원본·다시 만들기에 필요한 파일은 그대로 둡니다. 휴지통에서 되살릴 수 있습니다.</p>`
@@ -962,6 +980,9 @@ function wireEvents() {
     if (!target) return;
     const { action, job, asset } = target.dataset;
     if (action === "open") openAsset(job, asset);
+    else if (action === "versions") showVersionHistory(api, job, asset, async (jobId, assetId) => {
+      $("#asset-dialog").close(); await openAsset(jobId, assetId);
+    }).catch(error => toast(error.message));
     else if (action === "record") openRecord(job).catch(e=>toast(e.message));
     else if (action === "compare") openCompare(job).catch((error) => toast(error.message));
     else if (action === "favorite") toggleFavorite(target);

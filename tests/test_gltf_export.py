@@ -111,6 +111,7 @@ def test_generation_runner_actually_installs_the_export_fix(tmp_path):
         "class AutoModelForImageSegmentation:\n"
         "    @staticmethod\n"
         "    def from_pretrained(*a, **kw): raise AssertionError('no model loading')\n"
+        "DINOv3ViTModel = AutoModelForImageSegmentation\n"
     )
     (tmp_path / "backends").mkdir()
     (tmp_path / "backends/__init__.py").touch()
@@ -128,7 +129,8 @@ def test_generation_runner_actually_installs_the_export_fix(tmp_path):
     )
     worker = Path(__file__).resolve().parents[1] / "src/local_assets_engine/workers/trellis_runner.py"
     result = subprocess.run(
-        [sys.executable, str(worker), "--generate-py", str(script)],
+        [sys.executable, str(worker), "--generate-py", str(script),
+         "--birefnet-revision", "a" * 40, "--model-revision", "b" * 40, "--model-pins", "{}"],
         cwd=tmp_path, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr

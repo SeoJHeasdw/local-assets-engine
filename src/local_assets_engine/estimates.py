@@ -9,7 +9,7 @@ from typing import Any
 
 MIN_SAMPLES = 3
 IMAGE_FIELDS = ("imageModel", "imageModelConfig", "width", "height", "count", "removeBackground", "canvas", "pixelate")
-MESH_FIELDS = ("pipelineType", "textureSize", "targetFaces", "gameFaces", "gameTextureSize", "removeBackground")
+MESH_FIELDS = ("pipelineType", "meshModelConfig", "backgroundRemovalConfig", "textureSize", "targetFaces", "gameFaces", "gameTextureSize", "removeBackground")
 VIDEO_FIELDS = ("videoModel", "videoModelConfig", "width", "height", "frames", "steps", "guidance")
 
 
@@ -33,7 +33,7 @@ def condition_key(job: dict[str, Any]) -> str | None:
     return json.dumps([recipe, values], sort_keys=True, ensure_ascii=False)
 
 
-def estimate_jobs(jobs: list[dict[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
+def estimate_jobs(jobs: list[dict[str, Any]], *, now: datetime | None = None, store=None) -> dict[str, Any]:
     now = now or datetime.now().astimezone()
     groups: dict[str, list[float]] = {}
     for job in jobs:
@@ -43,7 +43,7 @@ def estimate_jobs(jobs: list[dict[str, Any]], *, now: datetime | None = None) ->
             continue
         if any(stage.get("state") not in ("done", "skipped") or len(stage.get("processes", [])) > 1 for stage in stages):
             continue
-        if any("Downloading" in line or "내려받" in line for line in job.get("logTail", [])):
+        if has_downloads(job, store=store):
             continue
         duration = sum(stage.get("seconds") or 0 for stage in stages)
         if duration > 0:
@@ -70,3 +70,15 @@ def estimate_jobs(jobs: list[dict[str, Any]], *, now: datetime | None = None) ->
         }
         queue_seconds = queue_seconds + remaining if queue_seconds is not None and remaining is not None else None
     return results
+
+
+def has_downloads(job: dict[str, Any], *, store=None) -> bool:
+    if job.get("hadDownloads"):
+        return True
+    def detected(lines):
+        return any(any(word in line.lower() for word in ("downloading", "내려받")) for line in lines)
+    if detected(job.get("logTail", [])):
+        return True
+    # Old records predate the durable flag. Their collector also suppressed
+    # progress lines, so even a complete log cannot prove a clean measured run.
+    return job.get("hadDownloads") is not False

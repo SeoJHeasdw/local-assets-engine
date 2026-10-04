@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -71,6 +72,8 @@ def prepare_mesh_params(params: dict[str, Any], presets: dict[str, Any]) -> dict
     mesh = presets["mesh"]
     defaults = mesh["defaults"]
     return {
+        "meshModelConfig": deepcopy(mesh),
+        "backgroundRemovalConfig": deepcopy(presets["backgroundRemoval"]),
         "pipelineType": choice_param(params, "pipelineType", defaults["pipelineType"], mesh["pipelineTypes"]),
         "textureSize": choice_param(params, "textureSize", defaults["textureSize"], mesh["textureSizes"]),
         "targetFaces": int_param(params, "targetFaces", defaults["targetFaces"], 0, 1_000_000),
@@ -98,14 +101,15 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
         manifest.write_text(json.dumps([{"input": str(input_path), "output": str(input_path)}]), "utf-8")
         run_background_removal(ctx, manifest)
 
-    background = ctx.presets["backgroundRemoval"]
+    background = p.get("backgroundRemovalConfig") or ctx.presets["backgroundRemoval"]
+    mesh_model = p.get("meshModelConfig") or ctx.presets["mesh"]
     raw_base = mesh_dir / "raw"
     args: list[Any] = [python, WORKER, "--generate-py", script, "--birefnet", background["repo"]]
     if background.get("revision"):
         args += ["--birefnet-revision", background["revision"]]
     args += ["--state-output", mesh_dir / "source.npz"]
-    if ctx.presets["mesh"].get("revision"):
-        args += ["--model-revision", ctx.presets["mesh"]["revision"]]
+    args += ["--model-revision", mesh_model["revision"],
+             "--model-pins", json.dumps(mesh_model["dependencies"])]
     args += [
         "--", input_path, "--seed", p["meshSeed"], "--output", raw_base,
         "--pipeline-type", p["pipelineType"], "--texture-size", p["textureSize"],

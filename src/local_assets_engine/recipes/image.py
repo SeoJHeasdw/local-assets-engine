@@ -38,6 +38,8 @@ def resolve_image_source(params: dict[str, Any], store: "JobStore", *, not_found
         from ..uploads import resolve_upload
         params = {**params, "imagePath": str(resolve_upload(store, params["uploadId"]))}
     source = params.get("source")
+    if source is not None and not isinstance(source, dict):
+        raise PresetError("source는 {jobId, assetId} 형식이어야 합니다.")
     if source:
         job_id, asset_id = str(source.get("jobId")), str(source.get("assetId"))
         try:
@@ -83,11 +85,12 @@ def prepare_image_params(
         "imageModel": model["id"],
         # 요청이 대기하는 동안 설정 파일이 바뀌어도 선택한 조건으로 실행한다.
         "imageModelConfig": deepcopy(model),
+        "backgroundRemovalConfig": deepcopy(presets["backgroundRemoval"]),
     }
 
 
 def run_background_removal(ctx: "JobContext", manifest: Path) -> None:
-    config = ctx.presets["backgroundRemoval"]
+    config = ctx.params.get("backgroundRemovalConfig") or ctx.presets["backgroundRemoval"]
     args: list[str | Path] = [
         sys.executable, "-m", "local_assets_engine.tools.remove_bg",
         "--manifest", manifest, "--repo", config["repo"],

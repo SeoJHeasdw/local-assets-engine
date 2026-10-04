@@ -68,8 +68,8 @@ export function createLibraryBatch({ api, bridge, refresh }) {
     const ids = [...new Set(visible.filter(asset => selected.has(key(asset))).map(a => a.jobId))];
     const jobs = [];
     for (const id of ids) jobs.push(await api(`/api/jobs/${encodeURIComponent(id)}/storage`));
-    const active = jobs.filter(job => job.active);
-    if (active.length) throw new Error("진행 중인 작업이 포함되어 있습니다. 완료 후 정리해 주세요.");
+    const active = jobs.filter(job => job.active || job.activeUsedBy?.length || job.trashReserved);
+    if (active.length) throw new Error("대기 또는 진행 중인 작업이 사용하는 원본이 포함되어 있습니다. 완료 후 정리해 주세요.");
     const report = await api("/api/storage");
     const used = report.jobs.filter(job => ids.includes(job.jobId) && job.usedBy.length);
     const dialog = popup(`작업 ${ids.length}개를 휴지통으로`, `<p>선택한 에셋이 속한 <strong>작업 폴더 전체</strong>를 옮깁니다. 같은 작업의 선택하지 않은 에셋·원본·기록도 함께 목록에서 사라집니다.</p>

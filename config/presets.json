@@ -41,6 +41,10 @@
   "mesh": {
     "repo": "microsoft/TRELLIS.2-4B",
     "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
+    "dependencies": {
+      "microsoft/TRELLIS-image-large": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+      "facebook/dinov3-vitl16-pretrain-lvd1689m": "ea8dc2863c51be0a264bab82070e3e8836b02d51"
+    },
     "license": "MIT",
     "pipelineTypes": [
       "512",

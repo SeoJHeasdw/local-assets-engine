@@ -30,6 +30,12 @@ def jobs_dir() -> Path:
     return output_dir() / "jobs"
 
 
+def generation_lock_path() -> Path:
+    """One generation lane per user and machine, across output stores/checkouts."""
+    cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
+    return cache / "local-assets-engine" / "generation.lock"
+
+
 def engine_bin(name: str) -> Path:
     """Executable installed in the engine's own virtual environment."""
     return Path(sys.executable).parent / name

@@ -54,7 +54,10 @@ def test_mesh_edit_preserves_geometry_uv_and_pbr_while_replacing_texture(tmp_pat
     before=source.read_bytes();old_doc,old_bin=read_glb(source)
     store.update(job['id'],lambda j:j.update(state='done',assets=[{'id':'a01','kind':'mesh','role':'final','file':'asset.glb','review':'approved','meta':{'processingVersion':2,'sourceStateFile':'mesh/source.npz','stats':{'facesOut':1},'seed':7}}]))
     runner=Runner(store,recipes={'edit-asset':EDIT_ASSET})
-    edited=runner.run_job(runner.create('edit-asset',{'source':{'jobId':job['id'],'assetId':'a01'},'plan':{'recolor':{'enabled':True,'from':'#ff0000','to':'#0000ff','tolerance':.1}}})['id'])
+    logo=save_upload(store,image_bytes('white',(4,4)))
+    plan={'layers':[{'id':'color','type':'color','from':'#ff0000','to':'#0000ff','tolerance':.1},
+                    {'id':'unplaced','type':'stamp','uploadId':logo['id'],'visible':False,'position':None,'normal':None}]}
+    edited=runner.run_job(runner.create('edit-asset',{'source':{'jobId':job['id'],'assetId':'a01'},'plan':plan})['id'])
     assert edited['state']=='done',edited['error']
     asset=edited['assets'][0];doc,binary=read_glb(store.resolve_file(edited['id'],asset['file']))
     assert doc['accessors']==old_doc['accessors'] and doc['meshes']==old_doc['meshes']
@@ -64,6 +67,8 @@ def test_mesh_edit_preserves_geometry_uv_and_pbr_while_replacing_texture(tmp_pat
     assert doc['materials']==old_doc['materials']
     assert source.read_bytes()==before and asset['review']=='pending'
     assert 'sourceStateFile' not in asset['meta']  # rebuilding old voxels would discard the edit
+    assert asset['meta']['editPlan']['layers'][1]['position'] is None
+    assert store.resolve_file(edited['id'],asset['meta']['editStampFiles']['unplaced']).is_file()
     assert store.resolve_file(edited['id'],asset['meta']['inspectionFile']).is_file()
 
 
@@ -104,7 +109,7 @@ def test_layered_edit_limits_color_to_the_brushed_region_and_inherits_collection
     store.update(original['id'],lambda j:j['assets'][0].update(tags=['ui'],collection='던전',favorite=True))
     logo=save_upload(store,image_bytes('white',(4,4)))
     plan={'layers':[{'id':'color-left','type':'color','mode':'match','from':'#ff0000','to':'#0000ff','tolerance':.1,'region':{'strokes':[[.2,.5,.15,1]]}},
-                    {'id':'logo-1','type':'stamp','uploadId':logo['id'],'x':.8,'y':.8,'size':.2}]}
+                    {'id':'logo-1','type':'stamp','uploadId':logo['id'],'x':.8,'y':.8,'size':.2,'text':'JAVIS','font':'serif'}]}
     edited=runner.run_job(runner.create('edit-asset',{'source':{'jobId':original['id'],'assetId':'a01'},'plan':plan})['id'])
     assert edited['state']=='done',edited['error']
     asset=edited['assets'][0]
@@ -113,3 +118,19 @@ def test_layered_edit_limits_color_to_the_brushed_region_and_inherits_collection
     assert asset['collection']=='던전' and asset['tags']==['ui'] and not asset.get('favorite')
     assert store.resolve_file(edited['id'],asset['meta']['editStampFiles']['logo-1']).is_file()
     assert [l['id'] for l in asset['meta']['editPlan']['layers']]==['color-left','logo-1']
+    assert asset['meta']['editPlan']['layers'][1]['font']=='serif'
+
+
+def test_stamp_font_round_trip_and_hidden_unplaced_mesh_layer(tmp_path):
+    store=JobStore(tmp_path/'jobs');upload=save_upload(store,image_bytes('white',(4,4)))
+    for font in ('bold','regular','serif'):
+        plan,_=normalize_plan({'layers':[{'id':'text','type':'stamp','uploadId':upload['id'],'text':'JAVIS','font':font}]},'image',store)
+        assert plan['layers'][0]['font']==font
+    with pytest.raises(PresetError):
+        normalize_plan({'layers':[{'id':'text','type':'stamp','uploadId':upload['id'],'font':'unknown'}]},'image',store)
+    hidden={'id':'logo','type':'stamp','uploadId':upload['id'],'visible':False,'position':None,'normal':None}
+    plan,stamps=normalize_plan({'layers':[hidden]},'mesh',store)
+    assert plan['layers'][0]['position'] is None and plan['layers'][0]['normal'] is None
+    assert stamps['logo']==resolve_upload(store,upload['id'])
+    with pytest.raises(PresetError):normalize_plan({'layers':[{**hidden,'visible':True}]},'mesh',store)
+    with pytest.raises(PresetError):normalize_plan({'layers':[{**hidden,'position':[0,0,0]}]},'mesh',store)

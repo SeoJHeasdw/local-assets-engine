@@ -5,6 +5,11 @@
 
 ## 구조
 
+2026-10-04 적대적 평가의 프로세스 중첩·초안 소실·출처 우회·원본 제거 경쟁을 수정했다. 계측을 유지하는
+별도 단계 세션, 부모 급사에도 유지되는 잠금 lease, 작업 등록과 휴지통 예약의 원자 경계, 초안의 세대 비교를
+채택한다. 자동 검수·사람 승인 구분과 생성 품질 기본값은 유지한다. 상세 재현과 수정 후 결과는
+`output/diagnostics/adversarial-20261004/`에 보관한다.
+
 | 날짜 | 결정과 이유 |
 | --- | --- |
 | 2026-09-16 | 유료 API·구독(Higgsfield 등) 대신 보유한 M4 Max 36GB에서 로컬 생성. 좋은 결과가 쌓이면 M5 Ultra 512GB급 교체를 검토하므로 모든 단계의 시간과 최대 메모리를 기록 |
@@ -83,6 +88,14 @@ PyTorch 2.14가 C++20을 요구해 빌드 플래그만 바꿨다.
 `scripts/setup_trellis.sh`가 그 환경에 함께 설치한다.
 
 ### DINOv3 확인 보완 (2026-09-22)
+
+2026-10-04 모델 재현성 보완: 이미 사용하던 캐시와 동일한 sparse decoder
+`microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`, DINOv3
+`ea8dc2863c51be0a264bab82070e3e8836b02d51`을 명시적으로 고정했다. 새 가중치·모델 선택은 없다.
+decoder [고정 모델 카드](https://huggingface.co/microsoft/TRELLIS-image-large/blob/25e0d31ffbebe4b5a97464dd851910efc3002d96/README.md)는 MIT,
+[원문 LICENSE](https://raw.githubusercontent.com/microsoft/TRELLIS/main/LICENSE)는 상업 이용·판매를 허용하고 한국 제외가 없다.
+저작권·허락 고지를 유지한다. DINO는 아래 원문과 조건을 2026-10-04 다시 확인했다. 커밋과 실제 읽은
+checkpoint를 함께 기록하고 작업 중 원격 fallback 다운로드를 금지한다.
 
 [사용 중인 모델의 LICENSE.md](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m/blob/main/LICENSE.md)
 원문(2025-08-19 갱신)을 확인했다. 1.a는 전 세계·무상 사용/복제/수정/배포 권리를 부여하며 비상업 한정이나
@@ -470,6 +483,13 @@ shot-to-video는 보류한다.
 다음 σ로 새 잡음과 섞는다. 마지막 스텝은 x0를 그대로 쓴다.
 
 ## 도구
+
+2026-10-04 보안 수정: 엔진 urllib3 2.7.0을 **2.8.0**으로 갱신하고 의존성 하한에 2.8.0을 명시했다.
+[HTTPS 프록시 TLS](https://github.com/urllib3/urllib3/security/advisories/GHSA-8988-9cw3-xx77),
+[Deflate 반복](https://github.com/urllib3/urllib3/security/advisories/GHSA-gh4c-6fx4-qh6g),
+[chunk-size 메모리](https://github.com/urllib3/urllib3/security/advisories/GHSA-vxq7-64xx-v4gw) 공지의 수정 버전이다.
+[2.8.0 LICENSE](https://raw.githubusercontent.com/urllib3/urllib3/2.8.0/LICENSE.txt)를 같은 날 확인했다.
+MIT로 상업 이용·판매가 가능하고 한국 제외가 없다. 재배포 시 저작권·허락 고지를 유지한다.
 
 2026-09-16 품질 우선 재구성 구현을 위해 TRELLIS Python 환경에 scikit-image 0.26.0과
 point-cloud-utils 0.34.0을 추가한다. 전자는 CPU 등위면 추출, 후자는 원본 삼각형과의 최근접

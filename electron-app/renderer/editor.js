@@ -5,7 +5,8 @@ import {
 } from "../shared/editing.mjs";
 import { escapeHtml, fileUrl, formatBytes } from "../shared/format.mjs";
 import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
-import { readDraft, writeDraft } from "./drafts.js";
+import { deleteDraft, readDraft, sameDraftVersion, writeDraft } from "./drafts.js";
+import { showVersionHistory } from "./versions.js";
 
 const clone = (value) => structuredClone(value);
 const HISTORY_LIMIT = 100;
@@ -121,6 +122,8 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       past: [], future: [], dirty: Boolean(old), ready: false, loaded: !isMesh, busy: false, pending: false,
       revision: 0, compare: false, closed: false, saving: false, source: { width: 1, height: 1 },
       textures: new Map(), originals: [], longest: 1, lastMerge: null,
+      draftVersion: { generation: crypto.randomUUID(), revision: 0 },
+      draftPredecessor: old?.draftVersion || null, draftWrites: Promise.resolve(),
     };
     session = s;
     wire(s);
@@ -208,18 +211,32 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
     }
 
     // ---- 임시 보관 -----------------------------------------------------------------
-    const draftValue = () => ({ version: 2, name: $("#edit-name").value, plan: clone(s.plan), stamps: [...s.stamps], selected: s.selected });
+    const draftValue = () => ({ version: 2, draftVersion: { ...s.draftVersion }, name: $("#edit-name").value, plan: clone(s.plan), stamps: [...s.stamps], selected: s.selected });
     async function flushDraft() {
       clearTimeout(s.draftTimer);
       if (!s.dirty || s.saved) return;
+      const current = drafts.get(s.key);
+      if (current && current.draftVersion?.generation !== s.draftVersion.generation) return;
       const value = draftValue();
       drafts.set(s.key, value);
-      if (!await writeDraft(s.key, value) && !s.closed) status("임시 보관을 못 했습니다. 저장 공간을 확인하거나 새 버전으로 저장해 주세요.");
+      s.draftWrites = s.draftWrites.then(async () => {
+        if (drafts.get(s.key)?.draftVersion?.generation !== s.draftVersion.generation) return;
+        if (!await writeDraft(s.key, value, { previous: s.draftPredecessor }) && !s.closed) status("임시 보관을 못 했습니다. 저장 공간을 확인하거나 새 버전으로 저장해 주세요.");
+      });
+      await s.draftWrites;
     }
     function scheduleDraft() {
+      if (s.closed) return;
       clearTimeout(s.draftTimer);
-      if (s.dirty) s.draftTimer = setTimeout(flushDraft, 400);
+      if (s.dirty) {
+        s.draftVersion.revision++;
+        s.saved = false;
+        s.draftTimer = setTimeout(flushDraft, 400);
+      }
     }
+    // Claim ownership immediately when reopening a draft, before an older save
+    // can finish. Persistence also compares the predecessor inside its transaction.
+    if (s.dirty) { drafts.set(s.key, draftValue()); flushDraft(); }
     const onHide = () => { if (document.visibilityState === "hidden") flushDraft(); };
     window.addEventListener("pagehide", flushDraft);
     document.addEventListener("visibilitychange", onHide);
@@ -835,7 +852,17 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
         switch (button.dataset.e) {
           case "close": close(); break;
           case "select": s.selected = rowId; if (s.tool) s.tool = null; dialog.classList.remove("is-picking", "is-brushing"); changed({ draft: false }); break;
-          case "toggle-visible": { const target = layer(rowId); remember(target.visible === false ? "레이어 보이기" : "레이어 숨기기"); target.visible = target.visible === false; changed(); break; }
+          case "toggle-visible": {
+            const target = layer(rowId);
+            remember(target.visible === false ? "레이어 보이기" : "레이어 숨기기");
+            target.visible = target.visible === false;
+            if (isMesh && target.type === "stamp" && target.visible && !target.position) {
+              s.selected = target.id;
+              setTool("place");
+              toast("로고를 붙일 표면을 먼저 선택해 주세요.");
+            }
+            changed(); break;
+          }
           case "toggle-lock": { const target = layer(rowId); remember(target.locked ? "잠금 풀기" : "레이어 잠그기"); target.locked = !target.locked; if (target.locked && s.selected === rowId) s.tool = null; changed(); break; }
           case "layer-up": case "layer-down": moveLayer(rowId, button.dataset.e === "layer-up" ? "up" : "down"); changed(); break;
           case "layer-delete": {
@@ -998,14 +1025,16 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       updateSave();
       status("새 버전을 준비하고 있습니다…");
       const plan = clone(s.plan);
+      const name = $("#edit-name").value, savedVersion = { ...s.draftVersion }, stampSnapshot = new Map(s.stamps);
+      await flushDraft();
       for (const item of plan.layers) {
         if (item.type !== "stamp") continue;
-        const entry = s.stamps.get(item.id);
+        const entry = stampSnapshot.get(item.id);
         if (!entry?.blob) throw new Error(`'${item.name || "로고"}' 레이어의 그림을 찾지 못했습니다. 이미지를 다시 넣어 주세요.`);
-        if (!entry.upload) { entry.upload = await uploadBlob(entry.blob); scheduleDraft(); }
+        if (!entry.upload) entry.upload = await uploadBlob(entry.blob);
         item.uploadId = entry.upload.id;
       }
-      const created = await api("/api/jobs", { method: "POST", body: { recipe: "edit-asset", params: { source: { jobId: job.id, assetId: asset.id }, name: $("#edit-name").value, replaceEdits: Boolean(asset.meta?.editBaseFile), plan } } });
+      const created = await api("/api/jobs", { method: "POST", body: { recipe: "edit-asset", params: { source: { jobId: job.id, assetId: asset.id }, name, replaceEdits: Boolean(asset.meta?.editBaseFile), plan } } });
       s.savingJob = created.id;
       quietJob(created.id);
       await refreshJobs();
@@ -1019,18 +1048,24 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
           status(queued ? "대기 중 — 창을 닫아도 순서가 되면 저장됩니다" : "새 버전을 저장하고 있습니다…");
         },
       });
-      s.saved = true;
-      clearTimeout(s.draftTimer);
-      drafts.delete(s.key);
-      await writeDraft(s.key, null);
-      const wasOpen = !s.closed;
-      if (wasOpen) close();
+      let unchanged = sameDraftVersion(s.draftVersion, savedVersion);
+      s.saved = unchanged;
+      if (unchanged) clearTimeout(s.draftTimer);
+      if (sameDraftVersion(drafts.get(s.key)?.draftVersion, savedVersion)) drafts.delete(s.key);
+      await deleteDraft(s.key, savedVersion);
+      // Canvas actions can arrive while the IndexedDB transaction is pending.
+      unchanged = sameDraftVersion(s.draftVersion, savedVersion);
+      s.saved = unchanged;
+      const wasOpen = !s.closed && session === s;
+      if (wasOpen && unchanged) close();
+      else if (wasOpen) { finishSaving(); await flushDraft(); }
+      const transition = opening;
       await refreshJobs();
-      if (wasOpen) {
+      if (wasOpen && unchanged && transition === opening) {
         if (next) await next(completed);
         else await openAsset(completed.id, completed.assets[0].id);
       }
-      toast(wasOpen ? "편집본을 새 버전으로 저장했습니다." : `'${completed.title}'을 새 버전으로 저장했습니다.`);
+      toast(wasOpen && !unchanged ? "새 버전을 저장했습니다. 그 뒤의 수정은 편집 중인 초안으로 남겨 두었습니다." : wasOpen ? "편집본을 새 버전으로 저장했습니다." : `'${completed.title}'을 새 버전으로 저장했습니다.`);
     }
 
     // ---- 팝업: 작업 내역, 버전 이력, 정보·정리 --------------------------------------------------
@@ -1050,26 +1085,9 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
     }
 
     async function openVersions() {
-      const data = await api(`/api/jobs/${job.id}/assets/${asset.id}/versions`);
-      const date = (iso) => { const value = new Date(iso); return Number.isNaN(value.getTime()) ? "" : value.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
-      const box = popup("버전 이력", `<p class="hint">원본에서 어떤 편집을 거쳐 왔는지 보여 줍니다. 이전 버전을 열어 편집하면 그 버전에서 새 갈래로 저장됩니다.</p>
-        <ol class="version-tree">${data.versions.map((node) => `<li style="--depth:${node.depth}" class="${node.key === data.current ? "is-current" : ""}">
-          <button type="button" data-open="${escapeHtml(node.jobId)}|${escapeHtml(node.assetId)}">
-            ${node.preview ? `<img src="${fileUrl(node.jobId, node.preview)}" alt="" loading="lazy">` : '<span class="version-blank"></span>'}
-            <span class="version-text"><strong>${escapeHtml(node.relation || (node.missingParent ? "원본(이전 기록 없음)" : "원본"))}${node.favorite ? " ★" : ""}</strong>
-            <small>${escapeHtml([node.kind === "mesh" ? "3D" : "2D", node.summary.join(" · "), date(node.createdAt)].filter(Boolean).join(" · "))}</small>
-            <small class="version-title">${escapeHtml(node.title)}</small></span>
-            ${node.key === data.current ? '<span class="version-badge">지금 편집 중</span>' : ""}
-          </button></li>`).join("")}</ol>`, { wide: true });
-      box.addEventListener("click", (event) => {
-        const target = event.target.closest("[data-open]");
-        if (!target) return;
-        const [jobId, assetId] = target.dataset.open.split("|");
-        if (`${jobId}/${assetId}` === data.current) return box.close();
-        box.close();
-        close();
-        openAsset(jobId, assetId);
-      });
+      return showVersionHistory(api, job.id, asset.id, async (jobId, assetId) => {
+        close(); await openAsset(jobId, assetId);
+      }, { currentLabel: "지금 편집 중" });
     }
 
     async function openInfo() {
@@ -1130,6 +1148,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       if (!s.saved && s.dirty) flushDraft();
       s.closed = true;
       clearTimeout(s.timer);
+      clearTimeout(textTimer);
       window.removeEventListener("pagehide", flushDraft);
       document.removeEventListener("visibilitychange", onHide);
       s.worker.terminate();

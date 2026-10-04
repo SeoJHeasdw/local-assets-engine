@@ -67,6 +67,14 @@ def _check_video(data: dict[str, Any]) -> None:
 
 def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
     data = json.loads(Path(path).read_text("utf-8"))
+    for key in ("backgroundRemoval", "mesh"):
+        if key in data and not COMMIT.fullmatch(str(data[key].get("revision") or "")):
+            raise PresetError(f"{key}: revision은 40자리 커밋 해시여야 합니다.")
+    dependencies = data.get("mesh", {}).get("dependencies")
+    required = {"microsoft/TRELLIS-image-large", "facebook/dinov3-vitl16-pretrain-lvd1689m"}
+    if "mesh" in data and (not isinstance(dependencies, dict) or set(dependencies) != required
+                            or not all(COMMIT.fullmatch(str(value)) for value in dependencies.values())):
+        raise PresetError("TRELLIS decoder와 DINOv3의 커밋을 고정해야 합니다.")
     models = image_models(data)
     if len({model["id"] for model in models}) != len(models):
         raise PresetError("이미지 모델 id가 중복됩니다.")

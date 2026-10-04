@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -25,9 +26,13 @@ class Recipe:
 
 def int_param(params: dict[str, Any], key: str, default: int, low: int, high: int) -> int:
     value = params.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise PresetError(f"{key}는 정수여야 합니다.")
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        raise PresetError(f"{key}는 유한한 정수여야 합니다.")
     try:
         number = int(value)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise PresetError(f"{key}는 정수여야 합니다.") from error
     if not low <= number <= high:
         raise PresetError(f"{key}는 {low}~{high} 사이여야 합니다.")
@@ -36,9 +41,11 @@ def int_param(params: dict[str, Any], key: str, default: int, low: int, high: in
 
 def float_param(params: dict[str, Any], key: str, default: float, low: float, high: float) -> float:
     value = params.get(key, default)
+    if isinstance(value, bool):
+        raise PresetError(f"{key}는 숫자여야 합니다.")
     try:
         number = float(value)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise PresetError(f"{key}는 숫자여야 합니다.") from error
     if not low <= number <= high:
         raise PresetError(f"{key}는 {low}~{high} 사이여야 합니다.")

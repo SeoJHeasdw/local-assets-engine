@@ -96,6 +96,139 @@ def test_local_image_upload_and_source_validation(api):
     assert client.get('/uploads/invalid').status_code==404
 
 
+@pytest.mark.parametrize("origin", ["null", "http://127.0.0.1:9999", "https://127.0.0.1:47831",
+                                    "http://127.0.0.1:47831/", "http://localhost:47831", "not-a-url"])
+def test_only_the_exact_studio_origin_can_change_state(api, origin):
+    client, runner = api
+    job = runner.submit("fake", {"subject": "x"})
+    assert client.post(f"/api/jobs/{job['id']}/cancel", headers={"origin": origin}).status_code == 403
+    assert runner.store.load(job["id"])["state"] == "queued"
+    assert client.post("/api/uploads", content=b"x", headers={"origin": origin}).status_code == 403
+    assert client.get("/api/health", headers={"origin": "http://127.0.0.1:47831"}).status_code == 200
+    assert client.get("/api/health", headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.get("/api/health", headers={"sec-fetch-site": "none"}).status_code == 200
+
+
+def test_malformed_request_values_are_user_errors(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    runner = Runner(store)
+    with TestClient(create_app(store=store, runner=runner, start_runner=False),
+                    base_url="http://127.0.0.1:47831", raise_server_exceptions=False) as client:
+        for params in ([1], "wrong", False, None):
+            assert client.post("/api/jobs", json={"recipe": "image", "params": params}).status_code == 400
+        for source in ([1], "wrong", 1, True):
+            for recipe in ("image-to-3d", "image-to-video"):
+                assert client.post("/api/jobs", json={"recipe": recipe, "params": {"source": source}}).status_code == 400
+        assert client.post("/api/jobs", content='{"recipe":"image","params":{"subject":"x","width":1e400}}',
+                           headers={"content-type": "application/json"}).status_code == 400
+        for status in ({}, ["approved"], None):
+            assert client.post("/api/jobs/20261004-000000-abcd/assets/a01/review", json={"status": status}).status_code == 400
+        assert client.post("/api/jobs", json={"recipe": "edit-asset", "params": {
+            "source": {"jobId": "20261004-000000-abcd", "assetId": "a01"}, "plan": {"layers": []}}}).status_code == 400
+
+
+def real_source(store):
+    from PIL import Image
+    job = store.create("image", {"subject": "synthetic"}, "source")
+    Image.new("RGBA", (8, 8), "red").save(store.job_dir(job["id"]) / "image.png")
+    return store.update(job["id"], lambda j: j.update(state="done", assets=[{
+        "id": "a01", "kind": "image", "role": "candidate", "file": "image.png",
+        "preview": "image.png", "review": "pending", "meta": {}}]))
+
+
+def test_pending_dependencies_and_trash_reservation_are_atomic(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    runner = Runner(store)
+    source = real_source(store)
+    payload = {"recipe": "edit-asset", "params": {
+        "source": {"jobId": source["id"], "assetId": "a01"}, "plan": {"layers": []}}}
+    with TestClient(create_app(store=store, runner=runner, start_runner=False), base_url="http://127.0.0.1:47831") as client:
+        derived = client.post("/api/jobs", json=payload).json()
+        row = client.get(f"/api/jobs/{source['id']}/storage").json()
+        assert row["active"] is False and row["activeUsedBy"] == [derived["id"]]
+        assert row["usedBy"] == [derived["id"]]
+        reserve_url = f"/api/jobs/{source['id']}/trash/reserve"
+        assert client.post(reserve_url, json={}).status_code == 409
+        client.post(f"/api/jobs/{derived['id']}/cancel")
+        reserved = client.post(reserve_url, json={})
+        assert reserved.status_code == 200
+        token = reserved.json()["token"]
+        assert client.post("/api/jobs", json=payload).status_code == 409
+        finish_url = f"/api/jobs/{source['id']}/trash/finish"
+        assert client.post(finish_url, json={"token": "x" * 32}).status_code == 400
+        assert client.post(finish_url, json={"token": "a" * 32}).status_code == 409
+        assert client.post(finish_url, json={"token": token, "failed": True}).status_code == 200
+        assert not store.load(source["id"]).get("trashReservation")
+        assert client.post("/api/jobs", json=payload).status_code == 201
+
+
+def test_trash_request_tokens_are_idempotent_and_finished_tokens_cannot_reserve_late(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    source = real_source(store)
+    base = f"/api/jobs/{source['id']}/trash"
+    with TestClient(create_app(store=store, start_runner=False), base_url="http://127.0.0.1:47831") as client:
+        request = {"token": "b" * 32, "ownerPid": os.getpid()}
+        assert client.post(base + "/reserve", json=request).status_code == 200
+        before = store.load(source["id"])["trashReservation"]
+        assert client.post(base + "/reserve", json=request).json()["token"] == request["token"]
+        assert store.load(source["id"])["trashReservation"] == before
+        assert client.post(base + "/finish", json={"token": "c" * 32}).status_code == 409
+        assert store.load(source["id"])["trashReservation"] == before
+        assert client.post(base + "/finish", json={"token": request["token"]}).status_code == 200
+        assert client.post(base + "/finish", json={"token": request["token"]}).status_code == 200
+        assert client.post(base + "/reserve", json=request).status_code == 409
+        # Even when the reserve has not arrived yet, finishing retires the token.
+        late = {"token": "d" * 32, "ownerPid": os.getpid()}
+        assert client.post(base + "/finish", json={"token": late["token"], "failed": True}).status_code == 200
+        assert client.post(base + "/reserve", json=late).status_code == 409
+        for invalid in ({"token": "x" * 32}, {"ownerPid": True}, {"ownerPid": "1"}, {"ownerPid": 0}):
+            assert client.post(base + "/reserve", json=invalid).status_code == 400
+
+
+def test_failed_job_with_live_process_protects_its_input_and_storage(tmp_path):
+    import fcntl
+    store = JobStore(tmp_path / "jobs")
+    source = real_source(store)
+    orphan = store.create("edit-asset", {"source": {"jobId": source["id"], "assetId": "a01"}}, "orphan")
+    store.update(orphan["id"], lambda job: job.update(state="failed"))
+    with (store.job_dir(orphan["id"]) / ".process.lock").open("a") as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX)
+        with TestClient(create_app(store=store, start_runner=False), base_url="http://127.0.0.1:47831") as client:
+            storage = client.get(f"/api/jobs/{source['id']}/storage").json()
+            assert storage["activeUsedBy"] == [orphan["id"]]
+            assert client.get(f"/api/jobs/{orphan['id']}/storage").json()["active"] is True
+            rows = {row["jobId"]: row for row in client.get("/api/storage").json()["jobs"]}
+            assert rows[orphan["id"]]["active"] is True
+            assert rows[source["id"]]["activeUsedBy"] == [orphan["id"]]
+            url = f"/api/jobs/{source['id']}/trash/reserve"
+            assert client.post(url, json={}).status_code == 409
+            fcntl.flock(lease, fcntl.LOCK_UN)
+            assert client.get(f"/api/jobs/{source['id']}/storage").json()["activeUsedBy"] == []
+            assert client.post(url, json={}).status_code == 200
+
+
+def test_video_lineage_and_symlink_boundaries(tmp_path):
+    store = JobStore(tmp_path / "jobs")
+    source = real_source(store)
+    video = store.create("image-to-video", {}, "video")
+    store.update(video["id"], lambda j: j.update(state="done", assets=[{
+        "id": "a01", "kind": "video", "role": "final", "file": "video.mp4", "review": "pending",
+        "meta": {"source": {"jobId": source["id"], "assetId": "a01"}}}]))
+    with TestClient(create_app(store=store, start_runner=False), base_url="http://127.0.0.1:47831") as client:
+        versions = client.get(f"/api/jobs/{video['id']}/assets/a01/versions")
+        assert versions.status_code == 200
+        assert [v["kind"] for v in versions.json()["versions"]] == ["image", "video"]
+        external = tmp_path / "external"
+        external.mkdir()
+        (external / "outside.txt").write_text("synthetic")
+        (store.root / "20261004-000000-abcd").symlink_to(external, target_is_directory=True)
+        assert client.get("/files/20261004-000000-abcd/outside.txt").status_code == 404
+        uploads = store.root.parent / "uploads"
+        uploads.mkdir()
+        (uploads / ("a" * 32 + ".png")).symlink_to(external / "outside.txt")
+        assert client.get("/uploads/" + "a" * 32).status_code == 404
+
+
 def test_assets_are_organized_with_favorites_tags_collections_and_notes(api):
     client, runner = api
     job_id = client.post("/api/jobs", json={"recipe": "fake", "params": {"subject": "검"}}).json()["id"]

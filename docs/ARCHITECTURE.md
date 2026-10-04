@@ -52,11 +52,19 @@ javis · CLI   ──HTTP───▶        │
 - 창의 기본 앱 열기는 작업 폴더 안의 `.blend`만 받는다(`assets:open-blend`).
 - 휴지통 보내기(`assets:trash-intermediate`, `assets:trash-job`)는 main이 엔진의
   `GET /api/jobs/{id}/storage`를 다시 읽어 진행 중이 아닌지, 요청한 경로가 `intermediate`로
-  분류됐는지 확인한 뒤 `shell.trashItem`으로 옮긴다. 지우지 않으므로 Finder 휴지통에서 되살린다.
+  분류됐는지 확인하고 이동 직전 예약한다. 새 작업 등록과 이동 예약은 같은 namespace 잠금에서
+  처리하므로 대기·진행 작업이 사용하는 원본을 옮길 수 없다. main이 `shell.trashItem`을 호출하고
+  완료·실패를 알려 예약을 해제한다. 앱이 요청 전에 token을 만들어 같은 token으로 재시도하고,
+  응답을 잃어도 완료 요청을 보존해 재연결 때 재전송한다. 엔진은 `.trash-finished/`에 완료 token을
+  남겨 늦게 도착한 예약이 다시 잠금을 만들지 못하게 한다. IPC는 실제 mainFrame의 studio와 제한된 시작 화면만
+  받으며 실제 파일 경로도 다시 검사한다. 지우지 않으므로 Finder 휴지통에서 되살린다.
 - 창에는 제목 막대가 없다(`hiddenInset`). 맨 위 28px 띠와 화면 머리글이 `-webkit-app-region: drag`이고
   단추·입력·팝업은 `no-drag`다. 끌기 띠는 문서 맨 앞에 있어 뒤에 오는 `no-drag` 요소가 영역을 뚫는다.
-- 엔진이 SIGTERM을 받으면 진행 중인 작업을 중지한다. 단계 프로세스는 자기 세션으로
-  실행되므로 그 프로세스 그룹에 SIGTERM을, 3초 뒤에도 남으면 SIGKILL을 보낸다.
+- 엔진과 독립 CLI의 SIGTERM·SIGINT는 진행 작업을 중지한다. `/usr/bin/time -l`의 자식은 작은
+  exec shim에서 별도 세션을 만든 뒤 실제 단계 명령으로 교체된다. 단계 그룹에만 SIGTERM을,
+  3초 뒤에도 남으면 SIGKILL을 보낸다. time은 자식을 수거하고 측정을 출력할 때까지 유지한다.
+  부모가 먼저 끝나도 남은 자식을 정리한 뒤 다음 작업을 허용한다. 작업별 `.process.lock`도
+  자식에게 상속하여 부모 급사 후 기록이 실패로 닫혀도 살아 있는 단계와 그 입력의 이동을 막는다.
 - 엔진이 시작할 때 `queued`로 남은 작업은 `cancelled`, `running`으로 남은 작업은
   `failed`로 닫는다. 어느 쪽도 다시 실행하지 않는다.
 - 단, 다른 프로세스가 지금 돌리고 있는 작업은 닫지 않는다. 작업을 시작할 때 `owner`에
@@ -64,7 +72,10 @@ javis · CLI   ──HTTP───▶        │
   있고 하트비트가 3분 안쪽이면 남의 작업으로 보고 건너뛴다. 앱과 CLI가 각자 엔진을
   띄울 수 있어서, 이 검사가 없으면 앱을 여는 것만으로 CLI가 돌리던 생성이 끊긴다.
 - 같은 출력 저장소의 `.engine.lock`을 프로세스 사이에서 공유한다. 독립 CLI와 앱도 생성·후처리를
-  동시에 실행하지 않는다. 대기열도 소유자와 하트비트를 유지하고, 다른 엔진의 중지 요청을 읽는다.
+  동시에 실행하지 않는다. 사용자·기기의 `~/Library/Caches/local-assets-engine/generation.lock`(Mac)을
+  함께 잡아 다른 출력 저장소·체크아웃도 직렬화한다. 잠금 FD는 단계에 상속해 제어 프로세스가
+  강제 종료돼도 단계 종료까지 유지한다. 제출 시 queued와 owner를 함께 기록하며 대기열도
+  하트비트를 유지하고 다른 엔진의 중지 요청을 읽는다.
 - 모델은 서버 프로세스에 올리지 않는다. 레시피는 torch·bpy를 import하지 않고, 모델은
   단계 프로세스 안에서만 불러온다.
 
@@ -101,9 +112,12 @@ javis · CLI   ──HTTP───▶        │
 | `GET /api/assets?review=&kind=&favorite=&collection=&tag=` | 작업을 가로지른 에셋 목록 |
 | `GET /api/storage` | 분류별 합계와 작업별 크기, 다른 작업이 원본으로 쓰는지(`usedBy`), 중간 파일 목록 |
 | `GET /api/jobs/{id}/storage` | 작업 폴더의 파일별 크기·분류와 `active` |
+| `POST /api/jobs/{id}/trash/reserve` | `{token?, paths?, ownerPid?}`. 32자리 hex token으로 전체 작업 또는 중간 파일 이동 예약. 같은 요청의 재전송은 멱등 처리. 사용 중 원본·완료 token은 409 |
+| `POST /api/jobs/{id}/trash/finish` | `{token, failed?}`. 이동 완료·실패·응답 유실 후 예약 해제와 완료 token 기록. 다른 token의 예약은 유지 |
 | `GET /files/{id}/{path}` | 해당 작업 폴더 안의 파일만 제공 |
 
-Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 403으로 거절한다.
+Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가 요청과 다르면 403으로
+거절한다. `Origin: null`과 다른 사이트의 Fetch Metadata도 거절한다. Origin 없는 로컬 CLI는 지원한다.
 
 ### 레시피 입력
 
@@ -170,6 +184,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
 | `owner` | 실행·대기를 맡은 `{pid, heartbeat}`. 시작 복구가 살아 있는 다른 엔진의 작업을 닫지 않게 한다 |
+| `hadDownloads` | 실행 시작 때 false, 다운로드 로그를 발견하면 true로 영속 기록. true 또는 필드 없는 과거 기록은 예상 시간 표본에서 제외 |
+| `trashReservation` | `{token, createdAt, ownerPid, paths}`. 이동 중 새 원본 사용을 막고 종료된 이동 소유자의 예약은 다음 검사 때 해제 |
 | `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
 | `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
@@ -180,6 +196,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 - 러너와 API가 같은 기록을 고치므로 모든 수정은 `JobStore.update`에서 작업별 파일 잠금과
   스레드 잠금을 잡고 다시 읽은 뒤 임시 파일에 쓰고 교체한다.
 - 파일 경로는 작업 폴더 기준 상대 경로다. `resolve_file`이 폴더 밖 경로를 막는다.
+- 작업 폴더 자체와 기록 파일의 symlink도 거절한다. 기록 읽기·교체는 검증한 디렉터리 FD를 기준으로 한다.
 - 진행률은 최대 0.5초 간격으로 기록한다. 진행 막대 줄은 `job.log`에 남기지 않는다.
 
 ## 단계와 측정
@@ -209,6 +226,11 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
 - `peakMemoryBytes`는 `/usr/bin/time -l`의 peak memory footprint다. Metal 할당이 포함되는지는
   확인하지 않았다(포함으로 추정). 같은 측정 방식의 기록끼리만 비교한다.
 - 모델을 처음 내려받은 실행은 시간 비교에서 빼고 본다.
+- 실행된 모든 성공·실패·취소 시도에 초·최대 footprint·RSS·상태·종료 코드를 남긴다. 측정이 없으면
+  `measurementUnavailableReason`을 기록하며 time이 없을 때 미계측 실행은 하지 않는다. 로그 콜백 실패는
+  제어 스레드로 전달하고 출력 파이프를 계속 비운 뒤 단계를 정리한다.
+- 측정 집계는 영상 모델·리비전·크기·프레임·스텝·CFG와 3D 면 수·텍스처·크기 조건을 나눈다.
+  과거 수집기는 다운로드 진행 줄을 숨겼으므로 필드 없는 이전 기록은 예상 시간 표본에서 제외한다.
 
 ## 3D 계약
 
@@ -219,6 +241,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin이 다른 사이트면 4
    정수 키 탐색을 벡터화한다. 원본 엔진 클론은 수정하지 않는다.
 3. 감축 전 **전체 메시·복셀 PBR**을 `mesh/source.npz`에 원자적으로 저장하고 모델 프로세스를
    끝낸다. `source.json`에는 모델 리비전·시드·입력 해시·샘플러 설정·적재/추론 시간을 남긴다.
+   `models`에는 주 모델·외부 decoder·DINOv3·BiRefNet의 고정 커밋과 실제 사용 파일의 크기,
+   캐시 blob SHA-256(있는 경우), 설정 SHA-256을 기록한다. 작업 준비 시 `meshModelConfig`와
+   `backgroundRemovalConfig`를 복사한다. TRELLIS의 HF 호출은 고정 커밋의 로컬 캐시만 읽고,
+   직접 로컬 checkpoint로 읽는 파일도 기록한다. upstream fallback이 원래 로드 오류를 가리지 않는다.
 4. CPU에서 원본 표면까지의 unsigned distance를 계산해 좁은 두께의 일관된 표면으로 재구성한다.
    물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 가장 짧은 모서리부터
    위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다.
@@ -338,6 +364,9 @@ UV 덮개)은 로고나 브러시 영역이 있을 때만 푼다. 1백만 면 �
 열어 원본으로 돌아갈 수 있다. 파일·승인·프리비즈 참조는 덮어쓰지 않고 새 에셋을 만든다. 미저장 편집은 브라우저
 IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upload, label}]], selected}`로 따로 보관하고
 변경 0.4초 뒤, 창을 닫거나 앱이 가려질 때(`pagehide`·`visibilitychange`) 쓴다. 만들기 화면의 작성 중 요청은 localStorage에 둔다.
+초안은 세대·수정번호를 보관하며 재편집이 새 세대를 선점한다. 저장 완료는 시작 때의 세대·수정번호와
+같은 초안만 IndexedDB 트랜잭션에서 삭제한다. 대기 중 추가 수정은 창·초안에 남긴다. 문구 글꼴과
+숨긴 미배치 로고도 보관하며 로고를 다시 켜면 표면 배치를 안내한다.
 
 ## 버전 계보와 보관 용량
 
@@ -346,19 +375,22 @@ IndexedDB에 `{version: 2, name, plan, stamps: [[레이어 id, {image, blob, upl
   서버의 작업 잠금 안에서 최신 목록을 읽어 적용한다. 작업 휴지통은 에셋이 속한 작업 id를 중복 제거한 뒤,
   같은 작업의 미선택 에셋·원본까지 옮긴다는 확인 창을 거쳐 기존 main 검증 통로를 쓴다.
 - 예상 시간은 이미지·설명→3D·이미지→3D·재구성·설명→영상·이미지→영상의 같은 모델/출력 조건에서 완료된 기록 3개 이상을 쓴다.
-  실패·재시도·로그에 다운로드가 확인되는 기록은 제외하고 단계 시간 합계의 중앙값에서 처리 경과를 뺀다.
+  실패·재시도·다운로드 확인 또는 여부 미상인 기록은 제외하고 단계 시간 합계의 중앙값에서 처리 경과를 뺀다.
   대기 작업에는 앞선 작업의 남은 시간도 더한다. 기록 부족·중지·예상 초과 작업이 앞에 있으면 완료 예상은
   `null`이다. 주제별 난이도·다른 앱의 GPU 사용은 예측하지 못하므로 UI에는 분 단위의 대략적인 값만 표시한다.
 
 - 버전의 부모는 `meta.source`(편집·재구성·복구·이미지→3D·이미지→영상)이고, 없으면 같은 작업의 `meta.conceptAsset`(설명→3D·설명→영상)이다.
   `lineage`는 현재 에셋에서 뿌리까지 올라간 뒤 뿌리의 모든 자손을 만든 순서로 펼친다. 부모 작업이 지워졌으면
   `missingParent`로 표시한다.
+  이미지·메시·영상 모두 계보에 포함하며 편집 공간과 영상 상세는 같은 버전 이력 화면을 쓴다.
 - 작업 폴더의 파일 분류: 에셋 `file`·메타의 기타 경로 → `results`, `sourceStateFile`·`editBaseFile`·`editStamp*`·
   `mesh/input.png`·`mesh/source.json`·`mesh/audit/decoded.npz`·`video/input.png`(`inputImage`) → `bases`(다시 만들기에 필요),
   `rawFile`·`optimizedFile` → `copies`, `preview`·`inspection*` → `previews`, `job.json`·`job.log`·`*.stats.json`·`*.bake.json`·
   요청/통계 JSON·`requestFile`·`resultFile` → `records`, `*/surface/*`·`*/lod-work/*`·`*/scratch/*`·`*/audit/*`(나머지) → `intermediate`, 그 밖은 `other`.
   휴지통으로 보낼 수 있는 것은 `intermediate`와 작업 폴더 전체뿐이다. 다른 작업이 `meta.source`로 가리키는 작업은
   `usedBy`에 나타나고, 폴더 전체를 보내면 그 버전의 계보에서 부모가 빠진다.
+  대기·진행 요청의 실제 source·배치 source·원본 경로도 `usedBy`에 포함하고 그중 현재 파일을 읽어야
+  하는 작업은 `activeUsedBy`다. 복사된 계보용 `sourceMeta`는 실제 입력 의존성에서 제외한다.
 
 ## 프리비즈 계약
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .presets import PresetError
+from .jobs import ACTIVE_STATES
 
 MAX_TAGS = 20
 RECORD_FILES = frozenset({"job.json", "job.log", ".record.lock", "job.json.tmp"})
@@ -113,11 +114,11 @@ def _edit_summary(plan: dict[str, Any] | None) -> list[str]:
 
 
 def lineage(jobs: list[dict[str, Any]], job_id: str, asset_id: str) -> dict[str, Any]:
-    """Version tree around one image/mesh: its root and every version derived from it."""
+    """Version tree around an image/mesh/video and every derived version."""
     nodes: dict[str, dict[str, Any]] = {}
     for job in jobs:
         for asset in job["assets"]:
-            if asset["kind"] not in ("image", "mesh"):
+            if asset["kind"] not in ("image", "mesh", "video"):
                 continue
             meta = asset.get("meta") or {}
             source = meta.get("source") if isinstance(meta.get("source"), dict) else None
@@ -219,13 +220,33 @@ def storage_report(store, jobs: list[dict[str, Any]]) -> dict[str, Any]:
             totals[category] = totals.get(category, 0) + size
     rows.sort(key=lambda row: row["bytes"], reverse=True)
     # 다른 작업이 원본으로 삼는 작업. 통째로 지우면 그 작업의 '이전 버전'과 재구성이 끊긴다.
-    referenced: dict[str, list[str]] = {}
+    referenced, active_referenced = job_dependents(store, store.list(limit=None))
+    records = {job["id"]: job for job in jobs}
+    for row in rows:
+        job = records[row["jobId"]]
+        row["active"] = job["state"] in ACTIVE_STATES or store.process_in_use(job["id"])
+        row["trashReserved"] = bool(job.get("trashReservation"))
+        row["usedBy"] = sorted(referenced.get(row["jobId"], set()))
+        row["activeUsedBy"] = sorted(active_referenced.get(row["jobId"], set()))
+        row["intermediate"] = [item["path"] for item in row.pop("files") if item["category"] == "intermediate"]
+    return {"bytes": sum(totals.values()), "categories": totals, "labels": CATEGORY_LABELS, "jobs": rows}
+
+
+def job_dependents(store, jobs: list[dict[str, Any]]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Lineage and live input reads, including orphaned measured processes."""
+    referenced: dict[str, set[str]] = {}
+    active_referenced: dict[str, set[str]] = {}
     for job in jobs:
+        parents = set()
         for asset in job["assets"]:
             source = (asset.get("meta") or {}).get("source")
             if isinstance(source, dict) and source.get("jobId") and source.get("jobId") != job["id"]:
-                referenced.setdefault(str(source["jobId"]), []).append(job["id"])
-    for row in rows:
-        row["usedBy"] = sorted(set(referenced.get(row["jobId"], [])))
-        row["intermediate"] = [item["path"] for item in row.pop("files") if item["category"] == "intermediate"]
-    return {"bytes": sum(totals.values()), "categories": totals, "labels": CATEGORY_LABELS, "jobs": rows}
+                parents.add(str(source["jobId"]))
+        if job["state"] in ACTIVE_STATES or store.process_in_use(job["id"]):
+            active_parents = store.referenced_job_ids(job.get("params", {})) - {job["id"]}
+            parents.update(active_parents)
+            for parent in active_parents:
+                active_referenced.setdefault(parent, set()).add(job["id"])
+        for parent in parents:
+            referenced.setdefault(parent, set()).add(job["id"])
+    return referenced, active_referenced

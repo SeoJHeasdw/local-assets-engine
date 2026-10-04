@@ -94,10 +94,15 @@ def layer_plan(item, kind, store, stamps):
            'rotation':float_param(item,'rotation',0,-180,180),'size':float_param(item,'size',.25,.001,1000),
            'text':str(item.get('text') or '')[:160]}
     if item.get('textColor'): layer['textColor']=color(item['textColor'])
+    if 'font' in item: layer['font']=choice_param(item,'font','bold',['bold','regular','serif'])
     if kind=='mesh':
-        layer.update(position=vector(item.get('position')),normal=vector(item.get('normal')),
-                     depth=float_param(item,'depth',.03,.0001,100),clip=choice_param(item,'clip','connected',['connected','projection']))
-        if sum(v*v for v in layer['normal'])<.001: raise PresetError('표면 방향을 다시 선택해 주세요.')
+        unplaced=item.get('position') is None and item.get('normal') is None
+        if unplaced and not base['visible']:
+            layer.update(position=None,normal=None)
+        else:
+            layer.update(position=vector(item.get('position')),normal=vector(item.get('normal')))
+            if sum(v*v for v in layer['normal'])<.001: raise PresetError('표면 방향을 다시 선택해 주세요.')
+        layer.update(depth=float_param(item,'depth',.03,.0001,100),clip=choice_param(item,'clip','connected',['connected','projection']))
     else: layer.update(x=float_param(item,'x',.5,-1,2),y=float_param(item,'y',.5,-1,2))
     return layer
 

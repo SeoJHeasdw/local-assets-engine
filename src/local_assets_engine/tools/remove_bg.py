@@ -12,15 +12,18 @@ import os
 from pathlib import Path
 
 from . import progress_line
+from ..presets import COMMIT
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--repo", default="ZhengPeng7/BiRefNet")
-    parser.add_argument("--revision", default=None)
+    parser.add_argument("--revision", required=True)
     parser.add_argument("--resolution", type=int, default=1024)
     args = parser.parse_args(argv)
+    if not COMMIT.fullmatch(args.revision):
+        parser.error("revision은 40자리 커밋 해시여야 합니다.")
     items = json.loads(args.manifest.read_text("utf-8"))
     total = len(items)
 

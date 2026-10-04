@@ -41,3 +41,16 @@ def test_rows_summarise_time_and_peak_memory(tmp_path):
     assert (row["runs"], row["medianSeconds"], row["maxSeconds"]) == (2, 50.0, 60.0)
     assert row["maxPeakMemoryBytes"] == 24 * 2**30
     assert row["label"] == "이미지 생성"
+
+
+def test_video_and_quality_stages_separate_actual_cost_conditions(tmp_path):
+    store = JobStore(tmp_path)
+    for width, height, frames, steps, seconds in [(512, 288, 17, 4, 60), (1280, 704, 121, 50, 5400)]:
+        job = store.create("text-to-video", {"videoModel": "wan", "width": width, "height": height,
+                           "frames": frames, "steps": steps, "guidance": 5}, "t")
+        store.update(job["id"], lambda j, s=seconds: j.update(state="done", stages=[stage("video", s)]))
+    assert sorted(row["medianSeconds"] for row in bench_rows(store)) == [60, 5400]
+    master = {"params": {"pipelineType": "512", "targetFaces": 1000000, "textureSize": 4096}}
+    other = {"params": {"pipelineType": "512", "targetFaces": 10000, "textureSize": 1024}}
+    for name in ("surface", "texture-master", "post-master", "optimize-master"):
+        assert variant(master, stage(name, 1)) != variant(other, stage(name, 1))

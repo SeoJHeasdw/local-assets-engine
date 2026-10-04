@@ -164,25 +164,25 @@ export function adjustPixels(data, plan) {
 }
 
 // match: 고른 색과 가까운 픽셀만, fill: 영역 전체. 둘 다 원래 명암을 유지한다. mask(0..255)가 있으면 그 안에서만 바꾼다.
-export function recolorPixels(data, layer, mask) {
+export function recolorPixels(data, layer, mask, source=data) {
   const from = rgb(layer.from), to = rgb(layer.to), fill = layer.mode === "fill";
   const radius = Math.max(1, (layer.tolerance ?? .2)*441.673);
   let reference = Math.max(20, luminance(...from));
   if (fill) {
     let sum = 0, weight = 0;
-    for (let i=0, p=0;i<data.length;i+=4, p++) { const w = (mask ? mask[p]/255 : 1)*data[i+3]/255; sum += luminance(data[i],data[i+1],data[i+2])*w; weight += w; }
+    for (let i=0, p=0;i<data.length;i+=4, p++) { const w = (mask ? mask[p]/255 : 1)*source[i+3]/255; sum += luminance(source[i],source[i+1],source[i+2])*w; weight += w; }
     reference = weight > 0 ? Math.max(20, sum/weight) : reference;
   }
   for (let i=0, p=0;i<data.length;i+=4, p++) {
     const area = mask ? mask[p]/255 : 1;
     if (area <= 0) continue;
-    const r=data[i],g=data[i+1],b=data[i+2];
+    const r=source[i],g=source[i+1],b=source[i+2];
     const blend = area*(fill ? 1 : clamp((radius-Math.hypot(r-from[0],g-from[1],b-from[2]))/(radius*.3)));
     if (blend <= 0) continue;
     const light = clamp(luminance(r,g,b)/reference, 0, 2);
-    data[i]=r*(1-blend)+clamp(to[0]*light,0,255)*blend;
-    data[i+1]=g*(1-blend)+clamp(to[1]*light,0,255)*blend;
-    data[i+2]=b*(1-blend)+clamp(to[2]*light,0,255)*blend;
+    data[i]=data[i]*(1-blend)+clamp(to[0]*light,0,255)*blend;
+    data[i+1]=data[i+1]*(1-blend)+clamp(to[1]*light,0,255)*blend;
+    data[i+2]=data[i+2]*(1-blend)+clamp(to[2]*light,0,255)*blend;
   }
 }
 
@@ -357,22 +357,31 @@ export function surfaceRegionMask(context, faceList, width, height, region) {
   }
   const cell=maxRadius*2, grid=new Map(), key=(x,y,z)=>`${x},${y},${z}`;
   strokes.forEach((s, index) => {
-    const id=key(Math.floor(s[0]/cell), Math.floor(s[1]/cell), Math.floor(s[2]/cell));
-    if (!grid.has(id)) grid.set(id, []);
-    grid.get(id).push(index);
+    const x=Math.floor(s[0]/cell),y=Math.floor(s[1]/cell),z=Math.floor(s[2]/cell),id=key(x,y,z);
+    if (!grid.has(id)) grid.set(id, {x,y,z,indices:[]});
+    grid.get(id).indices.push(index);
   });
   const {positions, faces, bounds}=context, mask=new Float32Array(width*height), filled=new Uint8Array(width*height);
   for (const face of faceList) {
     const o=face*6;
     if (bounds[o+3]<low[0]||bounds[o]>high[0]||bounds[o+4]<low[1]||bounds[o+1]>high[1]||bounds[o+5]<low[2]||bounds[o+2]>high[2]) continue;
     const near=[];
-    for (let x=Math.floor(bounds[o]/cell)-1;x<=Math.floor(bounds[o+3]/cell)+1;x++)
-      for (let y=Math.floor(bounds[o+1]/cell)-1;y<=Math.floor(bounds[o+4]/cell)+1;y++)
-        for (let z=Math.floor(bounds[o+2]/cell)-1;z<=Math.floor(bounds[o+5]/cell)+1;z++)
-          for (const index of grid.get(key(x,y,z)) || []) {
-            const s=strokes[index];
-            if (s[0]+s[3]>=bounds[o]&&s[0]-s[3]<=bounds[o+3]&&s[1]+s[3]>=bounds[o+1]&&s[1]-s[3]<=bounds[o+4]&&s[2]+s[3]>=bounds[o+2]&&s[2]-s[3]<=bounds[o+5]) near.push(index);
-          }
+    const x0=Math.floor(bounds[o]/cell)-1,x1=Math.floor(bounds[o+3]/cell)+1;
+    const y0=Math.floor(bounds[o+1]/cell)-1,y1=Math.floor(bounds[o+4]/cell)+1;
+    const z0=Math.floor(bounds[o+2]/cell)-1,z1=Math.floor(bounds[o+5]/cell)+1;
+    const collect=bucket=>{
+      for(const index of bucket?.indices || []){
+        const s=strokes[index];
+        if(s[0]+s[3]>=bounds[o]&&s[0]-s[3]<=bounds[o+3]&&s[1]+s[3]>=bounds[o+1]&&s[1]-s[3]<=bounds[o+4]&&s[2]+s[3]>=bounds[o+2]&&s[2]-s[3]<=bounds[o+5])near.push(index);
+      }
+    };
+    // The same candidate cells, without enumerating millions of empty cells
+    // when a fine brush touches a large triangle. Small bounds keep direct lookup.
+    if((x1-x0+1)*(y1-y0+1)*(z1-z0+1)<=grid.size){
+      for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)for(let z=z0;z<=z1;z++)collect(grid.get(key(x,y,z)));
+    }else{
+      for(const bucket of grid.values())if(bucket.x>=x0&&bucket.x<=x1&&bucket.y>=y0&&bucket.y<=y1&&bucket.z>=z0&&bucket.z<=z1)collect(bucket);
+    }
     if (!near.length) continue;
     const order=near.sort((a,b)=>a-b).map(i=>strokes[i]);
     const i0=faces[face*3]*3, i1=faces[face*3+1]*3, i2=faces[face*3+2]*3;
@@ -558,6 +567,7 @@ export function renderEdit(image, rawPlan, {stamps={}, context=null, texture=nul
   const base={width:image.width, height:image.height, data:new Uint8ClampedArray(image.data)};
   const faceList=mesh ? texturedFaces(context, texture?.materials || [0]) : null;
   const used=new Set();
+  let selectedMask=null,highlightSelected=false;
   for (const layer of plan.layers) {
     if (layer.type!=="color" || layer.visible===false) continue;
     let mask=null;
@@ -567,11 +577,12 @@ export function renderEdit(image, rawPlan, {stamps={}, context=null, texture=nul
       mask=cache?.get(key) || (mesh ? surfaceRegionMask(context, faceList, base.width, base.height, layer.region) : imageRegionMask(base.width, base.height, layer.region));
       cache?.set(key, mask);
     }
-    recolorPixels(base.data, layer, mask);
-    if (layer.id===highlight) highlightMask(base.data, mask);
+    recolorPixels(base.data, layer, mask, image.data);
+    if (layer.id===highlight) {selectedMask=mask;highlightSelected=true;}
   }
   if (cache) for (const key of cache.keys()) if (!used.has(key) && key.startsWith(mesh ? facesKey(faceList) : "image")) cache.delete(key);
   tonePixels(base.data, plan);
+  if(highlightSelected)highlightMask(base.data,selectedMask);
   const output=mesh ? base : frameImage(base, plan.frame, {resize});
   for (const layer of plan.layers) {
     if (layer.type!=="stamp" || layer.visible===false || !stamps[layer.id]) continue;
