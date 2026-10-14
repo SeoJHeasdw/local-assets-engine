@@ -22,6 +22,10 @@ class Recipe:
     label: str
     prepare: Callable[[dict[str, Any], dict[str, Any], "JobStore"], tuple[dict[str, Any], str]]
     run: Callable[["JobContext"], None]
+    # 결과 에셋을 사람이 보고 판단해야 하는가. GET /api/recipes의 needsReview다.
+    needs_review: bool = True
+    # 모델을 올리지 않는 점검용 레시피. 보관함 목록과 측정 집계에 넣지 않는다.
+    diagnostic: bool = False
 
 
 def int_param(params: dict[str, Any], key: str, default: int, low: int, high: int) -> int:

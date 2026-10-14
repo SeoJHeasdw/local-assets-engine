@@ -1,6 +1,6 @@
 import {
   JOB_STATE_LABELS, RECIPE_LABELS, REVIEW_LABELS, STAGE_STATE_LABELS,
-  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, jobTimes, jobsAhead, newlyFinished, estimateLabel,
+  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, isDiagnostic, jobTimes, jobsAhead, newlyFinished, estimateLabel,
 } from "../shared/format.mjs";
 import { createPreviz } from "./previz.js";
 import { installResizer } from "./resize.js";
@@ -370,7 +370,7 @@ async function openRecord(jobId) {
 function renderJobs() {
   const list = $("#job-list");
   // 프리비즈 작업은 프리비즈 탭이 컷 순서로 보여 준다. 여기서는 에셋 생성만 다룬다.
-  const jobs = state.jobs.filter((job) => job.recipe !== "previz").slice(0, 10);
+  const jobs = state.jobs.filter((job) => job.recipe !== "previz" && !isDiagnostic(job)).slice(0, 10);
   if (!jobs.length) {
     list.innerHTML = `<div class="empty empty-studio"><span>◇</span><h3>첫 에셋을 만들어 보세요.</h3><p>만든 결과가 이곳에 모입니다.<br>에셋을 열면 색과 로고를 자유롭게 바꿀 수 있습니다.</p></div>`;
     state.signatures.clear();
@@ -416,6 +416,7 @@ function renderJobs() {
 function announceFinished(jobs) {
   for (const job of newlyFinished(state.lastStates, jobs)) {
     if (job.recipe === "previz" && state.view === "previz") continue;
+    if (isDiagnostic(job)) continue;
     const quiet = state.quietJobs.delete(job.id);
     const title = job.params?.subject || job.title;
     const { worked } = jobTimes(job);

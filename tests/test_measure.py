@@ -7,8 +7,8 @@ import time
 import pytest
 
 from local_assets_engine.measure import (
-    StageCancelled, StageFailed, failure_detail, is_time_report, parse_progress, parse_time_report,
-    run_measured, was_killed,
+    StageCancelled, StageFailed, failure_detail, is_out_of_memory, is_time_report, parse_progress,
+    parse_time_report, run_measured, was_killed,
 )
 from local_assets_engine import measure
 
@@ -80,6 +80,19 @@ def test_failure_detail_prefers_the_error_over_a_trailing_warning():
 def test_a_process_the_os_killed_is_reported_as_killed():
     assert was_killed(StageFailed("x", code=1, tail=["time: signal: Invalid argument"]))
     assert not was_killed(StageFailed("x", code=1, tail=["모델 파일이 없습니다"]))
+    # 엔진이 직접 멈춘 실행은 운영체제가 죽인 것이 아니다.
+    assert not was_killed(StageFailed("x", code=1, tail=["time: signal: Invalid argument"], stopped_by_engine=True))
+
+
+def test_memory_shortage_is_a_kill_or_an_allocator_giving_up():
+    assert is_out_of_memory(StageFailed("x", code=1, tail=["time: signal: Invalid argument"]))
+    assert is_out_of_memory(StageFailed("x", code=1, tail=["RuntimeError: MPS backend out of memory"]))
+    assert is_out_of_memory(StageFailed("x", code=1, tail=[
+        "[METAL] Command buffer execution failed: Insufficient Memory "
+        "(00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"]))
+    assert not is_out_of_memory(StageFailed("x", code=2, tail=[
+        "Caused GPU Timeout Error (00000002:kIOGPUCommandBufferCallbackErrorTimeout)"]))
+    assert not is_out_of_memory(StageFailed("종료 코드 1: 모델 파일이 없습니다", code=1, tail=["모델 파일이 없습니다"]))
 
 
 def test_cancel_escalates_to_stubborn_child_and_keeps_measurement(tmp_path, monkeypatch):
@@ -114,6 +127,7 @@ def test_output_callback_failure_drains_pipes_and_stops_child(tmp_path):
     started = time.monotonic()
     with pytest.raises(StageFailed, match="injected full log disk") as info:
         run_measured([sys.executable, "-c", code], on_line=disk_full)
+    assert info.value.stopped_by_engine and not is_out_of_memory(info.value)
     assert time.monotonic() - started < 5
     assert info.value.peak_memory_bytes > 0
     assert not marker.exists()

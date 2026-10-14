@@ -12,7 +12,13 @@ export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
   "repair-mesh": "기존 3D 복구",
   "refine-mesh": "3D 원본 재구성", "edit-asset": "에셋 편집", "import-image": "가져온 이미지",
+  selftest: "엔진 자체 점검",
 };
+
+// 엔진 계약 검사(selftest)가 남긴 작업은 에셋 생성이 아니다. 작업 목록과 완료 알림에서 뺀다.
+export function isDiagnostic(job) {
+  return job?.recipe === "selftest";
+}
 
 export function isActive(job) {
   return ["queued", "running", "cancelling"].includes(job?.state);

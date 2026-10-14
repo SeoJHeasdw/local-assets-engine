@@ -68,6 +68,32 @@ def explain_trellis_failure(failure: StageFailed) -> str:
     return f"TRELLIS.2 생성이 실패했습니다. ({failure})"
 
 
+# 위상 검사 항목과 findings의 code. 값은 해당 모서리·면의 개수다.
+TOPOLOGY_FINDINGS = (
+    ("boundaryEdges", "mesh.open_boundary"),
+    ("nonManifoldEdges", "mesh.non_manifold_edges"),
+    ("inconsistentWindingEdges", "mesh.inconsistent_winding"),
+    ("duplicateFaces", "mesh.duplicate_faces"),
+)
+
+
+def report_mesh_checks(ctx: "JobContext", asset: dict[str, Any], stats: dict[str, Any], *, where: str,
+                       evidence: list[Path], faces: tuple[int, int] | None = None) -> None:
+    """Raise the topology and face-budget checks as findings. They warn; a person decides.
+
+    ``faces`` is (budget, actual) where a face budget applied. The conditions are
+    the ones that already put a sentence into ``stats.topology.warnings``.
+    """
+    topology = stats.get("topology") or {}
+    for key, code in TOPOLOGY_FINDINGS:
+        if topology.get(key):
+            ctx.add_finding(severity="warn", code=code, params={"count": topology[key]}, where=where,
+                            asset_id=asset["id"], evidence=evidence)
+    if faces and faces[0] and faces[1] > faces[0]:
+        ctx.add_finding(severity="warn", code="mesh.faces_over_target", where=where, asset_id=asset["id"],
+                        params={"targetFaces": faces[0], "triangles": faces[1]}, evidence=evidence)
+
+
 def prepare_mesh_params(params: dict[str, Any], presets: dict[str, Any]) -> dict[str, Any]:
     mesh = presets["mesh"]
     defaults = mesh["defaults"]
@@ -197,6 +223,11 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
                   "source": p.get("source"), "conceptAsset": concept_asset_id,
                   "processingVersion": 2},
         ))
+        # 형상을 지키려고 목표 면 수를 넘길 수 있는 것은 게임용 감축뿐이다.
+        lod = stats.get("lod")
+        report_mesh_checks(ctx, assets[-1], stats, where=f"{label} 메시",
+                           evidence=[mesh_dir / f"inspection/{name}-contact.png", final_glb.with_suffix(".stats.json")],
+                           faces=(lod["targetFaces"], lod["triangles"]) if lod else None)
     return assets[0]
 
 
@@ -228,7 +259,7 @@ def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str |
     else:
         ctx.skip_stage("optimize", "게임용 최적화 (gltfpack)", "gltfpack을 찾지 못해 건너뜀")
 
-    return ctx.add_asset(
+    asset = ctx.add_asset(
         kind="mesh", role="final", file=final_glb, preview=input_path,
         meta={
             "seed": p["meshSeed"], "pipelineType": p["pipelineType"], "textureSize": p["textureSize"],
@@ -240,6 +271,9 @@ def finish_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_id: str |
             "processingVersion": 1,
         },
     )
+    report_mesh_checks(ctx, asset, stats, where="메시", evidence=[stats_path],
+                       faces=(p["targetFaces"], stats.get("triangles", 0)))
+    return asset
 
 
 def _prepare_image_to_3d(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") -> tuple[dict[str, Any], str]:

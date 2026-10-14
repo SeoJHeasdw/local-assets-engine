@@ -77,7 +77,7 @@ def test_repair_runs_measured_postprocessing_and_keeps_original_review(legacy_jo
     asset = job["assets"][0]
     assert asset["review"] == "pending"
     assert asset["meta"]["source"] == params["source"]
-    assert asset["meta"]["stats"]["topology"]["warnings"] == []
+    assert asset["meta"]["stats"]["topology"]["warnings"] == [] and job["findings"] == []
     np.testing.assert_allclose(asset["meta"]["stats"]["dimensionsMeters"], [2/3, 4/3, 2], atol=1e-4)
     output = store.resolve_file(job["id"], asset["file"])
     data = output.read_bytes()

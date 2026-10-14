@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import platform
 import subprocess
@@ -115,6 +116,23 @@ def _run_python(python: Path, code: str, timeout: int = 90) -> tuple[bool, str]:
         return False, "시간 초과"
     lines = (result.stdout or result.stderr or "").strip().splitlines()
     return result.returncode == 0, (lines[-1] if lines else "")[:200]
+
+
+def report_in_subprocess(*, deep: bool) -> dict[str, Any]:
+    """The report from a separate process, so the engine service holds none of its memory.
+
+    Checking dozens of weight files raised a resident engine from about 50MB to 400MB,
+    and it stayed there until restart.
+    """
+    command = [sys.executable, "-m", "local_assets_engine", "doctor", "--json", *([] if deep else ["--quick"])]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600 if deep else 120, env=child_env())
+        report = json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        raise RuntimeError(f"진단을 실행하지 못했습니다: {error}") from error
+    if not isinstance(report, dict) or "capabilities" not in report:
+        raise RuntimeError("진단 결과를 읽지 못했습니다.")
+    return report
 
 
 def _metal_compiler() -> bool:

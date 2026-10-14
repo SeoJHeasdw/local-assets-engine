@@ -88,6 +88,11 @@ def test_refine_keeps_original_and_publishes_measured_unapproved_variants(tmp_pa
         if stage["state"] == "done":
             assert stage["seconds"] > 0 and stage["peakMemoryBytes"] > 0
     assert not any(s["name"] == "mesh" for s in job["stages"])
+    for asset in job["assets"]:
+        # 자동 검사가 적은 경고 하나마다 사람이 볼 항목 하나가 올라온다.
+        raised = [finding for finding in job["findings"] if finding["assetId"] == asset["id"]]
+        assert len(raised) == len(asset["meta"]["stats"]["topology"]["warnings"])
+        assert all(finding["severity"] == "warn" and finding["evidence"] for finding in raised)
     master, game = job["assets"]
     assert master["meta"]["stats"]["normalization"] == game["meta"]["stats"]["normalization"]
     assert "lod" in game["meta"]["stats"]

@@ -19,14 +19,18 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, doctor
 from .bench import bench_rows
 from .estimates import estimate_jobs
-from .jobs import ACTIVE_STATES, REVIEW_STATES, JobBusy, JobNotFound, JobStore, now_iso
+from .jobs import ACTIVE_STATES, FINDING_REVIEW_STATES, REVIEW_STATES, JobBusy, JobNotFound, JobStore, now_iso
 from .library import job_dependents, job_storage, lineage, storage_report, update_library
 from .paths import MODEL_VIEWER_JS, RENDERER_DIR, SHARED_DIR, jobs_dir
 from .presets import PresetError, load_presets
+from .recipes import DIAGNOSTIC_RECIPES, describe_recipes
 from .runner import Runner
 from .uploads import MAX_UPLOAD, save_upload, resolve_upload
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
+# arkAgent의 엔진 계약(docs/ENGINE-CONTRACT.md)에서 이 엔진의 이름과 지키는 계약 버전.
+ENGINE_NAME = "assets"
+CONTRACT_VERSION = 0
 
 
 def _hostname(value: str) -> str:
@@ -97,13 +101,23 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
     def health() -> dict[str, Any]:
         # CLI가 돌리는 작업도 화면에 보여야 한다. 이 엔진이 시작하지 않은 작업이라도
         # 프로세스가 살아 있으면 진행 중으로 읽는다.
-        return {"ok": True, "version": __version__,
-                "currentJob": runner.current_job_id or store.running_job_id(),
-                "outputDir": str(store.root.parent)}
+        current = runner.current_job_id or store.running_job_id()
+        # 기록에 없는 점유(다른 체크아웃의 엔진, 제어 프로세스를 잃은 단계)는 생성 차선 잠금으로 안다.
+        holder = None if current else runner.lane_holder()
+        return {"ok": True, "engine": ENGINE_NAME, "version": __version__, "contract": CONTRACT_VERSION,
+                "busy": bool(current or holder), **({"busyBy": holder} if holder else {}),
+                "currentJob": current, "outputDir": str(store.root.parent)}
+
+    @app.get("/api/recipes")
+    def get_recipes() -> dict[str, Any]:
+        return {"recipes": describe_recipes(runner.recipes, runner.presets_loader())}
 
     @app.get("/api/doctor")
     def get_doctor(deep: bool = False) -> dict[str, Any]:
-        return doctor.build_report(deep=deep)
+        try:
+            return doctor.report_in_subprocess(deep=deep)
+        except RuntimeError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.get("/api/presets")
     def get_presets() -> dict[str, Any]:
@@ -184,6 +198,24 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail="에셋을 찾을 수 없습니다.") from error
 
+    @app.post("/api/jobs/{job_id}/findings/{finding_id}/review")
+    def review_finding(job_id: str, finding_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """사람이 그 자리를 확인했는지. 자동 검사는 이 값을 바꾸지 않는다."""
+        status = payload.get("status")
+        if not isinstance(status, str) or status not in FINDING_REVIEW_STATES:
+            raise HTTPException(status_code=400, detail=f"status는 {sorted(FINDING_REVIEW_STATES)} 중 하나여야 합니다.")
+
+        def apply(job: dict[str, Any]) -> None:
+            finding = next((item for item in job["findings"] if item["id"] == finding_id), None)
+            if finding is None:
+                raise JobNotFound(finding_id)
+            finding.update(review=status, reviewedAt=now_iso())
+
+        try:
+            return store.update(job_id, apply)
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail="확인할 항목을 찾을 수 없습니다.") from error
+
     @app.post("/api/jobs/{job_id}/assets/{asset_id}/library")
     def organize_asset(job_id: str, asset_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """즐겨찾기·태그·컬렉션·메모. 파일과 승인 상태는 바꾸지 않는다."""
@@ -212,6 +244,9 @@ def create_app(*, store: JobStore | None = None, runner: Runner | None = None, s
                     collection: str | None = None, tag: str | None = None, limit: int = 500) -> dict[str, Any]:
         assets = []
         for job in store.list(limit=2000):
+            # 점검 작업이 남긴 파일은 보관함의 에셋이 아니다.
+            if job["recipe"] in DIAGNOSTIC_RECIPES:
+                continue
             for asset in job["assets"]:
                 if (review and asset["review"] != review) or (kind and asset["kind"] != kind):
                     continue

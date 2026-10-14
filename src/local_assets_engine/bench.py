@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from .jobs import JobStore
+from .recipes import DIAGNOSTIC_RECIPES
 
 
 def variant(job: dict[str, Any], stage: dict[str, Any]) -> str:
@@ -78,6 +79,9 @@ def execution_conditions(job: dict[str, Any], stage: dict[str, Any]) -> str:
 def bench_rows(store: JobStore, limit: int = 10_000) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for job in store.list(limit=limit):
+        # 점검 작업은 모델을 올리지 않는다. 장비 판단의 근거에 섞지 않는다.
+        if job["recipe"] in DIAGNOSTIC_RECIPES:
+            continue
         for stage in job["stages"]:
             if stage.get("state") == "done" and stage.get("seconds"):
                 groups.setdefault((stage["name"], variant(job, stage), execution_conditions(job, stage)), []).append(stage)

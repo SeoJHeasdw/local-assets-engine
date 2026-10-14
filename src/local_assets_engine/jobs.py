@@ -11,6 +11,7 @@ import fcntl
 import os
 import re
 import secrets
+import shutil
 import stat
 import threading
 from contextlib import contextmanager
@@ -18,12 +19,35 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .measure import memory_shortage_in
+
 ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
 REVIEW_STATES = frozenset({"pending", "approved", "rejected"})
+FINDING_REVIEW_STATES = frozenset({"pending", "cleared"})
 # 하트비트는 진행률을 쓸 때마다(≤0.5초) 갱신된다. 이보다 오래 멈춘 기록은 죽은 것으로 본다.
 OWNER_STALE_AFTER_S = 180
 _JOB_ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 _TRASH_TOKEN = re.compile(r"[0-9a-f]{32}")
+ERROR_CODES = frozenset({"invalid_input", "out_of_memory", "interrupted", "engine_error"})
+# 엔진이 멈추거나 다시 시작하며 끝낸 작업은 실행 중이든 대기 중이든 failed · interrupted다.
+# cancelled는 사람의 취소 요청에만 쓴다. 끊긴 작업만 같은 입력으로 다시 넣을 수 있게 하려는 것이다.
+INTERRUPTED_ERROR = "엔진이 다시 시작되어 작업이 중단됐습니다."
+INTERRUPTED_QUEUED_ERROR = "엔진이 다시 시작되어 대기 중이던 작업을 실행하지 않고 닫았습니다."
+STOPPED_ERROR = "엔진이 종료되어 작업이 중단됐습니다."
+STOPPED_QUEUED_ERROR = "엔진이 종료되어 대기 중이던 작업을 실행하지 않고 닫았습니다."
+
+
+def legacy_error_code(job: dict[str, Any]) -> str | None:
+    """``errorCode`` of a failed record written before the field existed."""
+    if job.get("state") != "failed":
+        return None
+    error = str(job.get("error") or "")
+    if error == INTERRUPTED_ERROR:
+        return "interrupted"
+    # 그때 엔진이 남긴 진단 문구와 원인 줄이 근거다. 로그 전체는 뒤지지 않는다.
+    if "메모리가 부족" in error or memory_shortage_in(error):
+        return "out_of_memory"
+    return "engine_error"
 
 
 def owner_alive(owner: dict[str, Any] | None) -> bool:
@@ -355,12 +379,15 @@ class JobStore:
                 "finishedAt": None,
                 "stages": [],
                 "assets": [],
+                "findings": [],
                 "error": None,
+                "errorCode": None,
                 "logTail": [],
             }
             if owner is not None:
                 job["owner"] = dict(owner)
             self._write(job)
+            job["dir"] = str(self.root / job_id)
             return job
 
     def load(self, job_id: str) -> dict[str, Any]:
@@ -376,6 +403,14 @@ class JobStore:
             raise JobNotFound(job_id) from error
         if not isinstance(job, dict) or job.get("id") != job_id:
             raise JobNotFound(job_id)
+        # findings와 errorCode가 생기기 전의 기록도 같은 모양으로 읽힌다.
+        for finding in job.setdefault("findings", []):
+            if isinstance(finding, dict):
+                finding.setdefault("review", "pending")
+        if "errorCode" not in job:
+            job["errorCode"] = legacy_error_code(job)
+        # 작업 폴더의 절대 경로는 읽을 때 붙인다. 출력 폴더를 옮겨도 기록이 틀려지지 않는다.
+        job["dir"] = str(self.root / job_id)
         return job
 
     def update(self, job_id: str, mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
@@ -428,10 +463,8 @@ class JobStore:
                 if record["state"] not in ACTIVE_STATES or owner_alive(record.get("owner")):
                     return
                 was_running = record["state"] != "queued"
-                record["state"] = "failed" if was_running else "cancelled"
-                record["error"] = ("엔진이 다시 시작되어 작업이 중단됐습니다." if was_running
-                                   else "엔진이 다시 시작되어 대기 중이던 작업을 취소했습니다.")
-                record["finishedAt"] = now_iso()
+                record.update(state="failed", errorCode="interrupted", finishedAt=now_iso(),
+                              error=INTERRUPTED_ERROR if was_running else INTERRUPTED_QUEUED_ERROR)
                 for stage in record["stages"]:
                     if stage.get("state") == "running":
                         stage["state"] = "failed"
@@ -443,6 +476,18 @@ class JobStore:
                 # A concurrently cancelled job may already have reached trash.
                 continue
         return closed
+
+    def discard_finished(self, recipes: frozenset[str]) -> int:
+        """Delete finished jobs of recipes whose output is not a result (``selftest``)."""
+        removed = 0
+        with self.namespace():
+            for job_id in [job["id"] for job in self._records() if job["recipe"] in recipes]:
+                job = self.load(job_id)
+                if job["state"] in ACTIVE_STATES or job.get("trashReservation") or self.process_in_use(job_id):
+                    continue
+                shutil.rmtree(self.job_dir(job_id))
+                removed += 1
+        return removed
 
     def running_job_id(self) -> str | None:
         """The job a live process is working on, whichever engine started it."""
@@ -468,7 +513,8 @@ class JobStore:
                      dir_fd=directory_fd)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(job, handle, ensure_ascii=False, indent=2)
+                json.dump({key: value for key, value in job.items() if key != "dir"},
+                          handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, "job.json", src_dir_fd=directory_fd, dst_dir_fd=directory_fd)

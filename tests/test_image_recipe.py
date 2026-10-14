@@ -91,3 +91,41 @@ def test_missing_seeds_are_named_in_the_error(tmp_path):
     write_candidate(tmp_path, "candidate_seed_7", seed=7)
     with pytest.raises(RuntimeError, match="시드 8"):
         match_generated_files(tmp_path, [7, 8])
+
+
+def test_cutout_checks_become_findings_and_never_decide_the_review(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from local_assets_engine.jobs import JobStore
+    from local_assets_engine.recipes import image as recipe
+    from local_assets_engine.runner import Runner, Stage
+
+    boxes = {"centered": (16, 16, 48, 48), "cropped": (0, 16, 40, 48), "empty": None}
+
+    def generate(self, args, **_options):
+        output = Path(args[args.index("--output") + 1])
+        for seed in self.ctx.params["seeds"]:
+            Image.new("RGB", (64, 64), "white").save(output.with_name(f"candidate_seed_{seed}.png"))
+
+    def remove_background(_ctx, manifest):
+        for item, box in zip(json.loads(manifest.read_text("utf-8")), boxes.values()):
+            cutout = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            if box:
+                cutout.paste((200, 30, 30, 255), box)
+            cutout.save(item["output"])
+
+    # 모델 단계만 갈아 끼운다. 자동 검사와 정리는 실제 코드가 돈다.
+    monkeypatch.setattr(Stage, "run", generate)
+    monkeypatch.setattr(recipe, "run_background_removal", remove_background)
+    store = JobStore(tmp_path / "jobs")
+    runner = Runner(store, recipes={"image": recipe.IMAGE}, machine_lock_path=tmp_path / ".machine.lock")
+    job = runner.run_job(runner.create("image", {"subject": "red potion", "count": 3, "seed": 7})["id"])
+    assert job["state"] == "done", job["error"]
+    assert [(f["severity"], f["code"], f["assetId"], f["where"]) for f in job["findings"]] == [
+        ("warn", "image.touches_edge", "a02", "후보 2 · 시드 8"),
+        ("fail", "image.subject_missing", "a03", "후보 3 · 시드 9"),
+    ]
+    for finding in job["findings"]:
+        assert all(store.resolve_file(job["id"], path).is_file() for path in finding["evidence"])
+    # 검사는 알리기만 한다. 후보를 지우거나 판단을 대신 적지 않는다.
+    assert [asset["review"] for asset in job["assets"]] == ["pending"] * 3

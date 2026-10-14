@@ -52,7 +52,9 @@ sys.exit(cli._run('dummy','{{}}'))
         with pytest.raises(ProcessLookupError):
             os.kill(int(marker.read_text()), 0)
         job = JobStore(tmp_path / "jobs").list()[0]
-        assert job["state"] == "cancelled"
+        # Ctrl+C는 사람의 취소 요청이고, SIGTERM은 프로세스가 멈추며 작업을 끊은 것이다.
+        expected = ("cancelled", None) if termination == signal.SIGINT else ("failed", "interrupted")
+        assert (job["state"], job["errorCode"]) == expected
         process = job["stages"][0]["processes"][0]
         assert process["state"] == "cancelled" and process["peakMemoryBytes"] > 0
         for path in (tmp_path / "machine.lock", tmp_path / "jobs/.engine.lock"):

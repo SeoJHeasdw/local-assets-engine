@@ -56,6 +56,8 @@ GPU_BUSY_SIGNATURES = (
 ERROR_MARKERS = ("Error", "error:", "Exception", "Traceback", "Killed", "signal:", "실패")
 # /usr/bin/time은 자식이 신호로 죽으면 이렇게 적는다. 이 기기에서는 메모리 부족이 원인이다.
 KILLED_MARKERS = ("time: signal:", "Killed", "signal: killed")
+# 프로세스가 스스로 끝나며 남기는 메모리 부족 표지: Metal 명령 버퍼, MPS 할당기.
+OUT_OF_MEMORY_MARKERS = ("insufficient memory", "out of memory")
 
 
 class StageCancelled(Exception):
@@ -78,7 +80,7 @@ class StageFailed(Exception):
     def __init__(self, message: str, *, code: int | None, tail: list[str],
                  peak_memory_bytes: int | None = None, max_rss_bytes: int | None = None,
                  seconds: float | None = None, launched: bool = True,
-                 measurement_unavailable_reason: str | None = None):
+                 measurement_unavailable_reason: str | None = None, stopped_by_engine: bool = False):
         super().__init__(message)
         self.code = code
         self.tail = tail
@@ -87,6 +89,8 @@ class StageFailed(Exception):
         self.seconds = seconds
         self.launched = launched
         self.measurement_unavailable_reason = measurement_unavailable_reason
+        # 엔진이 직접 멈춘 실행의 종료 신호는 메모리 부족의 근거가 아니다.
+        self.stopped_by_engine = stopped_by_engine
 
 
 @dataclass(frozen=True)
@@ -114,7 +118,17 @@ def failure_detail(lines: Sequence[str]) -> str:
 
 def was_killed(failure: "StageFailed") -> bool:
     """True when the operating system killed the process instead of it exiting."""
-    return any(marker in "\n".join(failure.tail) for marker in KILLED_MARKERS)
+    return not failure.stopped_by_engine and any(marker in "\n".join(failure.tail) for marker in KILLED_MARKERS)
+
+
+def memory_shortage_in(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in OUT_OF_MEMORY_MARKERS)
+
+
+def is_out_of_memory(failure: "StageFailed") -> bool:
+    """The basis of ``errorCode: out_of_memory``: killed by macOS, or an allocator gave up."""
+    return was_killed(failure) or memory_shortage_in("\n".join([*failure.tail, str(failure)]))
 
 
 def parse_progress(line: str) -> tuple[float, str | None] | None:
@@ -353,7 +367,7 @@ def run_measured(
     if errors:
         raise StageFailed(f"단계 출력 처리 실패: {errors[0]}", code=code, tail=list(tail),
                           seconds=seconds, peak_memory_bytes=peak, max_rss_bytes=rss,
-                          measurement_unavailable_reason=missing) from errors[0]
+                          measurement_unavailable_reason=missing, stopped_by_engine=True) from errors[0]
     if cancelled:
         raise StageCancelled(seconds=seconds, code=code, launched=True,
                              peak_memory_bytes=peak, max_rss_bytes=rss,

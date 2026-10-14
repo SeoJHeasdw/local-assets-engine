@@ -16,9 +16,9 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .jobs import JobNotFound, JobStore, now_iso
+from .jobs import STOPPED_ERROR, STOPPED_QUEUED_ERROR, JobNotFound, JobStore, now_iso
 from .measure import (
-    StageCancelled, StageFailed, StageResult, is_gpu_busy, parse_progress, run_measured,
+    StageCancelled, StageFailed, StageResult, is_gpu_busy, is_out_of_memory, parse_progress, run_measured,
 )
 from .paths import child_env, generation_lock_path
 from .presets import PresetError, load_presets
@@ -32,6 +32,21 @@ HEARTBEAT_INTERVAL_S = 30.0
 # Hugging Face also prints "Fetching" when every file is already cached.
 _DOWNLOAD_MARKERS = ("downloading", "내려받", "다운로드")
 _MODEL_FILE_PROGRESS_MARKERS = (*_DOWNLOAD_MARKERS, "fetching")
+FINDING_SEVERITIES = frozenset({"fail", "warn"})
+
+
+def error_code(exc: BaseException) -> str:
+    """Classify a job failure for ``errorCode``. Anything unrecognized is ``engine_error``."""
+    # 레시피는 단계 실패를 사람이 읽을 문장으로 감싸 다시 던진다. 원인 사슬에서 근거를 찾는다.
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, PresetError):
+            return "invalid_input"
+        if isinstance(exc, StageFailed):
+            return "out_of_memory" if is_out_of_memory(exc) else "engine_error"
+        exc = exc.__cause__
+    return "engine_error"
 
 
 class UnitTracker:
@@ -265,6 +280,26 @@ class JobContext:
         self.mutate(add)
         return record
 
+    def add_finding(
+        self, *, severity: str, code: str, where: str, params: dict[str, Any] | None = None,
+        asset_id: str | None = None, evidence: Sequence[str | Path] = (),
+    ) -> dict[str, Any]:
+        """One place a person should look. It never changes an asset's review."""
+        if severity not in FINDING_SEVERITIES:
+            raise ValueError(f"finding severity는 {sorted(FINDING_SEVERITIES)} 중 하나여야 합니다.")
+        record: dict[str, Any] = {}
+
+        def add(job: dict[str, Any]) -> None:
+            record.update({
+                "id": f"f{len(job['findings']) + 1:02d}", "severity": severity, "code": code,
+                "params": params or {}, "where": where, "assetId": asset_id,
+                "evidence": [self.rel(path) for path in evidence], "review": "pending",
+            })
+            job["findings"].append(dict(record))
+
+        self.mutate(add)
+        return record
+
 
 class Runner:
     def __init__(self, store: JobStore, *, recipes: dict[str, Any] | None = None,
@@ -278,6 +313,8 @@ class Runner:
         self.presets_loader = presets_loader
         self.machine_lock_path = Path(machine_lock_path) if machine_lock_path is not None else generation_lock_path()
         self.current_job_id: str | None = None
+        # 이 러너가 생성 차선 잠금을 모두 잡고 있는 동안 참. health가 남의 점유와 구별한다.
+        self._holding_lane = False
         self._queue: queue.Queue[str] = queue.Queue()
         self._cancels: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
@@ -287,18 +324,25 @@ class Runner:
 
     def start(self) -> None:
         self.store.recover_interrupted()
+        # 점검 작업은 결과물이 아니다. 계약 검사가 남긴 기록과 폴더를 시작할 때 지운다.
+        self.store.discard_finished(frozenset(
+            recipe_id for recipe_id, recipe in self.recipes.items() if getattr(recipe, "diagnostic", False)))
         threading.Thread(target=self._beat_pending, name="queued-heartbeat", daemon=True).start()
         self._thread = threading.Thread(target=self._loop, name="asset-runner", daemon=True)
         self._thread.start()
 
     def shutdown(self, timeout: float = 8.0) -> None:
-        """Stop the running job so its model processes do not outlive the engine."""
+        """Stop the running job so its model processes do not outlive the engine.
+
+        Jobs left unfinished end ``failed`` · ``interrupted``, not ``cancelled``: nobody asked
+        to cancel them, and a client resubmits only the jobs the engine cut off.
+        """
         self._stopping.set()
         with self._lock:
             events = list(self._cancels.values())
             pending = list(self._pending)
         for job_id in pending:
-            self.cancel(job_id)
+            self._interrupt_queued(job_id)
         for event in events:
             event.set()
         deadline = time.monotonic() + timeout
@@ -337,6 +381,40 @@ class Runner:
                     self.store.update(job_id, touch)
                 except (JobNotFound, OSError):
                     continue
+
+    def _interrupt_queued(self, job_id: str) -> dict[str, Any] | None:
+        def close(job: dict[str, Any]) -> None:
+            if job["state"] == "queued":
+                job.update(state="failed", error=STOPPED_QUEUED_ERROR, errorCode="interrupted", finishedAt=now_iso())
+
+        try:
+            return self.store.update(job_id, close)
+        except JobNotFound:
+            return None
+
+    def lane_holder(self) -> str | None:
+        """Who holds this machine's generation lane, when it is not this runner.
+
+        A CLI run, another checkout's engine, or a stage process whose controller
+        died all keep the lane locked while they use memory.
+        """
+        if self._holding_lane:
+            return None
+        try:
+            fd = os.open(self.machine_lock_path, os.O_RDWR | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return f"lane:{self.machine_lock_path.name}"  # 확인할 수 없는 잠금은 쓰는 중으로 본다.
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return f"lane:{self.machine_lock_path.name}"
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return None
+        finally:
+            os.close(fd)
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -384,7 +462,7 @@ class Runner:
                 if job["state"] != "queued":
                     return job
                 if self._stopping.is_set():
-                    return self.cancel(job_id)
+                    return self._interrupt_queued(job_id) or self.store.load(job_id)
                 if time.monotonic() - last_queued_beat >= HEARTBEAT_INTERVAL_S:
                     def queued_owner(record):
                         if record["state"] == "queued":
@@ -396,6 +474,7 @@ class Runner:
                     for lane in lanes:
                         fcntl.flock(lane, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         acquired.append(lane)
+                    self._holding_lane = True
                     # Children retain these same flock descriptions on abrupt
                     # controller death; another engine cannot overlap them.
                     return self._run_in_lane(job_id, lease_fds=acquired)
@@ -404,13 +483,15 @@ class Runner:
                 finally:
                     for lane in reversed(acquired):
                         fcntl.flock(lane, fcntl.LOCK_UN)
+                    self._holding_lane = False
                 time.sleep(0.2)
         except JobNotFound:
             raise
         except Exception as exc:  # noqa: BLE001 - failures before claim also terminate
             def fail(record):
                 if record["state"] in {"queued", "running", "cancelling"}:
-                    record.update(state="failed", error=str(exc) or exc.__class__.__name__, finishedAt=now_iso())
+                    record.update(state="failed", error=str(exc) or exc.__class__.__name__,
+                                  errorCode="engine_error", finishedAt=now_iso())
             return self.store.update(job_id, fail)
         finally:
             for lane in lanes:
@@ -436,19 +517,26 @@ class Runner:
         ctx = None
         stop_beat = threading.Event()
         beat = None
-        state, error = "done", None
+        state, error, code = "done", None, None
+        in_recipe = False
         try:
             # Initialization failures also pass through terminal-state cleanup.
             ctx = JobContext(self.store, job_id, self.presets_loader(), cancel, lease_fds=lease_fds)
             beat = threading.Thread(target=self._beat, args=(job_id, stop_beat, cancel), daemon=True)
             beat.start()
             ctx.check_cancel()
+            in_recipe = True
             self.recipes[job["recipe"]].run(ctx)
             ctx.check_cancel()
         except StageCancelled:
             state = "cancelled"
+            # 엔진이 멈추며 끊은 실행은 취소가 아니다. 그 전에 취소 요청이 왔으면 취소로 둔다.
+            if self._stopping.is_set() and self.store.load(job_id)["state"] != "cancelling":
+                state, error, code = "failed", STOPPED_ERROR, "interrupted"
         except Exception as exc:  # noqa: BLE001 - every failure must land in job.json
             state, error = "failed", str(exc) or exc.__class__.__name__
+            # 레시피가 돌기 전의 실패(설정 파일 읽기 등)는 요청의 잘못이 아니다.
+            code = error_code(exc) if in_recipe else "engine_error"
             if ctx is not None:
                 try:
                     ctx.log_line(traceback.format_exc())
@@ -462,14 +550,14 @@ class Runner:
                 if ctx is not None:
                     ctx.flush_log()
             except Exception as exc:  # noqa: BLE001 - still clear ownership state
-                state, error = "failed", error or str(exc) or exc.__class__.__name__
+                state, error, code = "failed", error or str(exc) or exc.__class__.__name__, code or "engine_error"
             finally:
                 with self._lock:
                     self._cancels.pop(job_id, None)
                     if self.current_job_id == job_id:
                         self.current_job_id = None
         return self.store.update(job_id, lambda record: record.update(
-            state=state, error=error, finishedAt=now_iso()))
+            state=state, error=error, errorCode=code, finishedAt=now_iso()))
 
     def _loop(self) -> None:
         while not self._stopping.is_set():

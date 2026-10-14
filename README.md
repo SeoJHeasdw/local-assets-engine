@@ -106,6 +106,8 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 
 `.venv/bin/python -m local_assets_engine run <레시피> --params '<JSON>'`은 엔진이 떠 있으면
 엔진에 작업을 넣고, 없으면 그 자리에서 실행한다. API 목록은 [ARCHITECTURE](docs/ARCHITECTURE.md)에 있다.
+받는 레시피와 입력 스키마는 `curl -s localhost:47831/api/recipes`로 본다. 모델을 올리지 않고 대기열·측정·취소만
+확인하려면 `.venv/bin/python -m local_assets_engine run selftest --params '{}'`를 쓴다.
 
 3D 기본 출력은 **100만 면·4K 품질본 하나**다. 게임용 파일은 기본 생성에 포함하지 않는다. 원본은 따로 저장되며 텍스처를 구운 뒤 다시 감축하지 않는다.
 보관함에서 에셋을 열어 회전하고, 정보 → "여섯 방향 보기"로 뒤와 바닥까지 확인한다.

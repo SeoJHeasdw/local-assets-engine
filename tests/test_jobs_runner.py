@@ -158,7 +158,7 @@ def test_recover_interrupted_closes_open_jobs_without_restarting(tmp_path):
     store.update(done["id"], lambda job: job.update(state="done"))
     assert store.recover_interrupted() == 2
     assert store.load(running["id"])["state"] == "failed"
-    assert store.load(queued["id"])["state"] == "cancelled"
+    assert store.load(queued["id"])["state"] == "failed"
     assert store.load(done["id"])["state"] == "done"
 
 
@@ -295,7 +295,7 @@ def test_external_cancellation_stops_a_silent_measured_process(tmp_path):
     assert store.load(job["id"])["state"] == "cancelled"
 
 
-def test_queued_behind_live_job_survives_recovery_and_shutdown_cancels_it(tmp_path, monkeypatch):
+def test_queued_behind_live_job_survives_recovery_and_shutdown_interrupts_it(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_module, "HEARTBEAT_INTERVAL_S", 0.05)
     entered, release = threading.Event(), threading.Event()
     def run(ctx):
@@ -312,7 +312,8 @@ def test_queued_behind_live_job_survives_recovery_and_shutdown_cancels_it(tmp_pa
     runner.shutdown(timeout=0.01)
     release.set()
     runner._thread.join(3)
-    assert store.load(b["id"])["state"] == "cancelled"
+    closed = store.load(b["id"])
+    assert (closed["state"], closed["errorCode"]) == ("failed", "interrupted")
 
 
 def test_job_updates_do_not_lose_writes_between_processes(tmp_path):

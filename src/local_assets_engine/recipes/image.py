@@ -175,14 +175,15 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
         for index, (seed, raw, source) in enumerate(zip(seeds, raws, sources), start=1):
             ctx.check_cancel()
             record: dict[str, Any] = {
-                "seed": seed, "raw": raw, "file": source, "preview": source, "checks": {}, "error": None,
+                "seed": seed, "raw": raw, "file": source, "preview": source, "checked": source,
+                "checks": {}, "error": None,
             }
             if p["removeBackground"]:
                 _finish_cutout(record, Image.open(source), p, final_dir)
             results.append(record)
             stage.progress(index / len(seeds), f"{index}/{len(seeds)}")
 
-    for record in results:
+    for index, record in enumerate(results, start=1):
         with Image.open(record["file"]) as image:
             width, height = image.size
         record["asset"] = ctx.add_asset(
@@ -193,7 +194,25 @@ def generate_candidates(ctx: "JobContext", p: dict[str, Any], *, role: str = "ca
                 "checks": record["checks"], "error": record["error"], "raw": ctx.rel(record["raw"]),
             },
         )
+        _report_cutout_checks(ctx, record, index)
     return results
+
+
+def _report_cutout_checks(ctx: "JobContext", record: dict[str, Any], index: int) -> None:
+    """Raise what the automatic cutout checks saw as findings. The review stays a person's."""
+    checks = record["checks"]
+    where = f"후보 {index} · 시드 {record['seed']}"
+    asset_id = record["asset"]["id"]
+    if checks.get("objectFound") is False:
+        ctx.add_finding(severity="fail", code="image.subject_missing", where=where, asset_id=asset_id,
+                        params={"coverage": checks.get("coverage")}, evidence=[record["checked"]])
+    elif record["error"]:
+        ctx.add_finding(severity="fail", code="image.finish_failed", where=where, asset_id=asset_id,
+                        params={"error": record["error"]}, evidence=[record["checked"]])
+    elif checks.get("touchesEdge"):
+        # 배경을 지운 그림에서 물체가 가장자리에 닿았다. 원본에서 잘렸을 수 있다.
+        ctx.add_finding(severity="warn", code="image.touches_edge", where=where, asset_id=asset_id,
+                        params={"coverage": checks.get("coverage")}, evidence=[record["checked"]])
 
 
 def _finish_cutout(record: dict[str, Any], image: Image.Image, p: dict[str, Any], final_dir: Path) -> None:

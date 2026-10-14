@@ -54,6 +54,10 @@ def _print_progress(load_job) -> dict[str, Any]:
         time.sleep(1)
 
 
+class Terminated(KeyboardInterrupt):
+    """SIGTERM: the process is being stopped, which is not a person cancelling the job."""
+
+
 @contextmanager
 def _termination_signals():
     """Route SIGTERM and Ctrl+C through cleanup; repeated signals cannot skip it."""
@@ -63,11 +67,11 @@ def _termination_signals():
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     interrupted = False
 
-    def stop(_sig, _frame):
+    def stop(sig, _frame):
         nonlocal interrupted
         if not interrupted:
             interrupted = True
-            raise KeyboardInterrupt
+            raise Terminated if sig == signal.SIGTERM else KeyboardInterrupt
 
     try:
         for sig in previous:
@@ -113,7 +117,10 @@ def _run_with_cleanup(recipe: str, raw_params: str) -> int:
         worker.start()
         try:
             job = _print_progress(lambda: store.load(job["id"]))
+        except Terminated:
+            pass  # 아래 shutdown이 작업을 failed · interrupted로 닫는다.
         except KeyboardInterrupt:
+            # Ctrl+C는 터미널 앞의 사람이 낸 취소 요청이다.
             runner.cancel(job["id"])
         finally:
             runner.shutdown()

@@ -10,7 +10,7 @@
 | `src/local_assets_engine/runner.py` | 한 줄 작업 실행, 단계 기록(`Stage`), 중지·종료 처리 |
 | `src/local_assets_engine/measure.py` | 단계 프로세스 실행, 출력 스트리밍, 진행률 해석, `/usr/bin/time -l` 측정 |
 | `src/local_assets_engine/jobs.py` | `job.json` 원자적 기록, 재시작 복구, 파일 경로 검증 |
-| `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`) |
+| `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`), 요청 스키마(`schemas.py`), 점검 레시피(`selftest.py`) |
 | `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
 | `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
@@ -60,13 +60,15 @@ javis · CLI   ──HTTP───▶        │
   받으며 실제 파일 경로도 다시 검사한다. 지우지 않으므로 Finder 휴지통에서 되살린다.
 - 창에는 제목 막대가 없다(`hiddenInset`). 맨 위 28px 띠와 화면 머리글이 `-webkit-app-region: drag`이고
   단추·입력·팝업은 `no-drag`다. 끌기 띠는 문서 맨 앞에 있어 뒤에 오는 `no-drag` 요소가 영역을 뚫는다.
-- 엔진과 독립 CLI의 SIGTERM·SIGINT는 진행 작업을 중지한다. `/usr/bin/time -l`의 자식은 작은
+- 엔진과 독립 CLI의 SIGTERM·SIGINT는 진행 작업을 중지한다. 엔진이 멈추며 끝낸 실행·대기 작업은 `failed` ·
+  `interrupted`로 닫고, `cancelled`는 취소 요청(API의 `cancel`, 앱의 중지 단추, 독립 CLI의 Ctrl+C)에만 쓴다.
+  멈추기 전에 취소 요청이 온 작업은 `cancelled`로 둔다. `/usr/bin/time -l`의 자식은 작은
   exec shim에서 별도 세션을 만든 뒤 실제 단계 명령으로 교체된다. 단계 그룹에만 SIGTERM을,
   3초 뒤에도 남으면 SIGKILL을 보낸다. time은 자식을 수거하고 측정을 출력할 때까지 유지한다.
   부모가 먼저 끝나도 남은 자식을 정리한 뒤 다음 작업을 허용한다. 작업별 `.process.lock`도
   자식에게 상속하여 부모 급사 후 기록이 실패로 닫혀도 살아 있는 단계와 그 입력의 이동을 막는다.
-- 엔진이 시작할 때 `queued`로 남은 작업은 `cancelled`, `running`으로 남은 작업은
-  `failed`로 닫는다. 어느 쪽도 다시 실행하지 않는다.
+- 엔진이 시작할 때 `queued`·`running`으로 남은 작업은 `failed` · `interrupted`로 닫는다. 어느 쪽도 다시
+  실행하지 않는다. 끝난 `selftest` 작업의 기록과 폴더도 이때 지운다.
 - 단, 다른 프로세스가 지금 돌리고 있는 작업은 닫지 않는다. 작업을 시작할 때 `owner`에
   프로세스 번호를 적고 기록을 쓸 때마다 `heartbeat`를 갱신하므로, 그 프로세스가 살아
   있고 하트비트가 3분 안쪽이면 남의 작업으로 보고 건너뛴다. 앱과 CLI가 각자 엔진을
@@ -95,8 +97,9 @@ javis · CLI   ──HTTP───▶        │
 
 | 메서드·경로 | 내용 |
 | --- | --- |
-| `GET /api/health` | 상태, 버전, 실행 중인 작업, 출력 폴더 |
-| `GET /api/doctor?deep=true` | 진단. `deep`은 하위 프로세스 검사(MPS, TRELLIS Metal)를 포함 |
+| `GET /api/health` | `{ok, engine: "assets", version, contract: 0, busy, busyBy?, currentJob, outputDir}`. `contract`는 지키는 엔진 계약 버전. `currentJob`은 이 출력 저장소에서 살아 있는 프로세스가 돌리는 작업(독립 CLI 포함)의 ID. `busy`는 그 작업이 있거나, 기록에 없는 누군가가 기기의 생성 차선 잠금(`generation.lock`)을 쥐고 있으면 참이다. 다른 체크아웃의 엔진, 제어 프로세스를 잃고 남은 단계가 여기에 걸리며 그때 `busyBy`가 `lane:generation.lock`이다 |
+| `GET /api/recipes` | 받는 일의 목록: `{recipes: [{name, label, paramsSchema, needsReview}]}` |
+| `GET /api/doctor?deep=true` | 진단. `deep`은 하위 프로세스 검사(MPS, TRELLIS Metal)를 포함. 별도 프로세스(`doctor --json`)에서 돌려 결과만 받는다. 엔진 안에서 돌리면 가중치 파일 검사의 메모리(약 50MB → 400MB)가 재시작 전까지 남았다 |
 | `POST /api/uploads` | PNG/JPG/WEBP 바이트를 검증·정규화하고 로컬 이미지 ID 반환 |
 | `GET /uploads/{id}` | 해당 이미지 PNG. ID로만 조회, 경로 입력 불가 |
 | `GET /api/presets` | `config/presets.json` |
@@ -107,6 +110,7 @@ javis · CLI   ──HTTP───▶        │
 | `GET /api/jobs/{id}` | 작업 기록 |
 | `POST /api/jobs/{id}/cancel` | 대기 작업은 바로 취소, 진행 작업은 중지 요청 |
 | `POST /api/jobs/{id}/assets/{assetId}/review` | `{status}`: `pending`, `approved`, `rejected`. 앱은 프리비즈 컷에만 쓴다 |
+| `POST /api/jobs/{id}/findings/{findingId}/review` | `{status}`: `pending`, `cleared`. 사람이 그 자리를 확인했음을 기록한다. 모르는 값은 400, 없는 항목은 404 |
 | `POST /api/jobs/{id}/assets/{assetId}/library` | `{favorite?, tags?, addTags?, removeTags?, collection?, note?}`. 태그 교체·추가·제거 중 하나만 받는다. 태그 20개·40자, 컬렉션 60자, 메모 500자. 빈 값은 필드를 지운다 |
 | `GET /api/jobs/{id}/assets/{assetId}/versions` | 이 이미지·메시의 원본부터 모든 파생 버전: `{current, root, versions[{key, parent, depth, relation, summary, ...}]}` |
 | `GET /api/assets?review=&kind=&favorite=&collection=&tag=` | 작업을 가로지른 에셋 목록 |
@@ -115,6 +119,11 @@ javis · CLI   ──HTTP───▶        │
 | `POST /api/jobs/{id}/trash/reserve` | `{token?, paths?, ownerPid?}`. 32자리 hex token으로 전체 작업 또는 중간 파일 이동 예약. 같은 요청의 재전송은 멱등 처리. 사용 중 원본·완료 token은 409 |
 | `POST /api/jobs/{id}/trash/finish` | `{token, failed?}`. 이동 완료·실패·응답 유실 후 예약 해제와 완료 token 기록. 다른 token의 예약은 유지 |
 | `GET /files/{id}/{path}` | 해당 작업 폴더 안의 파일만 제공 |
+
+`health`의 `engine`·`contract`, `/api/recipes`, 작업 API(`/api/jobs`와 그 아래 `cancel`·`review`), 작업 기록의
+`dir`·`findings`·`errorCode`, `selftest` 레시피는 arkAgent가 tts·music·assets 엔진에 똑같이 요구하는 계약이다.
+원문은 `arkAgent/docs/ENGINE-CONTRACT.md`이고, 엔진을 띄운 뒤 `uv run --project <arkAgent 경로> ark-engine-check
+http://127.0.0.1:47831`로 확인한다. 검사는 `selftest`만 쓰므로 모델을 올리지 않는다. 나머지 API는 이 엔진 고유다.
 
 Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가 요청과 다르면 403으로
 거절한다. `Origin: null`과 다른 사이트의 Fetch Metadata도 거절한다. Origin 없는 로컬 CLI는 지원한다.
@@ -136,9 +145,22 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | 배치 항목 | `source: {jobId, assetId}`(완성된 메시), `path`(GLB·glTF 절대 경로), `standin`(대역 id) 중 하나, `id`, `position` [x, y, z] 미터, `yaw` 도, `scale`. 대역은 `size` [가로, 깊이, 높이] 미터 0.05~500 | 원점, 0도, 1.0, 카탈로그 치수 |
 | `text-to-video` | `subject`(필수), `motion`, `camera`, `style`, `preset`(`kind: "video"` 프리셋), `imageModel`, `seed`, `concept`, `videoPrompt`, `negativePrompt`, 영상 입력 | `video-cinematic`, 컨셉 이미지 1장, `concept: true` |
 | `image-to-video` | `uploadId`, `imagePath`(절대 경로), `source: {jobId, assetId}`(이미지) 중 하나, `subject`(없으면 원본의 설명·파일 이름), `motion`, `camera`, `style`, `seed`, `videoPrompt`, `negativePrompt`, 영상 입력 | 원본이 세로면 세로 크기 |
+| `selftest` | `steps` 1~10, `stepSeconds` 0~30, `failAt`(1부터 세는 단계 번호, `steps` 이하) | 2단계, 단계당 0.5초, 실패 없음 |
 | 영상 입력 | `videoModel`(등록된 id), `width`·`height` 256~2048(32의 배수로 내림, 곱이 `maxPixels` 이하), `frames` 5~`maxFrames`(4k+1로 내림), `steps` 1~100, `guidance` 1~20. `camera`는 `{shot, angle, move}`에 `video.camera`의 id | 모델 설정: 1280×704(세로 704×1280), 121프레임, 24fps, 50스텝, 5.0, 공식 부정 프롬프트 |
 
 후보 시드는 시작 시드부터 1씩 늘린다. 시드를 비우면 엔진이 무작위로 정하고 기록한다.
+
+`paramsSchema`(JSON Schema)는 `recipes/schemas.py`가 위 표의 검증과 같은 상수·프리셋 목록으로 만든다. 값은 JSON의
+제 타입으로 적는다. 검증(`prepare`)이 기준이라, 문자열로 쓴 숫자·불리언과 모르는 키는 스키마와 달리 계속 받는다.
+다른 입력에 따라 달라지는 한계(영상 가로×세로, 후보 수만큼의 시드 여유, 자르기 영역의 합)와 있어야 하는 파일은
+`description`에만 적는다. `tests/test_recipe_schemas.py`가 스키마의 범위·선택지·길이·기본값·필수 키를 실제 검증에
+넣어 본다. `needsReview`는 결과 에셋을 사람이 보고 판단해야 하는지다. 고른 파일을 그대로 등록하는 `import-image`와
+`selftest`만 거짓이다.
+
+`selftest`는 모델 없이 대기열·측정·취소·실패 기록을 확인하는 점검 레시피다. 단계마다
+`python -m local_assets_engine.tools.selftest_step`을 생성 단계와 같은 측정 경로로 돌리고, `selftest/report.txt`
+에셋 하나와 표본 `findings` 하나를 남긴다. `failAt` 단계에서는 프로세스가 실패로 끝난다. 점검 작업은 결과물이 아니라
+보관함(`/api/assets`)·측정 집계(`bench`)·앱의 작업 목록과 완료 알림에서 빼고, 엔진이 시작할 때 끝난 것을 지운다.
 
 2D 카테고리는 `imageCategories`(게임·실사·애니), 종류는 `presets[].category`다. 카테고리 없는 기존 2D
 프리셋은 게임으로 표시한다. `imageModel`은 기존 기본 모델 객체, `imageModels`는 추가 선택지 목록이다.
@@ -157,6 +179,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
   "recipe": "image",
   "title": "아이템 아이콘 · red potion",
   "params": { "preset": "item-icon", "subject": "red potion", "prompt": "red potion, game item icon, ...", "seeds": [7, 8, 9, 10] },
+  "dir": "/Users/me/local-assets-engine/output/jobs/20260916-013000-ab12",
   "state": "done",
   "createdAt": "2026-09-16T01:30:00+09:00",
   "startedAt": "2026-09-16T01:30:00+09:00",
@@ -174,24 +197,62 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
       "preview": "final/seed-7.png", "meta": { "seed": 7 }, "review": "pending"
     }
   ],
+  "findings": [
+    {
+      "id": "f01", "severity": "warn", "code": "image.touches_edge", "params": { "coverage": 0.41 },
+      "where": "후보 1 · 시드 7", "assetId": "a01", "evidence": ["cutout/candidate_seed_7.png"]
+    }
+  ],
   "error": null,
+  "errorCode": null,
   "logTail": []
 }
 ```
 
 | 필드 | 값 |
 | --- | --- |
+| `dir` | 작업 폴더의 절대 경로. 읽을 때 붙이고 `job.json`에는 적지 않는다. 출력 폴더를 옮겨도 틀려지지 않는다 |
 | `state` | `queued`, `running`, `cancelling`, `done`, `failed`, `cancelled` |
 | `stages[].state` | `running`, `done`, `failed`, `cancelled`, `skipped` |
+| `findings[]` | 자동 검사가 사람에게 보라고 올린 곳: `{id, severity, code, params, where, assetId, evidence, review}`. `severity`는 `fail`(다시 만들어야 함)·`warn`(사람이 확인), `evidence`는 작업 폴더 기준 경로. 에셋의 `review`를 바꾸지 않는다 |
+| `findings[].review`·`reviewedAt` | `pending`(새 항목), `cleared`(사람이 그 자리를 확인함). 사람만 바꾼다. 필드 없는 이전 기록은 `pending`으로 읽는다 |
+| `errorCode` | `failed`일 때 `invalid_input`, `out_of_memory`, `interrupted`, `engine_error` 중 하나. 그 밖의 상태는 `null` |
 | `owner` | 실행·대기를 맡은 `{pid, heartbeat}`. 시작 복구가 살아 있는 다른 엔진의 작업을 닫지 않게 한다 |
 | `hadDownloads` | 실행 시작 때 false, 다운로드 로그를 발견하면 true로 영속 기록. true 또는 필드 없는 과거 기록은 예상 시간 표본에서 제외 |
 | `trashReservation` | `{token, createdAt, ownerPid, paths}`. 이동 중 새 원본 사용을 막고 종료된 이동 소유자의 예약은 다음 검사 때 해제 |
-| `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
+| `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video`, 점검 작업의 `text` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
 | `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
 | 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`), `label`, `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
 | 영상 `meta` | 아래 영상 계약 참고 |
+
+`findings`의 `code`와 `params`는 이미 있던 자동 검사의 값이다. 표시 문구가 아니라 판정 근거다.
+
+| `code` | 올리는 때 | `params` |
+| --- | --- | --- |
+| `image.subject_missing` (`fail`) | 배경을 지운 뒤 남은 물체가 없다(`checks.objectFound`가 거짓) | `coverage` |
+| `image.finish_failed` (`fail`) | 캔버스 맞춤·픽셀화가 실패해 정리 전 그림이 결과로 남았다(`meta.error`) | `error` |
+| `image.touches_edge` (`warn`) | 배경을 지운 그림에서 물체가 가장자리에 닿았다(`checks.touchesEdge`) | `coverage` |
+| `mesh.open_boundary`·`mesh.non_manifold_edges`·`mesh.inconsistent_winding`·`mesh.duplicate_faces` (`warn`) | `stats.topology`의 해당 개수가 0이 아니다 | `count` |
+| `mesh.faces_over_target` (`warn`) | 형상을 지키느라 게임용이 목표 면 수를 넘었다(이전 복구 경로는 감축 뒤에도 넘었을 때) | `targetFaces`, `triangles` |
+
+이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과에 올린다. 사람이 직접
+고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
+
+`errorCode`는 실패 원인의 분류다.
+
+- `out_of_memory`: 단계 프로세스가 SIGKILL로 끝났거나(`/usr/bin/time`의 `time: signal:` 줄, 이 기기에서는 메모리
+  압박) Metal의 `Insufficient Memory`, MPS의 `out of memory`를 남겼다. 엔진이 직접 멈춘 실행은 넣지 않는다.
+  Activity Monitor 등에서 사람이 강제 종료한 것과는 구분하지 못한다.
+- `interrupted`: 엔진이 멈추거나 다시 시작하며 닫은 작업. 실행 중이던 것과 대기 중이던 것 모두다.
+- `invalid_input`: 레시피 실행 중 요청이 설정과 맞지 않게 된 경우(대기하는 사이 프리셋이 사라짐 등). 제출할 때의
+  입력 오류는 400으로 끝나 작업 기록이 생기지 않는다.
+- `engine_error`: 나머지 전부. 단계 프로세스 안에서 드러난 입력 문제(편집을 지원하지 않는 메시 등)도 여기다.
+
+`findings`·`errorCode`가 생기기 전의 기록은 읽을 때 `findings: []`를 채우고, 실패 기록의 `errorCode`는 저장된
+`error` 문구로 정한다(재시작 문구는 `interrupted`, 메모리 부족 진단은 `out_of_memory`, 그 밖은 `engine_error`).
+읽기만으로 파일을 고쳐 쓰지 않으며, 다음 수정 때 함께 저장된다.
 
 - 러너와 API가 같은 기록을 고치므로 모든 수정은 `JobStore.update`에서 작업별 파일 잠금과
   스레드 잠금을 잡고 다시 읽은 뒤 임시 파일에 쓰고 교체한다.
@@ -215,6 +276,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
 | `post`·`optimize` | Blender·gltfpack | 이전 `repair-mesh` 전용 |
 | `edit`·`import` | `python -m local_assets_engine.tools.asset_edit` + Node.js 픽셀 계산 | 원본을 새 작업에 복사하고 새 버전 저장 |
+| `step-<n>` | `python -m local_assets_engine.tools.selftest_step` | `@@progress` JSON 줄. `selftest` 전용, 모델 없음 |
 | `repair` | `python workers/gltf_export.py --input ... --output ...` | 없음. 기존 KDTree 원본을 새 작업으로 복구 |
 | `previz` | `python -m local_assets_engine.tools.previz_render` | `@@progress` JSON 줄, 렌더 호출 수 기준 |
 | `video` | `engines/video/.venv/bin/python workers/video_runner.py --request video/request.json` | `@@progress` JSON 줄만(가중치 확인·문장 해석·적재·잡음 제거 스텝·복원·저장). 모델 적재의 tqdm 막대는 무시 |

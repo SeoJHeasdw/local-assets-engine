@@ -78,6 +78,15 @@ test("quality request retains an explicitly disabled game variant", () => {
   assert.equal(request.params.gameFaces, 0);
 });
 
+test("engine self-test jobs are told apart from asset jobs", async () => {
+  const { RECIPE_LABELS, isDiagnostic } = await import("../../electron-app/shared/format.mjs");
+  assert.equal(isDiagnostic({ recipe: "selftest" }), true);
+  assert.equal(isDiagnostic({ recipe: "image" }), false);
+  assert.equal(isDiagnostic(null), false);
+  // 보관 용량 화면은 작업 폴더를 그대로 보여 준다. 그때 쓸 이름이 있어야 한다.
+  assert.ok(RECIPE_LABELS.selftest);
+});
+
 test("queue position, waiting vs processing time and finished jobs are told apart", async () => {
   const { jobsAhead, jobTimes, newlyFinished } = await import("../../electron-app/shared/format.mjs");
   const jobs = [

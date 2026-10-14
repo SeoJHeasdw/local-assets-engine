@@ -192,4 +192,5 @@ def run_import(ctx):
     ctx.add_asset(kind='image',role='candidate',file=output,preview=output,meta=json.loads(stats.read_text()))
 
 EDIT_ASSET=Recipe('edit-asset','에셋 편집',prepare,run)
-IMPORT_IMAGE=Recipe('import-image','이미지 가져오기',prepare_import,run_import)
+# 사람이 고른 파일을 그대로 등록하므로 다시 볼 것이 없다.
+IMPORT_IMAGE=Recipe('import-image','이미지 가져오기',prepare_import,run_import,needs_review=False)
