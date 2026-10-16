@@ -113,6 +113,45 @@ def even_tone(color: np.ndarray, rows: list[tuple[int, int]], strength: float, m
         np.clip(band, 0.0, 1.0, out=band)
 
 
+def marked_rows(color: np.ndarray, rows: list[tuple[int, int]], limit: float = 1.4, share: float = 0.003) -> list[int]:
+    """Rows with a bright mark (paint or a bleached patch) that would repeat conspicuously on every wall."""
+    from scipy.ndimage import gaussian_filter
+
+    luminance = gaussian_filter(color @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), 2)
+    marked = []
+    for index, (top, bottom) in enumerate(rows):
+        band = luminance[top + 3:bottom - 3]
+        ratio = band / np.median(band)
+        if ratio.max() > limit and (ratio > limit - 0.1).mean() > share:
+            marked.append(index)
+    return marked
+
+
+def replace_rows(maps: dict[str, np.ndarray], rows: list[tuple[int, int]], marked: list[int]) -> None:
+    """Cover each marked row with a clean row of similar height, mirrored and shifted half a tile, in place."""
+    from PIL import Image
+
+    clean = [i for i in range(len(rows)) if i not in marked]
+    for index in marked:
+        top, bottom = rows[index]
+        height = bottom - top
+        donors = [i for i in clean if abs(i - index) > 1] or clean
+        donor = min(donors, key=lambda i: abs((rows[i][1] - rows[i][0]) - height))
+        d_top, d_bottom = rows[donor]
+        for name, image in maps.items():
+            patch = image[d_top:d_bottom][:, ::-1]
+            if name == "nor_gl":
+                patch = patch.copy()
+                patch[..., 0] = 1 - patch[..., 0]
+            patch = np.roll(patch, image.shape[1] // 2, axis=1)
+            if patch.shape[0] != height:
+                mode = "RGB" if patch.ndim == 3 else "F"
+                source = (np.clip(patch, 0, 1) * 255).astype(np.uint8) if mode == "RGB" else patch.astype(np.float32)
+                resized = Image.fromarray(source, mode=None if mode == "RGB" else "F").resize((patch.shape[1], height), Image.BILINEAR)
+                patch = np.asarray(resized, dtype=np.float32) / (255 if mode == "RGB" else 1)
+            image[top:bottom] = patch
+
+
 def rotate_normals(normal: np.ndarray) -> np.ndarray:
     """Turn a tangent-space normal map image a quarter turn counter-clockwise, vectors included."""
     turned = np.rot90(normal, k=1).copy()
@@ -179,6 +218,8 @@ def compose(materials: dict[str, Path], width: int, seed: int) -> tuple[dict[str
     rows = plank_rows(planks["disp"])
     joints = remove_joints(planks, rows)
     even_tone(planks["diff"], rows, 0.85, period / width)
+    marked = marked_rows(planks["diff"], rows)
+    replace_rows(planks, rows, marked)
     wood_size = float(json.loads((materials["timber"] / "material.json").read_text("utf-8"))["sizeMeters"])
     # A whole number of rough-wood tiles across the atlas, so the region wraps with the planks.
     across = min((d for d in range(1, 65) if width % d == 0), key=lambda d: abs(d - period / wood_size))
@@ -206,7 +247,7 @@ def compose(materials: dict[str, Path], width: int, seed: int) -> tuple[dict[str
         return [round(1 - pixel_bottom / height, 6), round(1 - pixel_top / height, 6)]
 
     layout = {
-        "periodMeters": period, "width": width, "height": height, "seed": seed, "jointsClosed": joints,
+        "periodMeters": period, "width": width, "height": height, "seed": seed, "jointsClosed": joints, "rowsReplaced": marked,
         "regions": {
             "planks": {"v": v(0, width), "metersTall": period, "rows": [v(top, bottom) for top, bottom in rows],
                        "rowMeters": [round((bottom - top) / width * period, 4) for top, bottom in rows]},

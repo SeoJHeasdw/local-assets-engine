@@ -35,8 +35,6 @@ WINDOW = (1.6, 1.0, 2.2)       # width, sill, head
 FLOOR_THICKNESS = 0.1
 RAIL_HEIGHT = 1.0
 STAIR_STEPS, STAIR_LANDING, STAIR_HALF_WIDTH = 12, 0.4, 1.0
-BOARD = 0.022                  # wall board thickness
-GAP = 0.003                    # between floor boards
 FRAME = 0.12                   # door and window frame width
 BEVEL = 0.008
 
@@ -58,6 +56,18 @@ class Atlas:
         self.timber = regions["timber"]
         self.shingle_bands = regions["shingles"]["bands"]
         self.margin = 6 / layout["height"]
+        planks = regions["planks"]
+        per_m = (planks["v"][1] - planks["v"][0]) / planks["metersTall"]
+        edges = sorted({v for row in self.rows for v in row})
+        # The rows sit edge to edge in the atlas, so one face can run across several boards.
+        self.planks = {"lo": edges[0], "hi": edges[-1], "perMeter": per_m, "edges": edges}
+        shingles = regions["shingles"]
+        band_edges = sorted({v for band in self.shingle_bands for v in band})
+        self.shingles = {"lo": band_edges[0], "hi": band_edges[-1],
+                         "perMeter": (shingles["v"][1] - shingles["v"][0]) / shingles["metersTall"], "edges": band_edges}
+
+    def span_meters(self, span: dict) -> float:
+        return (span["hi"] - span["lo"]) / span["perMeter"]
 
     def row(self, index: int, width: float):
         v0, v1 = self.rows[index % len(self.rows)]
@@ -87,13 +97,16 @@ class Builder:
         self.uv = self.bm.loops.layers.uv.new("UVMap")
 
     def box(self, center, axes, size, v_map, *, u0: float = 0.0, faces=("+a", "-a", "+b", "-b", "+n", "-n"),
-            material: int = 0, bevel: bool = False):
+            material: int = 0, bevel: bool = False, u_period: float | None = None, edge_v_map=None):
         """Box at ``center`` with unit ``axes`` (a length, b width, n thickness) and ``size`` (L, W, T).
 
         Long faces map U along ``a`` from ``u0`` meters and V = base + across * scale, ``v_map`` giving
         (base, scale); ``across`` runs from the face's left edge as seen from outside, so a square post
-        reads the same from every side. End faces take a small patch of the same mapping.
+        reads the same from every side. End faces take a small patch of the same mapping. ``u_period``
+        is the meters one U spans (the atlas period by default); ``edge_v_map`` maps the thin ``±b``
+        faces elsewhere (a shingle's butt into its band's shadow).
         """
+        period = u_period or self.atlas.period
         a, b, n = (_v(*axis).normalized() for axis in axes)
         c = _v(*center)
         half = {"a": size[0] / 2, "b": size[1] / 2, "n": size[2] / 2}
@@ -118,14 +131,15 @@ class Builder:
                 origin = c + d * half["a"] - right * half["b"] - up * half["n"]
                 for loop in face.loops:
                     rel = loop.vert.co - origin
-                    loop[self.uv].uv = ((rel.dot(right) + u0) / self.atlas.period, base + rel.dot(up) * scale)
+                    loop[self.uv].uv = ((rel.dot(right) + u0) / period, base + rel.dot(up) * scale)
             else:
                 right = a.cross(d).normalized()
                 width = size[1] if axis == "n" else size[2]
                 start = c - a * half["a"] - right * (width / 2)
+                face_base, face_scale = edge_v_map if (edge_v_map and axis == "b") else (base, scale)
                 for loop in face.loops:
                     rel = loop.vert.co - start
-                    loop[self.uv].uv = ((rel.dot(a) + u0) / self.atlas.period, base + rel.dot(right) * scale)
+                    loop[self.uv].uv = ((rel.dot(a) + u0) / period, face_base + rel.dot(right) * face_scale)
             made.append(face)
         if bevel:
             import bmesh
@@ -138,7 +152,7 @@ class Builder:
 
     # Typed helpers ---------------------------------------------------------------------------------
 
-    def timber(self, center, axes, size, *, offset=None, u0=None, faces=("+a", "-a", "+b", "-b", "+n", "-n"), bevel=True):
+    def timber(self, center, axes, size, *, offset=None, u0=None, faces=("+a", "-a", "+b", "-b", "+n", "-n"), bevel=False):
         offset = self.rng.uniform() if offset is None else offset
         u0 = self.rng.uniform(0, self.atlas.period) if u0 is None else u0
         widest = max(size[1], size[2])
@@ -150,25 +164,45 @@ class Builder:
         self.timber(((x, y, (z0 + z1) / 2)), ((0, 0, 1), (1, 0, 0), (0, 1, 0)), (z1 - z0, width, width),
                     offset=0.37, u0=0.0, bevel=True)
 
+    def panel(self, origin, u_axis, v_axis, u_len, v_len, span: dict, *, v_scale: float = 1.0, u_period=None,
+              u0: float = 0.0, start=None, top=None, material: int = 0):
+        """A flat face of boards: U along ``u_axis`` (their length), V across through ``span``'s rows.
+
+        The face lies in the plane of ``u_axis`` and ``v_axis`` from ``origin``, facing their cross
+        product. It is cut only where the rows run out and start again, which is a board edge, so
+        each part maps without a wrap. ``v_scale`` widens the boards; ``top(v)`` gives the length
+        along ``u_axis`` at ``v`` for a sloped far edge (gables).
+        """
+        o, u, w = _v(*origin), _v(*u_axis).normalized(), _v(*v_axis).normalized()
+        period = u_period or self.atlas.period
+        per_m = span["perMeter"] / v_scale
+        v_at = span["edges"][int(self.rng.integers(len(span["edges"]) - 1))] if start is None else start
+        reach = (lambda v: u_len) if top is None else top
+        made, v = [], 0.0
+        while v < v_len - 1e-6:
+            room = (span["hi"] - v_at) / per_m
+            step = min(room, v_len - v)
+            if step > 1e-6:
+                ua, ub = reach(v), reach(v + step)
+                points = [(0.0, v), (ua, v), (ub, v + step), (0.0, v + step)]
+                if ua < 1e-4:
+                    points = [(0.0, v), (ub, v + step), (0.0, v + step)]
+                elif ub < 1e-4:
+                    points = [(0.0, v), (ua, v), (0.0, v + step)]
+                verts = [self.bm.verts.new(o + u * pu + w * pv) for pu, pv in points]
+                face = self.bm.faces.new(verts)
+                face.material_index = material
+                for loop, (pu, pv) in zip(face.loops, points):
+                    loop[self.uv].uv = ((pu + u0) / period, v_at + (pv - v) * per_m)
+                made.append(face)
+            v += step
+            v_at = span["lo"] if step >= room - 1e-9 else v_at + step * per_m
+        return made
+
     def board(self, center, axes, size, *, row=None, u0=None, faces=("+n", "-b")):
         row = int(self.rng.integers(len(self.atlas.rows))) if row is None else row
         u0 = self.rng.uniform(0, self.atlas.period) if u0 is None else u0
         return self.box(center, axes, size, self.atlas.row(row, size[1]), u0=u0, faces=faces)
-
-    def row_heights(self, total: float) -> list[tuple[int, float]]:
-        """Plank rows (index, meters) stacked to fill ``total``, the last one cut to fit."""
-        stacked, filled = [], 0.0
-        widths = [float(w) for w in self.atlas.rows_meters]
-        while filled < total - 1e-4:
-            index = int(self.rng.integers(len(widths)))
-            width = min(widths[index], total - filled)
-            if width < 0.03 and stacked:
-                last_index, last = stacked[-1]
-                stacked[-1] = (last_index, last + width)
-                break
-            stacked.append((index, width))
-            filled += width
-        return stacked
 
     def finish(self, name: str, materials):
         import bpy
@@ -191,29 +225,32 @@ class Builder:
 X, Y, Z = (1, 0, 0), (0, 1, 0), (0, 0, 1)
 
 
-def vertical_boards(k: Builder, x0, x1, z0, z1, holes, face):
-    """Vertical boards on both faces between ``x0`` and ``x1`` with their outer side at ±``face``.
+# A wall's boards are a little wider than the scanned planks.
+WALL_BOARD_SCALE = 1.5
 
-    Boards break at the openings' sides, so a board either runs full height or stops at an
-    opening's head and sill. Each stands a few millimeters in or out, which catches the light.
+
+def wall_faces(k: Builder, x0, x1, z0, z1, holes, face):
+    """Vertical boards on both wall faces as panels, broken at the openings' sides.
+
+    Above and below an opening the panels of one column share their rows, so a board runs on
+    past the window.
     """
     edges = sorted({x0, x1, *[x for hole in holes for x in hole[:2] if x0 < x < x1]})
-    for side in (1, -1):
-        for a, b in zip(edges[:-1], edges[1:]):
-            count = max(1, round((b - a) / 0.17))
-            width = (b - a) / count
-            for i in range(count):
-                xc = a + width * (i + 0.5)
-                spans = [(z0, z1)]
-                for hx0, hx1, hz0, hz1 in holes:
-                    if hx0 < xc < hx1:
-                        spans = [piece for s0, s1 in spans for piece in ((s0, min(s1, hz0)), (max(s0, hz1), s1))
-                                 if piece[1] - piece[0] > 0.03]
-                depth = face - BOARD / 2 + k.rng.uniform(-0.003, 0.003)
-                row, u0 = int(k.rng.integers(len(k.atlas.rows))), k.rng.uniform(0, k.atlas.period)
-                for s0, s1 in spans:
-                    k.board((xc, side * depth, (s0 + s1) / 2), (Z, X, (0, side, 0)), (s1 - s0, width, BOARD),
-                            row=row, u0=u0 + s0, faces=("+n", "+b", "-b"))
+    for a, b in zip(edges[:-1], edges[1:]):
+        middle = (a + b) / 2
+        spans = [(z0, z1)]
+        for hx0, hx1, hz0, hz1 in holes:
+            if hx0 < middle < hx1:
+                spans = [piece for s0, s1 in spans for piece in ((s0, min(s1, hz0)), (max(s0, hz1), s1))
+                         if piece[1] - piece[0] > 0.03]
+        for side in (1, -1):
+            start = k.atlas.planks["edges"][int(k.rng.integers(len(k.atlas.planks["edges"]) - 1))]
+            u0 = k.rng.uniform(0, k.atlas.period)
+            for s0, s1 in spans:
+                # Front: boards up along Z, across +X (facing +Y); back: across -X (facing -Y).
+                origin = (a, side * face, s0) if side > 0 else (b, side * face, s0)
+                k.panel(origin, Z, (side, 0, 0), s1 - s0, b - a, k.atlas.planks, v_scale=WALL_BOARD_SCALE,
+                        u0=u0 + s0, start=start)
 
 
 def wall(k: Builder, cell, story, thickness, opening=None):
@@ -236,47 +273,69 @@ def wall(k: Builder, cell, story, thickness, opening=None):
     for g0, g1 in sill_gaps:
         spans = [piece for s0, s1 in spans for piece in ((s0, min(s1, g0)), (max(s0, g1), s1)) if piece[1] - piece[0] > 0.05]
     for s0, s1 in spans:
-        k.timber(((s0 + s1) / 2, 0, 0.125), (X, Z, Y), (s1 - s0, 0.25, frame))
-    k.timber((0, 0, story - 0.1), (X, Z, Y), (2 * inner, 0.2, thickness + 0.03))
+        k.timber(((s0 + s1) / 2, 0, 0.125), (X, Z, Y), (s1 - s0, 0.25, frame), faces=("+n", "-n", "+b"), bevel=True)
+    k.timber((0, 0, story - 0.1), (X, Z, Y), (2 * inner, 0.2, thickness + 0.03), faces=("+n", "-n", "+b", "-b"), bevel=True)
     for side in (1, -1):
         k.timber((0, side * (face + 0.025), 2.475), (X, Z, (0, side, 0)), (2 * inner, 0.15, 0.05),
-                 faces=("+n", "+b", "-b", "+a", "-a"))
-    vertical_boards(k, -inner, inner, 0.25, story - 0.2, holes, face)
+                 faces=("+n", "+b", "-b"), bevel=True)
+    wall_faces(k, -inner, inner, 0.25, story - 0.2, holes, face)
     depth = thickness + 0.06
     if opening == "door":
         w, h = DOOR
         for x in (-w / 2 - FRAME / 2, w / 2 + FRAME / 2):
-            k.timber((x, 0, h / 2), (Z, X, Y), (h, FRAME, depth))
-        k.timber((0, 0, h + FRAME / 2), (X, Z, Y), (w + 2 * FRAME, FRAME, depth))
+            k.timber((x, 0, h / 2), (Z, X, Y), (h, FRAME, depth), faces=("+n", "-n", "+b", "-b"), bevel=True)
+        k.timber((0, 0, h + FRAME / 2), (X, Z, Y), (w + 2 * FRAME, FRAME, depth), faces=("+n", "-n", "-b"), bevel=True)
     elif opening == "window":
         w, sill, head = WINDOW
         for x in (-w / 2 - FRAME / 2, w / 2 + FRAME / 2):
-            k.timber((x, 0, (sill + head) / 2), (Z, X, Y), (head - sill + 2 * FRAME, FRAME, depth))
-        k.timber((0, 0, head + FRAME / 2), (X, Z, Y), (w + 2 * FRAME, FRAME, depth))
-        k.timber((0, 0, sill - FRAME / 2), (X, Z, Y), (w + 2 * FRAME + 0.16, FRAME, depth + 0.08))
-        k.timber((0, 0, (sill + head) / 2), (Z, X, Y), (head - sill, 0.05, 0.06))
-        k.timber((0, 0, (sill + head) / 2), (X, Z, Y), (w, 0.05, 0.06))
+            k.timber((x, 0, (sill + head) / 2), (Z, X, Y), (head - sill + 2 * FRAME, FRAME, depth),
+                     faces=("+n", "-n", "+b", "-b"), bevel=True)
+        k.timber((0, 0, head + FRAME / 2), (X, Z, Y), (w + 2 * FRAME, FRAME, depth), faces=("+n", "-n", "-b"), bevel=True)
+        k.timber((0, 0, sill - FRAME / 2), (X, Z, Y), (w + 2 * FRAME + 0.16, FRAME, depth + 0.08), bevel=True)
+        k.timber((0, 0, (sill + head) / 2), (Z, X, Y), (head - sill, 0.05, 0.06), faces=("+n", "-n", "+b", "-b"))
+        k.timber((0, 0, (sill + head) / 2), (X, Z, Y), (w, 0.05, 0.06), faces=("+n", "-n", "+b", "-b"))
         # Glass: its own material slot, both sides.
         k.box((0, 0, (sill + head) / 2), (X, Z, Y), (w, head - sill, 0.01), (0.0, 0.0), faces=("+n", "-n"), material=1)
 
 
-def deck(k: Builder, cell, z_top, thickness, rim=0.1):
-    """A floor or flat roof: boards along X on joists, closed by a rim beam on each edge."""
+def tiling(k: Builder, cell: float, span: dict) -> tuple[float, float]:
+    """U period and V widening that repeat a whole number of times per cell, so neighbors continue."""
+    u_period = cell / max(1, round(cell / k.atlas.period))
+    rounds = max(1, round(cell / k.atlas.span_meters(span)))
+    return u_period, cell / (rounds * k.atlas.span_meters(span))
+
+
+def deck(k: Builder, cell, z_top, thickness, *, roofing=False):
+    """A floor or flat roof: one top face over rim beams and joists, boards across the underside.
+
+    The top repeats a whole number of times per cell and starts at a row edge, so a neighboring
+    deck carries the same boards (or shingles) on across the seam, and no rim shows on top.
+    """
     half = cell / 2
-    z_bottom = z_top - thickness
+    skin = 0.03
+    z_under = z_top - skin
+    rim = 0.1
     for y in (-half + rim / 2, half - rim / 2):
-        k.timber((0, y, z_top - thickness / 2), (X, Z, Y), (cell, thickness, rim))
+        k.timber((0, y, z_under / 2 + (z_top - thickness) / 2), (X, Z, Y), (cell, z_under - (z_top - thickness), rim),
+                 faces=("+n", "-n", "-b"))
     for x in (-half + rim / 2, half - rim / 2):
-        k.timber((x, 0, z_top - thickness / 2), (Y, Z, X), (cell - 2 * rim, thickness, rim))
-    board_t = min(0.03, thickness * 0.4)
-    for x in np.linspace(-half + rim + 0.5, half - rim - 0.5, 4):
-        k.timber((x, 0, z_bottom + (thickness - board_t) / 2), (Y, Z, X), (cell - 2 * rim, thickness - board_t, 0.08))
-    y = -half + rim
-    end = half - rim
-    for row, width in k.row_heights(end - y):
-        k.board((0, y + width / 2, z_top - board_t / 2), (X, Y, Z), (cell - 2 * rim, max(0.01, width - GAP), board_t),
-                row=row, faces=("+n", "-n", "+b", "-b"))
-        y += width
+        k.timber((x, 0, z_under / 2 + (z_top - thickness) / 2), (Y, Z, X), (cell - 2 * rim, z_under - (z_top - thickness), rim),
+                 faces=("+n", "-n", "-b"))
+    for x in np.linspace(-half + rim + 0.5, half - rim - 0.5, 3):
+        k.timber((x, 0, z_under - 0.03), (Y, Z, X), (cell - 2 * rim, 0.06, 0.08), faces=("+n", "-n", "-b"))
+    span = k.atlas.shingles if roofing else k.atlas.planks
+    u_period, v_scale = tiling(k, cell, span)
+    k.panel((-half, -half, z_top), X, Y, cell, cell, span, v_scale=v_scale, u_period=u_period, start=span["lo"])
+    planks_period, planks_scale = tiling(k, cell, k.atlas.planks)
+    k.panel((-half, half, z_under), X, (0, -1, 0), cell, cell, k.atlas.planks, v_scale=planks_scale,
+            u_period=planks_period, start=k.atlas.planks["lo"])
+    # The deck's edge between the top and the rim beams.
+    for y, sign in ((-half, -1), (half, 1)):
+        k.box((0, y, z_top - skin / 2), (X, Z, (0, sign, 0)), (cell, skin, 0.0),
+              k.atlas.region(k.atlas.timber, skin, 0.2), faces=("+n",), u_period=u_period)
+    for x, sign in ((-half, -1), (half, 1)):
+        k.box((x, 0, z_top - skin / 2), (Y, Z, (sign, 0, 0)), (cell, skin, 0.0),
+              k.atlas.region(k.atlas.timber, skin, 0.2), faces=("+n",), u_period=u_period)
 
 
 def roof_slope(k: Builder, cell, story, thickness):
@@ -287,36 +346,37 @@ def roof_slope(k: Builder, cell, story, thickness):
     normal = np.array([0.0, -math.sin(pitch), math.cos(pitch)])  # out of the roof
     rafter = 0.14
     eave = 0.25
+    sheathing = 0.02
 
     def at(y, lift):
         """Point on the rafter top line above ``y`` (wall-top based), lifted ``lift`` along the normal."""
         base = np.array([0.0, y, story + rafter + (y + half) * rise / cell])
         return base + normal * lift
 
-    # Rafters from the eave to the ridge, and the eave fascia over their ends. A rafter is cut square,
-    # so it stops short of the ridge by the depth its lower edge would reach past it.
+    # Rafters from the eave to the ridge, seen from below. A rafter is cut square, so it stops
+    # short of the ridge by the depth its lower edge would reach past it.
     start, stop = at(-half - eave, 0.0), at(half, 0.0)
     length = float(np.linalg.norm(stop - start))
     short = rafter * math.tan(pitch)
     for x in np.linspace(-half + 0.06, half - 0.06, 5):
         center = (start + stop - along * short) / 2 - normal * (rafter / 2)
         k.timber((x, center[1], center[2]), (tuple(along), X, tuple(normal)), (length - short, 0.08, rafter),
-                 faces=("+a", "-a", "+b", "-b", "-n"))
+                 faces=("+b", "-b", "-n"))
     fascia = at(-half - eave, -rafter / 2) - along * 0.015
-    k.timber((0, fascia[1], fascia[2]), (X, tuple(normal), tuple(-along)), (cell, rafter + 0.05, 0.03))
-    # Sheathing boards on the rafters, seen from below under the eave and inside.
-    s = 0.0
-    sheathing = 0.02
-    for row, width in k.row_heights(length):
-        center = start + along * (s + width / 2) + normal * (sheathing / 2)
-        k.board(tuple(center), (X, tuple(along), tuple(normal)), (cell, width, sheathing), row=row, faces=("-n",))
-        s += width
-    # Shingle rows: each tilted a little more than the roof so its butt stands proud.
+    k.timber((0, fascia[1], fascia[2]), (X, tuple(normal), tuple(-along)), (cell, rafter + 0.05, 0.03),
+             faces=("+n", "-b"), bevel=True)
+    # Boards across the underside of the sheathing, repeating with the cell like the floor.
+    planks_period, planks_scale = tiling(k, cell, k.atlas.planks)
+    k.panel((-half, stop[1], stop[2]), X, tuple(-along), cell, length, k.atlas.planks, v_scale=planks_scale,
+            u_period=planks_period, start=k.atlas.planks["lo"])
+    # Shingle rows, each tilted a little more than the roof so its butt stands proud. A row's U
+    # repeats twice per cell and the same in every piece, so neighbors' rows run on unbroken.
     exposure, lap, shingle = 0.2, 0.1, 0.02
     rows = int(math.ceil((length + 0.05) / exposure))
     tilt = math.atan2(shingle, exposure + lap)
     row_along = along * math.cos(tilt) - normal * math.sin(tilt)
     row_normal = np.cross(np.array(X, dtype=float), row_along)
+    u_period = cell / max(1, round(cell / k.atlas.period))
     for i in range(rows):
         s0 = i * exposure - 0.05
         span = min(exposure + lap, length - s0)
@@ -324,35 +384,41 @@ def roof_slope(k: Builder, cell, story, thickness):
             break
         butt = start + along * s0 + normal * (sheathing + 0.004)
         center = butt + row_along * (span / 2) + row_normal * (shingle / 2)
-        v_map = k.atlas.band(int(k.rng.integers(len(k.atlas.shingle_bands))), exposure + lap)
+        band = k.atlas.shingle_bands[i % len(k.atlas.shingle_bands)]
+        v_map = k.atlas.band(i, exposure + lap)
         k.box(tuple(center), (X, tuple(row_along), tuple(row_normal)), (cell, span, shingle), v_map,
-              u0=k.rng.uniform(0, k.atlas.period), faces=("+n", "-b"))
+              u0=k.rng.uniform(0, u_period), u_period=u_period, faces=("+n", "-b", "+a", "-a"),
+              edge_v_map=(band[0] + 0.0015, 0.0))
     # Half of the ridge cap, lying on this side of the ridge line.
     top = at(half, sheathing + shingle * 2 + 0.04)
     top[1] = half
     cap = top - along * 0.08 - normal * 0.02
-    k.timber((0, cap[1], cap[2]), (X, tuple(along), tuple(normal)), (cell, 0.16, 0.04), faces=("+n", "-b"))
-    # Gable infill on both sides: vertical boards from the wall top up under the rafters. Each stops
-    # at the rafter line over its higher edge; the barge board covers the step.
+    k.timber((0, cap[1], cap[2]), (X, tuple(along), tuple(normal)), (cell, 0.16, 0.04), faces=("+n", "-b", "+a", "-a"),
+             u0=0.0)
     for x_side in (-1, 1):
         x = x_side * half
-        count = round(cell / 0.17)
-        width = cell / count
-        for i in range(count):
-            y_low = -half + width * i
-            top = story + (y_low + width + half) * rise / cell
-            if top - story < 0.03:
-                continue
-            row, u0 = int(k.rng.integers(len(k.atlas.rows))), k.rng.uniform(0, k.atlas.period)
-            for side in (1, -1):
-                depth = thickness / 2 - 0.015 - BOARD / 2 + k.rng.uniform(-0.003, 0.003)
-                k.board((x + side * depth, y_low + width / 2, (story + top) / 2), (Z, Y, (side, 0, 0)),
-                        (top - story, width, BOARD), row=row, u0=u0, faces=("+n", "+b", "-b"))
-        # Barge board along the gable edge, under the shingles' edge.
-        b0, b1 = at(-half - eave, -rafter / 2 - 0.02), at(half, -rafter / 2 - 0.02)
+        face = thickness / 2 - 0.015
+        # Gable: boards up from the wall top to the rafters on both faces, the top edge on the slope.
+        for side in (1, -1):
+            # The panel at x + side * face faces side * X: across -Y from the ridge side faces +X.
+            origin = (x + side * face, half if side > 0 else -half, story)
+            v_dir = (0, -1, 0) if side > 0 else (0, 1, 0)
+            if side > 0:
+                reach = lambda v: max(0.0, (cell - v) * rise / cell)  # noqa: E731
+            else:
+                reach = lambda v: max(0.0, v * rise / cell)  # noqa: E731
+            k.panel(origin, Z, v_dir, rise, cell, k.atlas.planks, v_scale=WALL_BOARD_SCALE, top=reach)
+        # Barge board along the gable edge. Its top stops just under the shingle rows, so a neighbor's
+        # roof covers it, while it still closes the slot between the boards underneath and the shingles.
+        height = rafter + 0.1
+        b0, b1 = at(-half - eave, -height / 2 + sheathing - 0.002), at(half, -height / 2 + sheathing - 0.002)
         mid = (b0 + b1) / 2
         k.timber((x + x_side * (thickness / 2 + 0.015), mid[1], mid[2]), (tuple(along), tuple(normal), (x_side, 0, 0)),
-                 (float(np.linalg.norm(b1 - b0)), rafter + 0.12, 0.03))
+                 (float(np.linalg.norm(b1 - b0)), height, 0.03), faces=("+n", "-n", "+b", "-b", "-a"), bevel=True)
+        # A short upright at the apex closes the notch where two barge boards meet.
+        apex_top, apex_low = at(half, 0.08)[2], at(half, -height)[2]
+        k.timber((x + x_side * (thickness / 2 + 0.015), half - 0.05, (apex_top + apex_low) / 2), (Z, Y, (x_side, 0, 0)),
+                 (apex_top - apex_low, 0.1, 0.034), faces=("+n", "-n", "-b", "+a"))
 
 
 def stairs(k: Builder, cell, story):
@@ -362,19 +428,20 @@ def stairs(k: Builder, cell, story):
     rise = top / STAIR_STEPS
     half = STAIR_HALF_WIDTH
     tread = 0.05
+    per_m = k.atlas.planks["perMeter"]
+    edges = k.atlas.planks["edges"]
+
+    def plank_map(width):
+        # A tread is a few scanned planks side by side: start at a row edge with room for its depth.
+        fits = [edge for edge in edges if edge + width * per_m <= k.atlas.planks["hi"]]
+        return fits[int(k.rng.integers(len(fits)))], per_m
+
     for i in range(STAIR_STEPS - 1):
         y0 = -cell / 2 + depth * i
-        z_top = (i + 1) * rise
-        y = y0
-        for row, width in k.row_heights(depth + 0.02):
-            k.board((0, y + width / 2, z_top - tread / 2), (X, Y, Z), (2 * half - 0.12, max(0.01, width - GAP), tread),
-                    row=row, faces=("+n", "-n", "+b", "-b", "+a", "-a"))
-            y += width
-    y = cell / 2 - STAIR_LANDING
-    for row, width in k.row_heights(STAIR_LANDING):
-        k.board((0, y + width / 2, top - tread / 2), (X, Y, Z), (2 * half, max(0.01, width - GAP), tread),
-                row=row, faces=("+n", "-n", "+b", "-b", "+a", "-a"))
-        y += width
+        k.box((0, y0 + depth / 2 + 0.01, (i + 1) * rise - tread / 2), (X, Y, Z), (2 * half - 0.12, depth + 0.02, tread),
+              plank_map(depth + 0.02), u0=k.rng.uniform(0, k.atlas.period), faces=("+n", "-n", "+b", "-b"))
+    k.box((0, cell / 2 - STAIR_LANDING / 2, top - tread / 2), (X, Y, Z), (2 * half, STAIR_LANDING, tread),
+          plank_map(STAIR_LANDING), u0=k.rng.uniform(0, k.atlas.period), faces=("+n", "-n", "+b", "-b", "+a", "-a"))
     pitch = math.atan2(top, run)
     along = np.array([0.0, math.cos(pitch), math.sin(pitch)])
     normal = np.array([0.0, -math.sin(pitch), math.cos(pitch)])
@@ -382,7 +449,8 @@ def stairs(k: Builder, cell, story):
     length = math.hypot(run, top)
     for x in (-half + 0.03, half - 0.03):
         center = start + along * (length / 2) - normal * 0.06 + np.array([0.0, 0.0, 0.16])
-        k.timber((x, center[1], center[2]), (tuple(along), tuple(normal), X), (length, 0.24, 0.06))
+        k.timber((x, center[1], center[2]), (tuple(along), tuple(normal), X), (length, 0.24, 0.06),
+                 faces=("+n", "-n", "+b", "-b", "-a"), bevel=True)
     for x in (-half + 0.06, half - 0.06):
         k.post(x, cell / 2 - 0.06, 0, top - tread, 0.1)
 
@@ -429,7 +497,7 @@ def build_piece(piece: str, k: Builder, cell: float, story: float, thickness: fl
     elif piece == "wall_window":
         wall(k, cell, story, thickness, "window")
     elif piece == "roof":
-        deck(k, cell, story + 0.2, 0.2, rim=0.12)
+        deck(k, cell, story + 0.2, 0.2, roofing=True)
     elif piece == "roof_slope":
         roof_slope(k, cell, story, thickness)
     elif piece == "stairs":
