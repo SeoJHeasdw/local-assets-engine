@@ -75,6 +75,8 @@ def test_bakes_a_measured_game_mesh_with_maps_and_keeps_the_master(tmp_path):
     error = stats["surfaceError"]
     assert error["lostFraction"] == 0 and error["unfiltered"]["maxMeters"] >= error["maxMeters"] * 0.5
     assert stats["bake"]["missFraction"] < 0.01 and stats["bake"]["exportCheck"]["problems"] == []
+    # Nothing on a ball is hidden, so its normals are left as baked.
+    assert stats["bake"]["softenedNormalFraction"] < 0.01
     for key in ("reviewFile", "distanceFile", "compareFile"):
         assert store.resolve_file(job["id"], meta[key]).stat().st_size > 0, key
     root = store.job_dir(job["id"]) / "game"
@@ -147,6 +149,28 @@ def test_fill_outside_copies_the_nearest_valid_texel_to_the_edge():
     assert (pixels[0, 0] == (1, 0, 0, 1)).all() and (pixels[7, 7] == (0, 0, 1, 1)).all()
     assert (pixels[..., :3].sum(axis=2) > 0).all()
     assert nearest_valid(np.ones((4, 4), dtype=bool)) is None and nearest_valid(np.zeros((4, 4), dtype=bool)) is None
+
+
+def test_soften_hidden_normals_flattens_occluded_tilts_and_keeps_exposed_ones():
+    from local_assets_engine.tools.game_bake import NORMAL_Z_FLOOR, soften_hidden_normals
+
+    def encode(*vectors):
+        n = np.array(vectors, dtype=np.float32)
+        n /= np.linalg.norm(n, axis=1, keepdims=True)
+        return np.concatenate(((n + 1) / 2, np.ones((len(n), 1), dtype=np.float32)), axis=1)[None]
+
+    # A face inside a filled gap (tilted down, AO 0.05); the same tilt on an exposed latch side; an
+    # exposed normal pointing into the surface; an exposed 63° tilt; a flat texel.
+    normal = encode((0, -0.9, 0.2), (0, -0.9, 0.2), (0.8, 0, -0.3), (0, 0.89, 0.45), (0, 0, 1))
+    occlusion = np.array([[0.05, 0.9, 0.9, 0.9, 0.9]], dtype=np.float32)
+    before = normal.copy()
+    share = soften_hidden_normals(normal, occlusion)
+    n = normal[0, :, :3] * 2 - 1
+    assert n[0, 2] > 0.99
+    assert abs(n[1, 2] - NORMAL_Z_FLOOR) < 1e-5 and n[1, 1] < -0.9
+    assert abs(n[2, 2] - NORMAL_Z_FLOOR) < 1e-5 and n[2, 0] > 0.9
+    assert (normal[0, 3:] == before[0, 3:]).all()
+    assert share == 3 / 5
 
 
 def test_hull_keeps_large_flat_triangles_and_thin_fins():

@@ -26,6 +26,11 @@ POINTS_PER_BATCH = 4_000_000
 EXPOSED = 0.05
 EXPOSURE_RAYS = 64
 EXPOSURE_SAMPLES = 4000
+# 노멀맵에서 숨은 면(껍데기가 메운 틈의 안쪽)을 담은 텍셀: AO가 이 범위 아래로, 저면 대비 기울기(탄젠트 z)가 이 범위
+# 아래로 갈수록 저면 노멀 쪽으로 섞는다. 드러난 가파른 면은 기울기를 유지하되 z가 이 하한(72.5°) 밑으로 가지 않는다.
+HIDDEN_AO = (0.15, 0.45)
+HIDDEN_TILT_Z = (0.5, 0.8)
+NORMAL_Z_FLOOR = 0.3
 EMIT_CHANNELS = (("basecolor", "Base Color", "sRGB"), ("roughness", "Roughness", "Non-Color"),
                  ("metallic", "Metallic", "Non-Color"))
 
@@ -403,6 +408,48 @@ def fill_outside(pixels, fill) -> None:
     flat[outside] = flat[source]
 
 
+def _smoothstep(low, high, values):
+    import numpy as np
+
+    t = np.clip((values - low) / (high - low), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def soften_hidden_normals(normal, occlusion, counted=None, rows: int = 256) -> float:
+    """Blend tangent-space normals that show hidden faces toward the low surface, in place.
+
+    Where the hull filled a crevice (the gap under a lid), bake rays reach the faces inside it:
+    the texel tilts far from the low surface while its AO is near zero. Facing away from the
+    camera, such a normal mirrors the sky in a game engine (URP Lit takes full Fresnel at
+    N·V <= 0) and shows as a navy line where the master shows a dark gap. Exposed steep faces,
+    such as a latch's sides, keep their tilt up to the floor. ``normal`` holds RGBA pixels in
+    0..1 and ``occlusion`` the AO in 0..1; untouched texels keep their exact values.
+    Returns the share of texels changed among ``counted`` (all texels when None).
+    """
+    import numpy as np
+
+    side = math.sqrt(1 - NORMAL_Z_FLOOR ** 2)
+    changed = 0
+    for begin in range(0, normal.shape[0], rows):
+        band = normal[begin:begin + rows]
+        n = band[..., :3] * 2 - 1
+        hidden = (1 - _smoothstep(*HIDDEN_AO, occlusion[begin:begin + rows])) * (1 - _smoothstep(*HIDDEN_TILT_Z, n[..., 2]))
+        touched = (hidden > 0.01) | (n[..., 2] < NORMAL_Z_FLOOR)
+        if not touched.any():
+            continue
+        m, h = n[touched], hidden[touched, None]
+        m = m * (1 - h) + np.array([0.0, 0.0, 1.0], dtype=m.dtype) * h
+        m /= np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-6)
+        low = m[:, 2] < NORMAL_Z_FLOOR
+        length = np.linalg.norm(m[low, :2], axis=1, keepdims=True)
+        # A normal pointing straight into the surface has no direction to keep; it lies flat.
+        m[low, :2] = np.where(length > 1e-6, m[low, :2] / np.maximum(length, 1e-6) * side, 0.0)
+        m[low, 2] = np.where(length[:, 0] > 1e-6, NORMAL_Z_FLOOR, 1.0)
+        band[touched, :3] = (m + 1) / 2
+        changed += int((touched if counted is None else touched & counted[begin:begin + rows]).sum())
+    return changed / max(1, normal.shape[0] * normal.shape[1] if counted is None else int(counted.sum()))
+
+
 def check_exports(glb: Path, fbx: Path, triangles: int, dimensions) -> dict:
     """Load what was written back in a clean scene and compare it with the baked mesh."""
     import bpy
@@ -526,7 +573,8 @@ def bake(args) -> int:
     picture[missed] = (230, 40, 40)
     PILImage.fromarray(picture[::-1]).save(args.output_dir / "bake-misses.png")
     # Texels in an island whose ray reached the master; misses inside islands are filled like the gaps.
-    fill = nearest_valid(covered & hit)
+    valid = covered & hit
+    fill = nearest_valid(valid)
     del picture, covered, hit, missed
     for step, (key, socket, colorspace) in enumerate(EMIT_CHANNELS, start=3):
         print(progress_line(step, 9, f"{key} 굽는 중"), flush=True)
@@ -535,28 +583,34 @@ def bake(args) -> int:
             run_bake(key, colorspace, "EMIT")
         finally:
             _restore(restore)
-    if args.ao:
-        print(progress_line(6, 9, "AO 굽는 중"), flush=True)
-        # The low mesh must not shadow the master it samples.
-        for flag in ("visible_diffuse", "visible_glossy", "visible_shadow", "visible_transmission"):
-            setattr(low, flag, False)
-        scene.cycles.samples = max(args.samples, 64)
-        run_bake("occlusion", "Non-Color", "AO")
-        scene.cycles.samples = args.samples
+    # AO is baked even when not shipped: it tells which normal texels show hidden faces.
+    print(progress_line(6, 9, "AO 굽는 중"), flush=True)
+    # The low mesh must not shadow the master it samples.
+    for flag in ("visible_diffuse", "visible_glossy", "visible_shadow", "visible_transmission"):
+        setattr(low, flag, False)
+    scene.cycles.samples = max(args.samples, 64)
+    run_bake("occlusion", "Non-Color", "AO")
+    scene.cycles.samples = args.samples
 
     print(progress_line(7, 9, "UV 바깥 채우고 텍스처 저장 중"), flush=True)
     channels = {}
-    for key, image in images.items():
-        pixels = _pixels(image)
+    # The normal map goes last: softening it reads the filled AO.
+    for key in sorted(images, key=lambda key: key == "normal"):
+        pixels = _pixels(images[key])
         fill_outside(pixels, fill)
-        image.pixels.foreach_set(pixels.ravel())
+        if key == "normal":
+            softened = soften_hidden_normals(pixels, channels["occlusion"], valid)
+        images[key].pixels.foreach_set(pixels.ravel())
         if key in ("metallic", "roughness", "occlusion"):
             # Keep the one channel, not the whole RGBA buffer a view would hold on to.
             channels[key] = pixels[..., 0].copy()
         del pixels
-    del fill
+    del fill, valid
     metallic, roughness = channels.pop("metallic"), channels.pop("roughness")
-    occlusion = channels.pop("occlusion", None)
+    occlusion = channels.pop("occlusion")
+    if not args.ao:
+        occlusion = None
+        bpy.data.images.remove(images.pop("occlusion"))
     metallic_constant = float(metallic.max()) < 0.02
     files = {}
     for key, image in images.items():
@@ -622,6 +676,7 @@ def bake(args) -> int:
     stats = {"device": device, "samples": args.samples, "textureSize": args.texture_size,
              "cageExtrusionMeters": round(extrusion, 5), "rayReachMeters": round(reach, 5),
              "metallicConstant": metallic_constant, "missFraction": round(miss_fraction, 5),
+             "softenedNormalFraction": round(softened, 5),
              "exportCheck": exported, "bakeSeconds": timings,
              "files": {**files, "glb": glb.name, "fbx": fbx.name, "misses": "bake-misses.png"},
              "bytes": {"glb": glb.stat().st_size, "fbx": fbx.stat().st_size},
