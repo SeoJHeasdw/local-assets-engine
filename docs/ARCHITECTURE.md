@@ -137,7 +137,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `image-to-3d` | `imagePath`(절대 경로), `uploadId`, 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
-| `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`) |
+| `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `sizeMeters` 0.01~1,000(가장 긴 변), `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`), 크기는 품질본의 `sizeMeters` |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `1024`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
@@ -366,7 +366,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 `partDetails`의 위치·크기)을 검사하고, `stats.surface`에 재구성의 부품 수 비교를, `stats.lod`에는 게임용의 감축 시도와 실제 오차 제한을 남긴다.
 UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경고이며 승인·거절은 사람이 한다.
 
-`game-asset`은 완료된 품질본을 바꾸지 않고 **새 작업**에 게임용 에셋을 만든다.
+`game-asset`은 완료된 품질본을 바꾸지 않고 **새 작업**에 게임용 에셋을 만든다. `sizeMeters`를 주면 두 단계 모두
+품질본을 바닥 중심 기준으로 가장 긴 변이 그 길이가 되게 균일하게 늘리거나 줄여 불러온다. 복셀·광선 거리·텍셀이 모두
+가장 긴 변을 따르므로 같은 굽기를 그 크기로 옮긴 결과이고, 품질본을 다시 만들지 않는다.
 
 1. 품질본은 겉면 안쪽에 또 한 겹이 있는 얇은 이중 껍질이라 그대로 줄이면 두 겹이 서로 뚫는다. 그래서 먼저 바깥 껍데기를
    만든다. 가장 긴 변을 192칸(`--voxels`)으로 나눈 복셀에 표면을 찍고, 바깥에서 닿지 않는 곳을 채운다. 바닥 아래를 벽으로

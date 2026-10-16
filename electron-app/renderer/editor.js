@@ -1128,6 +1128,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       const bakeForm = isMesh && !isGame ? `<div class="control-divider"></div><h3>게임용으로 굽기</h3><p class="hint">면을 예산까지 줄이고 이 메시의 디테일을 노멀·색·거칠기·AO 맵으로 굽습니다. 결과는 새 에셋으로 남습니다.</p>
         <label class="field"><span class="label">삼각형</span><input data-game="targetFaces" type="number" min="${bake.targetFaces?.minimum ?? 100}" max="${bake.targetFaces?.maximum ?? 200000}" step="100" value="${bake.targetFaces?.default ?? ""}"></label>
         <label class="field"><span class="label">텍스처</span><select data-game="textureSize">${(bake.textureSize?.enum || []).map((size) => `<option value="${size}"${size === bake.textureSize.default ? " selected" : ""}>${size}px</option>`).join("")}</select></label>
+        <label class="field"><span class="label">크기 <em>가장 긴 변 m</em></span><input data-game="sizeMeters" type="number" min="${bake.sizeMeters?.minimum ?? 0.01}" max="${bake.sizeMeters?.maximum ?? 1000}" step="0.01" value="${meta.sizeMeters ?? ""}"></label>
         <label class="field"><span class="label">파일 이름 <em>영문 소문자·숫자·_</em></span><input data-game="name" maxlength="40" value="${escapeHtml(bake.name?.default || "")}"></label>
         <label class="check-label"><input type="checkbox" data-game="ao" ${bake.ao?.default === false ? "" : "checked"}>AO 맵도 굽기</label>
         <button class="secondary" type="button" data-game-bake>게임용으로 굽기</button>` : "";
@@ -1167,6 +1168,9 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
         if (field("targetFaces").value) params.targetFaces = Number(field("targetFaces").value);
         if (field("textureSize").value) params.textureSize = Number(field("textureSize").value);
         if (field("name").value.trim()) params.name = field("name").value.trim();
+        // 품질본 크기 그대로면 보내지 않는다. 바꾼 경우에만 같은 굽기를 그 크기로 옮긴다.
+        const size = Number(field("sizeMeters").value);
+        if (field("sizeMeters").value && size !== meta.sizeMeters) params.sizeMeters = size;
         event.target.disabled = true;
         try {
           await api("/api/jobs", { method: "POST", body: { recipe: "game-asset", params } });

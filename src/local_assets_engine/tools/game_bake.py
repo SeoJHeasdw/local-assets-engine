@@ -7,7 +7,8 @@ Two measured stage entry points (Blender ``bpy``):
             ambient occlusion maps → GLB, FBX and PNGs, including a Unity URP metallic-smoothness map.
 ``compare`` puts two renders side by side for review.
 
-The master keeps its pivot and scale; the low mesh shares them, so both sit in the same space.
+The master keeps its pivot (bottom center) and, unless ``--size`` asks for another longest side,
+its scale; the low mesh shares them, so both sit in the same space.
 """
 
 from __future__ import annotations
@@ -60,6 +61,26 @@ def _load_joined(path: Path, name: str):
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     obj.name = name
     return obj
+
+
+def _fit(obj, size: float | None) -> None:
+    """Scale ``obj`` about the origin (the master's bottom center) so its longest side is ``size`` meters.
+
+    The hull voxels, ray distances and texel layout all follow the longest side, so a game copy
+    at another size is the same bake scaled, without rebuilding the master.
+    """
+    if not size:
+        return
+    import bpy
+
+    longest = max(obj.dimensions)
+    if longest <= 0 or abs(size / longest - 1) < 1e-6:
+        return
+    obj.scale = (size / longest,) * 3
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
 
 def _triangles(obj) -> int:
@@ -234,6 +255,7 @@ def reduce(args) -> int:
     print(progress_line(0, 6, "원본 불러오는 중"), flush=True)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     high = _load_joined(args.master, "high")
+    _fit(high, args.size)
     coords, triangles = mesh_arrays(high)
     span = float((coords.max(axis=0) - coords.min(axis=0)).max())
     voxel = span / args.voxels
@@ -495,6 +517,7 @@ def bake(args) -> int:
     print(progress_line(0, 8, "원본·저면 메시 불러오는 중"), flush=True)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     high = _load_joined(args.master, "high")
+    _fit(high, args.size)
     low = _load_joined(args.low, f"SM_{args.name}")
     reduce_stats = json.loads(args.reduce_stats.read_text("utf-8"))
     span = reduce_stats["spanMeters"]
@@ -716,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--sharp-angle", type=float, default=60.0)
     r.add_argument("--voxels", type=int, default=192, help="voxels along the longest side for the outer hull")
     r.add_argument("--seal-ground", action=argparse.BooleanOptionalAction, default=True)
+    r.add_argument("--size", type=float, help="longest side in meters; the master's own when omitted")
     b = sub.add_parser("bake")
     b.add_argument("--master", required=True, type=Path)
     b.add_argument("--low", required=True, type=Path)
@@ -726,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--texture-size", type=int, default=1024)
     b.add_argument("--samples", type=int, default=16)
     b.add_argument("--ao", action=argparse.BooleanOptionalAction, default=True)
+    b.add_argument("--size", type=float, help="longest side in meters; must match the reduce step")
     c = sub.add_parser("compare")
     c.add_argument("--panel", action="append", required=True, help="label=/path.png")
     c.add_argument("--output", required=True, type=Path)

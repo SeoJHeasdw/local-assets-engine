@@ -44,6 +44,12 @@ def test_prepare_applies_defaults_and_refuses_what_it_cannot_bake(tmp_path):
     defaults = presets["mesh"]["gameAsset"]
     assert params["targetFaces"] == defaults["targetFaces"] and params["textureSize"] == defaults["textureSize"]
     assert params["name"] == defaults["name"] and params["ao"] is True and "striped ball" in title
+    assert params["sizeMeters"] == 1.0 and params["resize"] is False
+    resized, _ = prepare({**request, "sizeMeters": 1.5}, presets, store)
+    assert resized["sizeMeters"] == 1.5 and resized["resize"] is True
+    for bad in (0, -1, "big", True):
+        with pytest.raises(PresetError, match="sizeMeters"):
+            prepare({**request, "sizeMeters": bad}, presets, store)
     for bad in ("Chest", "_chest", "chest-01", "a" * 41):
         with pytest.raises(PresetError, match="name"):
             prepare({**request, "name": bad}, presets, store)
@@ -110,6 +116,22 @@ def test_bakes_a_measured_game_mesh_with_maps_and_keeps_the_master(tmp_path):
         if stage["state"] == "done" and stage["name"].startswith("game-"):
             assert stage["seconds"] > 0 and stage["peakMemoryBytes"] > 0
     assert before == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob("*") if p.is_file()}
+
+
+def test_a_game_size_scales_the_same_bake_without_a_new_master(tmp_path):
+    store, _source_id, request = master_job(tmp_path)
+    runner = Runner(store, recipes={GAME_ASSET.id: GAME_ASSET})
+    job = runner.run_job(runner.create("game-asset", {
+        **request, "targetFaces": 300, "textureSize": 512, "name": "big_ball", "sizeMeters": 1.5})["id"])
+    assert job["state"] == "done", job["error"]
+    meta = job["assets"][0]["meta"]
+    bake = meta["stats"]["bake"]
+    assert meta["sizeMeters"] == 1.5
+    # The ball's longest side goes from 1.0 to 1.5 m, its bottom stays on the ground, and the
+    # rays still land on the scaled master.
+    assert max(bake["exportCheck"]["glb"]["dimensionsMeters"]) == pytest.approx(1.5, abs=0.02)
+    assert bake["exportCheck"]["problems"] == [] and bake["missFraction"] < 0.01
+    assert abs(meta["stats"]["bottomOffsetMeters"]) < 0.001
 
 
 def test_outer_hull_is_closed_consistently_wound_and_fills_a_ground_opening():

@@ -184,6 +184,8 @@ def _game_asset(presets: dict[str, Any]) -> Schema:
         "targetFaces": _integer(game_asset.MIN_FACES, game_asset.MAX_FACES, defaults["targetFaces"], "게임용 삼각형 예산"),
         "textureSize": _choice(defaults["textureSizes"], defaults["textureSize"], "구운 맵의 한 변 픽셀"),
         "ao": _boolean(defaults["ao"], "앰비언트 오클루전 맵을 함께 굽는다"),
+        "sizeMeters": _number(game_asset.MIN_SIZE, game_asset.MAX_SIZE, None,
+                              "가장 긴 변(m). 비우면 품질본 크기, 바닥 중심 기준으로 배율만 바꾼다"),
         "name": {"type": "string", "pattern": f"^{game_asset.NAME.pattern}$", "default": defaults["name"],
                  "description": "파일 이름. SM_<name>.fbx·T_<name>_*.png"},
     }, required=["source"])

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..jobs import JobNotFound
 from ..presets import PresetError
-from .base import Recipe, bool_param, choice_param, int_param
+from .base import Recipe, bool_param, choice_param, float_param, int_param
 from .mesh import report_mesh_checks
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 NAME = re.compile(r"[a-z0-9][a-z0-9_]{0,39}")
 MIN_FACES, MAX_FACES = 100, 200_000
+MIN_SIZE, MAX_SIZE = 0.01, 1000.0
 # 보이는 면의 95% 형상 오차가 가장 긴 변의 이 비율을 넘으면 사람이 보도록 알린다. 판정은 하지 않는다.
 SHAPE_ERROR_WARN = 0.02
 # 원본 표본 중 이 비율 이상이 껍데기 밖에서 사라졌으면(얇은 돌출부 소실 등) 알린다.
@@ -65,6 +66,9 @@ def prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") 
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise PresetError("name은 영문 소문자·숫자·_로 40자 이하이고, 소문자나 숫자로 시작해야 합니다.")
     meta = asset.get("meta", {})
+    # 게임에서 정한 크기(가장 긴 변). 품질본을 다시 만들지 않고 같은 굽기를 그 크기로 옮긴다.
+    size = (float_param(params, "sizeMeters", 1.0, MIN_SIZE, MAX_SIZE) if params.get("sizeMeters") is not None
+            else meta.get("sizeMeters"))
     normalized = {
         "source": {"jobId": job_id, "assetId": asset_id},
         "masterPath": str(master),
@@ -74,7 +78,8 @@ def prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") 
         "textureSize": choice_param(params, "textureSize", defaults["textureSize"], defaults["textureSizes"]),
         "ao": bool_param(params, "ao", defaults["ao"]),
         "name": name,
-        "sizeMeters": meta.get("sizeMeters"),
+        "sizeMeters": size,
+        "resize": params.get("sizeMeters") is not None,
         "sourceState": _existing(store, job_id, meta.get("sourceStateFile")),
         "inputImage": _existing(store, job_id, "mesh/input.png"),
         "subject": job["params"].get("subject", job.get("title", "")),
@@ -88,13 +93,14 @@ def run(ctx: "JobContext") -> None:
     game.mkdir()
     master = Path(p["masterPath"])
     low, reduce_stats, bake_stats = game / "low.glb", game / "reduce.json", game / "bake.json"
+    resize = ["--size", p["sizeMeters"]] if p.get("resize") else []
     with ctx.stage("game-reduce", "면 줄이기·UV 펴기") as stage:
         stage.run([*TOOL, "reduce", "--master", master, "--output", low, "--stats", reduce_stats,
-                   "--target-faces", p["targetFaces"], "--texture-size", p["textureSize"]])
+                   "--target-faces", p["targetFaces"], "--texture-size", p["textureSize"], *resize])
     with ctx.stage("game-bake", "노멀·색·거칠기·AO 굽기") as stage:
         command = [*TOOL, "bake", "--master", master, "--low", low, "--reduce-stats", reduce_stats,
                    "--output-dir", game, "--stats", bake_stats, "--name", p["name"],
-                   "--texture-size", p["textureSize"], "--samples", game_defaults(ctx.presets)["samples"]]
+                   "--texture-size", p["textureSize"], "--samples", game_defaults(ctx.presets)["samples"], *resize]
         if not p["ao"]:
             command.append("--no-ao")
         stage.run(command)
