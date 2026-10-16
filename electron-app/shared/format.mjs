@@ -121,7 +121,7 @@ export function buildJobRequest(form) {
   const seed = String(form.seed ?? "").trim();
   if (seed && !/^\d+$/.test(seed)) throw new Error("시드는 0 이상의 정수로 적어 주세요.");
   const mesh = {
-    pipelineType: String(form.pipelineType || "512"),
+    pipelineType: String(form.pipelineType || "1024"),
     textureSize: Number(form.textureSize || 4096),
     targetFaces: Number(form.targetFaces ?? 1000000),
     ...(form.gameFaces !== undefined ? { gameFaces: Number(form.gameFaces) } : {}),

@@ -58,7 +58,7 @@ class TrellisProgress:
 def explain_trellis_failure(failure: StageFailed) -> str:
     if was_killed(failure):
         return ("메모리가 부족해 macOS가 TRELLIS 프로세스를 종료했습니다. "
-                "3D 품질을 512로 낮추거나 다른 앱을 닫고 다시 시도하세요.")
+                "다른 무거운 앱을 닫고 다시 시도하거나 형상 해상도를 512로 낮추세요.")
     text = "\n".join(failure.tail)
     lowered = text.lower()
     if "gatedrepoerror" in lowered or ("dinov3" in lowered and any(code in text for code in ("401", "403"))):

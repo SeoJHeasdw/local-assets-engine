@@ -138,7 +138,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
 | `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`) |
-| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
+| 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `1024`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
 | `previz` | `preset`(샷 프리셋), `assets` 1~8개 배치, `shots`(앱에서 고친 컷 목록, 없으면 프리셋 그대로), `renderer`, `width`·`height`, `fps` 6~30, `samples`, `aux`, `animatic`, `ground`, `clay` | `game-trailer`, `eevee`, 960×540, 12fps, 16, `keys`, 모두 켬 |

@@ -58,7 +58,7 @@
       4096
     ],
     "defaults": {
-      "pipelineType": "512",
+      "pipelineType": "1024",
       "textureSize": 4096,
       "targetFaces": 1000000,
       "gameFaces": 0,
