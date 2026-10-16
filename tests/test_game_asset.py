@@ -89,6 +89,17 @@ def test_bakes_a_measured_game_mesh_with_maps_and_keeps_the_master(tmp_path):
         pixels = np.asarray(image.convert("RGB"), dtype=np.float32)
     covered = pixels[pixels.sum(axis=2) > 30]
     assert covered[:, 0].max() > 150 and covered[:, 2].max() > 150
+    # Outside the islands every texel carries its nearest island's color, so mip levels stay clean.
+    assert len(covered) == pixels.shape[0] * pixels.shape[1]
+    assert abs(stats["bottomOffsetMeters"]) < 0.001
+    with Image.open(root / "T_striped_ball_occlusion.png") as image:
+        occlusion = np.asarray(image.convert("L"), dtype=np.int16)
+    with Image.open(root / "T_striped_ball_metallicsmoothness.png") as image:
+        packed = np.asarray(image.convert("RGBA"), dtype=np.int16)
+    assert occlusion.min() > 100
+    # R metallic, G occlusion (URP's Occlusion Map slot), A smoothness 1 - 0.6, also outside the islands.
+    assert packed[..., 0].max() == 0 and np.abs(packed[..., 1] - occlusion).max() <= 1
+    assert np.abs(packed[..., 3] - 102).max() <= 3
     with Image.open(root / "T_striped_ball_normal.png") as image:
         normal = np.asarray(image.convert("RGB"), dtype=np.float32) / 255
     # Tangent-space normals of a smooth surface point mostly straight out (blue).
@@ -118,6 +129,24 @@ def test_outer_hull_is_closed_consistently_wound_and_fills_a_ground_opening():
         # Sealed against the ground the hollow box becomes one solid; open, inner walls remain.
         center = tuple(int(v) for v in np.round((np.array([0.5, 0.5, 0.5]) - origin) / (1 / 32)))
         assert bool(field[center] > 0.5) is solid
+        # Sealed, the bottom stays on the ground plane, not one eroded voxel above it.
+        assert ground is None or abs(vertices[:, 2].min()) < 1e-3 / 32
+
+
+def test_fill_outside_copies_the_nearest_valid_texel_to_the_edge():
+    from local_assets_engine.tools.game_bake import fill_outside, nearest_valid
+
+    valid = np.zeros((8, 8), dtype=bool)
+    valid[1:3, 1:3] = valid[5:7, 5:7] = True
+    pixels = np.zeros((8, 8, 4), dtype=np.float32)
+    pixels[1:3, 1:3] = (1, 0, 0, 1)
+    pixels[5:7, 5:7] = (0, 0, 1, 1)
+    islands = pixels[valid].copy()
+    fill_outside(pixels, nearest_valid(valid))
+    assert (pixels[valid] == islands).all()
+    assert (pixels[0, 0] == (1, 0, 0, 1)).all() and (pixels[7, 7] == (0, 0, 1, 1)).all()
+    assert (pixels[..., :3].sum(axis=2) > 0).all()
+    assert nearest_valid(np.ones((4, 4), dtype=bool)) is None and nearest_valid(np.zeros((4, 4), dtype=bool)) is None
 
 
 def test_hull_keeps_large_flat_triangles_and_thin_fins():

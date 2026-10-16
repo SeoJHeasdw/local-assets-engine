@@ -104,7 +104,8 @@ def _ground_slab(shape, origin, voxel: float, ground: float | None):
 
     slab = np.zeros(shape, dtype=bool)
     if ground is not None:
-        slab[:, :, :int(np.floor((ground - origin[2]) / voxel))] = True
+        # The grid starts whole voxels below the ground; round so float error cannot shift it a layer.
+        slab[:, :, :int(round((ground - origin[2]) / voxel))] = True
     return slab
 
 
@@ -125,8 +126,10 @@ def occupancy(coords, triangles, voxel: float, ground: float | None):
     # Undo the dilation on the bulk, but keep parts at most three voxels thick (fins, blades,
     # sheets) as they are: eroded to one voxel they would vanish in the smoothing. Thickness is
     # the deepest distance-to-outside nearby, so the edges and corners of thick parts stay eroded.
+    # The ground counts as solid while eroding, so the bottom stays on the ground plane instead of
+    # rising one voxel.
     depth = ndimage.maximum_filter(ndimage.distance_transform_edt(solid), size=5)
-    solid = ndimage.binary_erosion(solid, iterations=1) | (solid & (depth <= 2))
+    solid = (ndimage.binary_erosion(solid | slab, iterations=1) & ~slab) | (solid & (depth <= 2))
     return ndimage.gaussian_filter(solid.astype(np.float32), sigma=0.8), origin
 
 
@@ -285,6 +288,7 @@ def reduce(args) -> int:
                               export_yup=True, export_materials="NONE")
     stats = {"sourceTriangles": len(triangles), "targetFaces": args.target_faces, "triangles": len(low_triangles),
              "vertices": len(low_coords), "spanMeters": round(span, 5), "voxels": args.voxels,
+             "bottomOffsetMeters": round(float(low_coords[:, 2].min() - coords[:, 2].min()), 6),
              "voxelMeters": round(voxel, 6), "sealGround": args.seal_ground, "hullTriangles": hull_triangles,
              "surfaceError": error, "uvMarginPx": args.margin_px, "textureSize": args.texture_size,
              "topology": topology}
@@ -372,6 +376,33 @@ def _save(image, path: Path) -> None:
     image.save()
 
 
+def nearest_valid(valid):
+    """Flat indices of the texels outside ``valid`` and of the valid texel nearest each, or None."""
+    import numpy as np
+    from scipy import ndimage
+
+    if valid.all() or not valid.any():
+        return None
+    nearest = np.empty((2,) + valid.shape, dtype=np.int32)
+    ndimage.distance_transform_edt(~valid, return_distances=False, return_indices=True, indices=nearest)
+    outside = np.flatnonzero(~valid)
+    source = np.ravel_multi_index((nearest[0].ravel()[outside], nearest[1].ravel()[outside]), valid.shape)
+    return outside, source
+
+
+def fill_outside(pixels, fill) -> None:
+    """Copy the nearest valid texel into every other one, to the edge of the map, in place.
+
+    Mip levels and filtering average across island borders, so black between islands shows as
+    dark seams at a distance. Filled to the edge, each island's border carries its own value.
+    """
+    if fill is None:
+        return
+    outside, source = fill
+    flat = pixels.reshape(-1, pixels.shape[-1])
+    flat[outside] = flat[source]
+
+
 def check_exports(glb: Path, fbx: Path, triangles: int, dimensions) -> dict:
     """Load what was written back in a clean scene and compare it with the baked mesh."""
     import bpy
@@ -430,8 +461,8 @@ def bake(args) -> int:
     scene.render.engine = "CYCLES"
     device = _use_gpu(scene)
     scene.cycles.samples = args.samples
-    scene.render.bake.margin = max(4, args.texture_size // 128)
-    scene.render.bake.margin_type = "EXTEND"
+    # Texels outside the islands are filled from the nearest baked one afterwards, not by a margin.
+    scene.render.bake.margin = 0
 
     material = bpy.data.materials.new(f"M_{args.name}")
     low.data.materials.clear()
@@ -466,12 +497,8 @@ def bake(args) -> int:
         image = bpy.data.images.new("mask", args.texture_size, args.texture_size, alpha=False)
         image.colorspace_settings.name = "Non-Color"
         target.image = image
-        margin, scene.render.bake.margin = scene.render.bake.margin, 0
-        try:
-            bpy.ops.object.bake(type="EMIT", use_selected_to_active=selected_to_active, cage_extrusion=extrusion,
-                                max_ray_distance=reach, target="IMAGE_TEXTURES")
-        finally:
-            scene.render.bake.margin = margin
+        bpy.ops.object.bake(type="EMIT", use_selected_to_active=selected_to_active, cage_extrusion=extrusion,
+                            max_ray_distance=reach, target="IMAGE_TEXTURES")
         values = _pixels(image)[..., 0] > 0.5
         bpy.data.images.remove(image)
         return values
@@ -498,6 +525,8 @@ def bake(args) -> int:
     picture[covered] = (90, 90, 90)
     picture[missed] = (230, 40, 40)
     PILImage.fromarray(picture[::-1]).save(args.output_dir / "bake-misses.png")
+    # Texels in an island whose ray reached the master; misses inside islands are filled like the gaps.
+    fill = nearest_valid(covered & hit)
     del picture, covered, hit, missed
     for step, (key, socket, colorspace) in enumerate(EMIT_CHANNELS, start=3):
         print(progress_line(step, 9, f"{key} 굽는 중"), flush=True)
@@ -515,11 +544,20 @@ def bake(args) -> int:
         run_bake("occlusion", "Non-Color", "AO")
         scene.cycles.samples = args.samples
 
-    print(progress_line(7, 9, "텍스처 저장 중"), flush=True)
-    # Keep the one channel each, not the whole RGBA buffer a view would hold on to.
-    metallic = _pixels(images["metallic"])[..., 0].copy()
+    print(progress_line(7, 9, "UV 바깥 채우고 텍스처 저장 중"), flush=True)
+    channels = {}
+    for key, image in images.items():
+        pixels = _pixels(image)
+        fill_outside(pixels, fill)
+        image.pixels.foreach_set(pixels.ravel())
+        if key in ("metallic", "roughness", "occlusion"):
+            # Keep the one channel, not the whole RGBA buffer a view would hold on to.
+            channels[key] = pixels[..., 0].copy()
+        del pixels
+    del fill
+    metallic, roughness = channels.pop("metallic"), channels.pop("roughness")
+    occlusion = channels.pop("occlusion", None)
     metallic_constant = float(metallic.max()) < 0.02
-    roughness = _pixels(images["roughness"])[..., 0].copy()
     files = {}
     for key, image in images.items():
         if key == "metallic" and metallic_constant:
@@ -527,16 +565,18 @@ def bake(args) -> int:
         path = args.output_dir / f"T_{args.name}_{key}.png"
         _save(image, path)
         files[key] = path.name
-    # Unity URP Lit: metallic in R, smoothness (1 - roughness) in A.
+    # Unity URP Lit: metallic in R, smoothness (1 - roughness) in A, and occlusion in G, which the
+    # Occlusion Map slot reads, so one texture can serve both slots.
     unity = bpy.data.images.new(f"T_{args.name}_metallicsmoothness", args.texture_size, args.texture_size, alpha=True)
     unity.colorspace_settings.name = "Non-Color"
     packed = np.zeros((args.texture_size, args.texture_size, 4), dtype=np.float32)
     packed[..., 0] = 0.0 if metallic_constant else metallic
+    packed[..., 1] = 1.0 if occlusion is None else occlusion
     packed[..., 3] = 1.0 - roughness
     unity.pixels.foreach_set(packed.ravel())
     unity_path = args.output_dir / f"T_{args.name}_metallicsmoothness.png"
     _save(unity, unity_path)
-    del packed, metallic, roughness
+    del packed, metallic, roughness, occlusion
     files["unityMetallicSmoothness"] = unity_path.name
 
     print(progress_line(8, 9, "게임용 머티리얼과 파일 만들고 다시 불러와 확인하는 중"), flush=True)

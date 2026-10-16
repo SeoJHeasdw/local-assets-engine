@@ -131,7 +131,7 @@ def run(ctx: "JobContext") -> None:
 
     stats = {"triangles": reduced["triangles"], "vertices": reduced["vertices"],
              "sourceTriangles": reduced["sourceTriangles"], "surfaceError": reduced["surfaceError"],
-             "topology": reduced["topology"], "bake": baked}
+             "bottomOffsetMeters": reduced["bottomOffsetMeters"], "topology": reduced["topology"], "bake": baked}
     files = {key: ctx.rel(game / name) for key, name in baked["files"].items()}
     asset = ctx.add_asset(
         kind="mesh", role="final", file=glb, preview=inspection / "game-0.png",
