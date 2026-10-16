@@ -137,6 +137,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `image-to-3d` | `imagePath`(절대 경로), `uploadId`, 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
+| `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`) |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `512`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
@@ -223,7 +224,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video`, 점검 작업의 `text` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
 | `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
-| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`), `label`, `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
+| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`·`game-asset`), `label`, `name`·`files`·`compareFile`(`game-asset`), `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
 | 영상 `meta` | 아래 영상 계약 참고 |
 
@@ -236,6 +237,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `image.touches_edge` (`warn`) | 배경을 지운 그림에서 물체가 가장자리에 닿았다(`checks.touchesEdge`) | `coverage` |
 | `mesh.open_boundary`·`mesh.non_manifold_edges`·`mesh.inconsistent_winding`·`mesh.duplicate_faces` (`warn`) | `stats.topology`의 해당 개수가 0이 아니다 | `count` |
 | `mesh.faces_over_target` (`warn`) | 형상을 지키느라 게임용이 목표 면 수를 넘었다(이전 복구 경로는 감축 뒤에도 넘었을 때) | `targetFaces`, `triangles` |
+| `mesh.game_shape_error` (`warn`) | `game-asset`의 저면 메시와 품질본의 보이는 면 사이 95% 표면 거리가 가장 긴 변의 2%를 넘었다 | `p95Meters`, `p95Relative` |
 
 이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과에 올린다. 사람이 직접
 고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
@@ -274,6 +276,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `post-master`·`post-game` | `python -m local_assets_engine.tools.blender_post` | 크기·원점만 정리, 추가 감축 없음 |
 | `optimize-master`·`optimize-game` | `gltfpack ... -noq` | 추가 감축·양자화 없는 전송용 사본 |
 | `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
+| `game-reduce` | `python -m local_assets_engine.tools.game_bake reduce` | 복셀 바깥 껍데기 → Collapse 감축 → 날카로운 모서리 → Smart UV·패킹 → 보이는 면 표면 거리 |
+| `game-bake` | `python -m local_assets_engine.tools.game_bake bake` | Cycles(가능하면 Metal) 맵별 굽기 → 머티리얼 → GLB·FBX·PNG |
+| `compare` | `python -m local_assets_engine.tools.game_bake compare` | 품질본·게임용 렌더를 나란히 붙인다 |
 | `post`·`optimize` | Blender·gltfpack | 이전 `repair-mesh` 전용 |
 | `edit`·`import` | `python -m local_assets_engine.tools.asset_edit` + Node.js 픽셀 계산 | 원본을 새 작업에 복사하고 새 버전 저장 |
 | `step-<n>` | `python -m local_assets_engine.tools.selftest_step` | `@@progress` JSON 줄. `selftest` 전용, 모델 없음 |
@@ -333,6 +338,24 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 `facesIn`·`facesOut`은 정규화 전후의 면 수다. `stats.topology`는 열린 경계·비다양체 모서리·
 이웃 면 방향·중복 면을 검사하고, `stats.lod`에는 게임용의 감축 시도와 실제 오차 제한을 남긴다.
 UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경고이며 승인·거절은 사람이 한다.
+
+`game-asset`은 완료된 품질본을 바꾸지 않고 **새 작업**에 게임용 에셋을 만든다.
+
+1. 품질본은 겉면 안쪽에 또 한 겹이 있는 얇은 이중 껍질이라 그대로 줄이면 두 겹이 서로 뚫는다. 그래서 먼저 바깥 껍데기를
+   만든다. 가장 긴 변을 192칸(`--voxels`)으로 나눈 복셀에 표면을 찍고, 바깥에서 닿지 않는 곳을 채운다. 바닥 아래를 벽으로
+   쳐서 땅을 향한 구멍도 채운다(`--seal-ground`). 가우시안(σ 0.8칸) 뒤 Surface Nets로 닫힌 면을 만든다.
+2. 껍데기를 Blender Collapse로 `targetFaces`까지 줄이고 삼각형으로 나눈다. 60°보다 꺾인 모서리는 날카롭게 두고
+   Smart UV(66°)로 펴서 맵 크기 기준 8px 간격으로 다시 패킹한다.
+3. 껍데기에서 2칸 안에 있는 품질본 점(보이는 면)과 저면 정점에서 서로의 표면까지 거리를 재어 `stats.surfaceError`
+   (평균·95%·최대, 가장 긴 변 대비와 m)에 남긴다. 껍데기가 채운 속면의 비율은 `hiddenFraction`이다.
+4. Cycles selected-to-active로 품질본을 저면 UV에 굽는다. 광선은 95% 오차의 1.5배(가장 긴 변의 0.2~3%) 밖에서 출발해
+   가장 긴 변의 5%를 더 들어간다.
+   노멀은 탄젠트 공간·OpenGL(+Y)이다. 색·거칠기·금속성은 품질본 머티리얼의 Principled 입력을 잠시 Emission으로 이어
+   조명 없이 굽는다. AO는 저면 메시가 광선을 가리지 않게 하고 굽는다. 금속성이 전부 0.02 미만이면 맵을 저장하지 않고 0으로 둔다.
+5. 저면 메시에 맵을 연결해 `SM_<name>.glb`(AO는 glTF occlusion)와 `SM_<name>.fbx`(미터·Y-up, PNG는 옆에 둔다)를 쓴다.
+   `T_<name>_metallicsmoothness.png`는 Unity URP Lit용으로 R에 금속성, A에 1−거칠기를 담는다.
+6. 게임용 GLB를 여섯 방향으로 렌더하고, 품질본의 같은 각도 렌더와 나란히 `game/compare.png`를 만든다. 품질본의
+   렌더가 원본 작업에 있으면 다시 그리지 않고 복사한다. 결과는 `variant: game-asset`인 `pending` 에셋이다.
 
 `refine-mesh`는 완료된 원본 NPZ와 입력 이미지를 **새 작업**으로 복사한 뒤 4~8단계를 실행한다.
 원본의 시드·형상 해상도는 유지하고 면 수·텍스처는 현재 요청/기본값을 따른다. 모델 추론을

@@ -81,6 +81,7 @@ def world(tmp_path_factory):
         "image-to-3d": [{"source": image}],
         "repair-mesh": [{"source": legacy}],
         "refine-mesh": [{"source": mesh}],
+        "game-asset": [{"source": mesh}],
         "import-image": [{"uploadId": upload}],
         "edit-asset": [
             {"source": image, "plan": {"frame": {"crop": {}}, "layers": [color, stamp]}},

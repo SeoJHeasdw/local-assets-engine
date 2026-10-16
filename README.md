@@ -23,6 +23,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `text-to-3d` | 설명 → 컨셉 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본 GLB, 여섯 방향 검수 |
 | `image-to-3d` | 고른 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본 GLB, 여섯 방향 검수 |
 | `refine-mesh` | 저장된 생성 원본 → 출력 설정을 바꿔 표면·PBR 재구성 | 모델 추론 없이 새 품질본 |
+| `game-asset` | 완성된 품질본 → 삼각형 예산까지 줄이기·UV → 품질본에서 노멀·색·거칠기·금속성·AO 굽기 | 게임용 GLB·FBX와 PNG 맵, 품질본과 나란히 비교 |
 | `edit-asset` | 색상·재질·로고·문구·2D 구성 편집 → 새 버전 저장 | 원본을 보존한 PNG·GLB |
 | `import-image` | 로컬 이미지 가져오기 | 편집하거나 3D로 만들 이미지 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
@@ -116,6 +117,15 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 ```bash
 .venv/bin/python -m local_assets_engine run refine-mesh \
   --params '{"source": {"jobId": "<3D 작업 ID>", "assetId": "a01"}, "textureSize": 4096, "targetFaces": 1000000}'
+```
+
+게임에 넣을 파일은 품질본에서 따로 굽는다. 편집 화면의 정보 → "게임용으로 굽기"에서 삼각형 수·텍스처 크기·파일 이름을
+정하거나 다음 명령을 쓴다. 결과는 `game/`의 `SM_<이름>.glb`·`.fbx`와 `T_<이름>_*.png`(Unity URP용
+금속성·매끄러움 맵 포함)이고, `compare.png`로 품질본과 나란히 본다.
+
+```bash
+.venv/bin/python -m local_assets_engine run game-asset \
+  --params '{"source": {"jobId": "<3D 작업 ID>", "assetId": "a01"}, "targetFaces": 2000, "textureSize": 1024, "name": "wood_chest"}'
 ```
 
 예전 에셋 중 원본 NPZ가 없는 것은 입력 이미지로 새로 생성해야 전체 개선이 적용된다.

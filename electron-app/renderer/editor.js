@@ -1094,15 +1094,32 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       const meta = asset.meta || {}, stats = meta.stats || {};
       let collections = [];
       try { collections = [...new Set((await api("/api/assets?limit=2000")).assets.map((item) => item.collection).filter(Boolean))].sort(); } catch { /* 목록 없이도 적을 수 있다 */ }
-      const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut || 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
+      const isGame = meta.variant === "game-asset";
+      // 게임용 굽기 기본값은 엔진의 레시피 스키마가 소유한다.
+      let bake = {};
+      if (isMesh && !isGame) {
+        try { bake = (await api("/api/recipes")).recipes.find((recipe) => recipe.name === "game-asset")?.paramsSchema?.properties || {}; } catch { /* 기본값 없이도 보낸다 */ }
+      }
+      const gameInfo = isGame ? `<dl class="meta"><dt>원본 대비 최대 오차</dt><dd>${((stats.surfaceError?.maxMeters || 0) * 1000).toFixed(1)}mm</dd><dt>구운 맵</dt><dd>${escapeHtml(Object.keys(meta.files || {}).filter((key) => !["glb", "fbx"].includes(key)).join(", "))}</dd></dl>
+        ${meta.compareFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.compareFile)}" target="_blank" rel="noopener">품질본과 비교</a>` : ""}
+        ${bridge && meta.files?.fbx ? '<button class="secondary" type="button" data-reveal-fbx>FBX·텍스처 폴더 열기</button>' : ""}` : "";
+      const bakeForm = isMesh && !isGame ? `<div class="control-divider"></div><h3>게임용으로 굽기</h3><p class="hint">면을 예산까지 줄이고 이 메시의 디테일을 노멀·색·거칠기·AO 맵으로 굽습니다. 결과는 새 에셋으로 남습니다.</p>
+        <label class="field"><span class="label">삼각형</span><input data-game="targetFaces" type="number" min="${bake.targetFaces?.minimum ?? 100}" max="${bake.targetFaces?.maximum ?? 200000}" step="100" value="${bake.targetFaces?.default ?? ""}"></label>
+        <label class="field"><span class="label">텍스처</span><select data-game="textureSize">${(bake.textureSize?.enum || []).map((size) => `<option value="${size}"${size === bake.textureSize.default ? " selected" : ""}>${size}px</option>`).join("")}</select></label>
+        <label class="field"><span class="label">파일 이름 <em>영문 소문자·숫자·_</em></span><input data-game="name" maxlength="40" value="${escapeHtml(bake.name?.default || "")}"></label>
+        <label class="check-label"><input type="checkbox" data-game="ao" ${bake.ao?.default === false ? "" : "checked"}>AO 맵도 굽기</label>
+        <button class="secondary" type="button" data-game-bake>게임용으로 굽기</button>` : "";
+      const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes ?? stats.bake?.bytes?.glb) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut ?? stats.triangles ?? 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
         ${meta.inspectionFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 보기</a>` : ""}
+        ${gameInfo}
         ${stats.topology?.warnings?.length ? `<p class="notice">${escapeHtml(stats.topology.warnings.join(" "))}</p>` : ""}
         <div class="control-divider"></div><h3>정리</h3>
         <label class="field"><span class="label">컬렉션 <em>프로젝트·용도</em></span><input data-library="collection" list="collection-options" maxlength="60" value="${escapeHtml(asset.collection || "")}" placeholder="예: 던전 1장"><datalist id="collection-options">${collections.map((name) => `<option value="${escapeHtml(name)}">`).join("")}</datalist></label>
         <label class="field"><span class="label">태그 <em>쉼표로 구분</em></span><input data-library="tags" maxlength="400" value="${escapeHtml((asset.tags || []).join(", "))}" placeholder="예: 상자, 보상, 파란색"></label>
         <label class="field"><span class="label">메모</span><textarea data-library="note" rows="2" maxlength="500" placeholder="고른 이유나 쓸 곳">${escapeHtml(asset.note || "")}</textarea></label>
         <p class="hint library-saved" role="status"></p>
-        ${meta.sourceStateFile ? '<div class="control-divider"></div><h3>원본에서 다시 구성</h3><p class="hint">생성한 원본으로 표면과 재질을 다시 만듭니다.</p><button class="secondary" type="button" data-refine>고품질 원본 다시 구성</button>' : ""}`);
+        ${meta.sourceStateFile ? '<div class="control-divider"></div><h3>원본에서 다시 구성</h3><p class="hint">생성한 원본으로 표면과 재질을 다시 만듭니다.</p><button class="secondary" type="button" data-refine>고품질 원본 다시 구성</button>' : ""}
+        ${bakeForm}`);
       info.addEventListener("change", async (event) => {
         const field = event.target.dataset.library;
         if (!field) return;
@@ -1114,6 +1131,24 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
           refreshJobs();
         } catch (error) {
           info.querySelector(".library-saved").textContent = error.message;
+        }
+      });
+      info.querySelector("[data-reveal-fbx]")?.addEventListener("click", () => bridge.reveal(job.id, meta.files.fbx));
+      info.querySelector("[data-game-bake]")?.addEventListener("click", async (event) => {
+        const field = (key) => info.querySelector(`[data-game="${key}"]`);
+        const params = { source: { jobId: job.id, assetId: asset.id }, ao: field("ao").checked };
+        if (field("targetFaces").value) params.targetFaces = Number(field("targetFaces").value);
+        if (field("textureSize").value) params.textureSize = Number(field("textureSize").value);
+        if (field("name").value.trim()) params.name = field("name").value.trim();
+        event.target.disabled = true;
+        try {
+          await api("/api/jobs", { method: "POST", body: { recipe: "game-asset", params } });
+          info.close();
+          toast("게임용 굽기를 시작했습니다.");
+          refreshJobs();
+        } catch (error) {
+          toast(error.message);
+          event.target.disabled = false;
         }
       });
       info.querySelector("[data-refine]")?.addEventListener("click", async (event) => {

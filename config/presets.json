@@ -64,6 +64,19 @@
       "gameFaces": 0,
       "gameTextureSize": 2048,
       "sizeMeters": 1.0
+    },
+    "gameAsset": {
+      "name": "asset",
+      "targetFaces": 3000,
+      "textureSize": 1024,
+      "textureSizes": [
+        512,
+        1024,
+        2048,
+        4096
+      ],
+      "samples": 16,
+      "ao": true
     }
   },
   "videoModel": {

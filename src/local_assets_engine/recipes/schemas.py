@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from ..presets import CAMERA_PARTS, image_models, video_models
 from ..uploads import ID_PATTERN as UPLOAD_ID
-from . import edit_asset, image, previz, selftest, video
+from . import edit_asset, game_asset, image, previz, selftest, video
 from .base import MAX_SEED
 
 Schema = dict[str, Any]
@@ -175,6 +175,18 @@ def _refine_mesh(presets: dict[str, Any]) -> Schema:
     outputs["sizeMeters"]["description"] += ". 비우면 원본 값"
     return _object({"source": _source("감축 전 원본이 있는 완료된 메시. 시드·형상 해상도는 원본 값을 쓴다"),
                     **outputs}, required=["source"])
+
+
+def _game_asset(presets: dict[str, Any]) -> Schema:
+    defaults = game_asset.game_defaults(presets)
+    return _object({
+        "source": _source("완료된 품질본 메시. 그 디테일을 저면 메시의 노멀·색·거칠기·AO 맵으로 굽는다"),
+        "targetFaces": _integer(game_asset.MIN_FACES, game_asset.MAX_FACES, defaults["targetFaces"], "게임용 삼각형 예산"),
+        "textureSize": _choice(defaults["textureSizes"], defaults["textureSize"], "구운 맵의 한 변 픽셀"),
+        "ao": _boolean(defaults["ao"], "앰비언트 오클루전 맵을 함께 굽는다"),
+        "name": {"type": "string", "pattern": f"^{game_asset.NAME.pattern}$", "default": defaults["name"],
+                 "description": "파일 이름. SM_<name>.fbx·T_<name>_*.png"},
+    }, required=["source"])
 
 
 def _import_image(_presets: dict[str, Any]) -> Schema:
@@ -338,6 +350,7 @@ SCHEMAS: dict[str, Callable[[dict[str, Any]], Schema]] = {
     "image-to-3d": _image_to_3d,
     "repair-mesh": _repair_mesh,
     "refine-mesh": _refine_mesh,
+    "game-asset": _game_asset,
     "import-image": _import_image,
     "edit-asset": _edit_asset,
     "previz": _previz,
