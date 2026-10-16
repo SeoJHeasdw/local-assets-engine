@@ -235,9 +235,18 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `image.subject_missing` (`fail`) | 배경을 지운 뒤 남은 물체가 없다(`checks.objectFound`가 거짓) | `coverage` |
 | `image.finish_failed` (`fail`) | 캔버스 맞춤·픽셀화가 실패해 정리 전 그림이 결과로 남았다(`meta.error`) | `error` |
 | `image.touches_edge` (`warn`) | 배경을 지운 그림에서 물체가 가장자리에 닿았다(`checks.touchesEdge`) | `coverage` |
+| `image.final_empty` (`fail`) | 원본 컷에는 물체가 있었지만 정리(캔버스·픽셀화) 뒤 최종 파일(`checks.final`)에 물체가 없다 | `coverage` |
+| `image.subject_tiny` (`warn`) | 남은 물체가 64픽셀 또는 면적의 0.05%보다 작거나 짧은 변이 8픽셀 미만이다(`checks.tiny`) | `pixels`, `coverage` |
+| `image.overscaled` (`warn`) | 캔버스에 맞추며 8배보다 크게 키웠다(`checks.canvasScale`) | `scale` |
+| `image.alpha_not_cutout` (`warn`) | 3D 입력의 알파가 누끼가 아니다(투명 1% 미만 또는 테두리 절반 미만이 투명). 알파를 버리고 배경 제거를 다시 한다 | `removeBackground` |
 | `mesh.open_boundary`·`mesh.non_manifold_edges`·`mesh.inconsistent_winding`·`mesh.duplicate_faces` (`warn`) | `stats.topology`의 해당 개수가 0이 아니다 | `count` |
 | `mesh.faces_over_target` (`warn`) | 형상을 지키느라 게임용이 목표 면 수를 넘었다(이전 복구 경로는 감축 뒤에도 넘었을 때) | `targetFaces`, `triangles` |
+| `mesh.floating_parts`·`mesh.inward_parts`·`mesh.intersecting_parts` (`warn`) | 본체에서 가장 긴 변의 1%보다 떨어진 조각, 어디에도 들지 않았는데 안쪽을 향한 닫힌 부품, 서로 파고들거나 안에 든 바깥 향함 부품이 있다 | `count` |
+| `mesh.parts_merged` (`warn`) | 품질본 재구성에서 의미 있는 부품(면적 0.2%·200면 이상) 수가 원본보다 줄었다. 좁은 틈이 메워졌을 수 있다 | `source`, `reconstructed` |
 | `mesh.game_shape_error` (`warn`) | `game-asset`의 저면 메시와 품질본의 보이는 면 사이 95% 표면 거리가 가장 긴 변의 2%를 넘었다 | `p95Meters`, `p95Relative` |
+| `mesh.game_geometry_lost` (`warn`) | 품질본 표본의 0.1% 이상이 바깥 껍데기 밖에서 사라졌다(얇은 돌출부 소실 등) | `lostFraction`, `lostMaxMeters` |
+| `mesh.game_bake_misses` (`warn`) | UV가 덮는 텍셀의 1%보다 많은 곳에서 굽기 광선이 품질본에 닿지 않았다(`game/bake-misses.png`) | `missFraction` |
+| `mesh.game_export_mismatch` (`fail`) | 내보낸 GLB·FBX를 다시 불러오니 면 수·크기·텍스처 수가 굽은 결과와 다르다 | `problems` |
 
 이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과에 올린다. 사람이 직접
 고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
@@ -276,6 +285,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `post-master`·`post-game` | `python -m local_assets_engine.tools.blender_post` | 크기·원점만 정리, 추가 감축 없음 |
 | `optimize-master`·`optimize-game` | `gltfpack ... -noq` | 추가 감축·양자화 없는 전송용 사본 |
 | `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
+| `review` | `python -m local_assets_engine.tools.mesh_review` | 입력 시점의 점토·무조명 색·왼쪽/오른쪽 조명 렌더 → `review.png` |
+| `distance` | `python -m local_assets_engine.tools.mesh_review --distance 512,192,96` | 품질본·게임용을 화면 높이별로 렌더해 확대 → `distance.png` |
 | `game-reduce` | `python -m local_assets_engine.tools.game_bake reduce` | 복셀 바깥 껍데기 → Collapse 감축 → 날카로운 모서리 → Smart UV·패킹 → 보이는 면 표면 거리 |
 | `game-bake` | `python -m local_assets_engine.tools.game_bake bake` | Cycles(가능하면 Metal) 맵별 굽기 → 머티리얼 → GLB·FBX·PNG |
 | `compare` | `python -m local_assets_engine.tools.game_bake compare` | 품질본·게임용 렌더를 나란히 붙인다 |
@@ -301,7 +312,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 
 ## 3D 계약
 
-1. `mesh/input.png`를 TRELLIS에 넣는다. 알파가 없으면 먼저 BiRefNet으로 배경을 지운다.
+1. `mesh/input.png`를 TRELLIS에 넣는다. 알파가 누끼가 아니면(투명 1% 미만이거나 테두리 절반 미만이 투명) 알파를 버리고
+   먼저 BiRefNet으로 배경을 지운다.
    래퍼는 파이프라인 내부 RMBG-2.0 로드도 고정 커밋의 BiRefNet으로 바꾼다.
 2. 고정된 TRELLIS 모델 스냅샷에서 요청한 해상도의 모델만 올린다. 512 기본값과 학습된
    샘플러 설정은 유지한다. `mesh_extract.py`는 면의 순서·연결·분할을 바꾸지 않고 CPU
@@ -313,7 +325,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
    `backgroundRemovalConfig`를 복사한다. TRELLIS의 HF 호출은 고정 커밋의 로컬 캐시만 읽고,
    직접 로컬 checkpoint로 읽는 파일도 기록한다. upstream fallback이 원래 로드 오류를 가리지 않는다.
 4. CPU에서 원본 표면까지의 unsigned distance를 계산해 좁은 두께의 일관된 표면으로 재구성한다.
-   물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 가장 짧은 모서리부터
+   물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 그래서 닫힌 물체마다 바깥 껍질과
+   그 안쪽 1~2복셀에 숨은 안쪽 껍질이 생긴다(`stats.topology.innerShellFaceShare`). 마칭 큐브 출력은 이미 이어져
+   있으므로 좌표만 같은 정점을 합치지 않는다(합치면 비다양체가 생겨 감축이 빈 결과를 낸다). 열린 경계나 비다양체가
+   남으면 감축하지 않고 실패한다. 원본과 재구성의 의미 있는 부품 수를 비교해 줄었으면 알린다. 가장 짧은 모서리부터
    위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다.
 5. 게임용은 기본 생성에서 생략한다. API에 `gameFaces > 0`을 명시한 경우에만 **품질본에서 UV를 펴기 전에** 형상 오차를 제한하며 감축한다. 위상이 나빠지면
    오차를 더 엄격히 하여 재시도하고 끝내 통과하지 못하면 품질본 형상을 유지한다. 목표 면 수를
@@ -324,7 +339,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
    위치·부드러운 노멀·텍스처에 함께 적용한다.
 7. Blender는 **추가 감축 없이** 바닥 중심과 미터 크기만 맞춘다. 품질본과 게임용은 동일한
    변환을 공유한다. gltfpack 사본도 감축·정밀도 양자화를 하지 않는다.
-8. 실제 최종 GLB를 여섯 방향으로 렌더하고 품질본을 `pending` 에셋으로 등록한다.
+8. 실제 최종 GLB를 여섯 방향으로 렌더하고, TRELLIS 원본(`source.npz`, 점토만)과 최종 GLB를 입력 이미지 시점에서
+   점토·무조명 색·왼쪽/오른쪽 조명으로 렌더해 `review/review.png`를 만든다. 원본부터 틀렸는지 후처리에서 상했는지,
+   색으로만 그린 홈인지, 입력 사진의 그림자가 색에 남았는지를 사람이 본다. 품질본을 `pending` 에셋으로 등록한다.
    게임용을 요청한 경우에도 별도 `pending` 에셋이다.
    카드의 그림은 생성 입력이 아니라 해당 GLB의 렌더다.
 
@@ -336,26 +353,34 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 
 `meta.processingVersion`은 **2**다. `stats.sourceTriangles`는 생성 원본,
 `facesIn`·`facesOut`은 정규화 전후의 면 수다. `stats.topology`는 열린 경계·비다양체 모서리·
-이웃 면 방향·중복 면을 검사하고, `stats.lod`에는 게임용의 감축 시도와 실제 오차 제한을 남긴다.
+이웃 면 방향·중복 면과 부품(떠 있는 조각, 뒤집힌 닫힌 부품, 서로 파고든 부품, 숨은 안쪽 껍질과 그 면 비율,
+`partDetails`의 위치·크기)을 검사하고, `stats.surface`에 재구성의 부품 수 비교를, `stats.lod`에는 게임용의 감축 시도와 실제 오차 제한을 남긴다.
 UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경고이며 승인·거절은 사람이 한다.
 
 `game-asset`은 완료된 품질본을 바꾸지 않고 **새 작업**에 게임용 에셋을 만든다.
 
 1. 품질본은 겉면 안쪽에 또 한 겹이 있는 얇은 이중 껍질이라 그대로 줄이면 두 겹이 서로 뚫는다. 그래서 먼저 바깥 껍데기를
    만든다. 가장 긴 변을 192칸(`--voxels`)으로 나눈 복셀에 표면을 찍고, 바깥에서 닿지 않는 곳을 채운다. 바닥 아래를 벽으로
-   쳐서 땅을 향한 구멍도 채운다(`--seal-ground`). 가우시안(σ 0.8칸) 뒤 Surface Nets로 닫힌 면을 만든다.
+   쳐서 땅을 향한 구멍도 채운다(`--seal-ground`). 큰 삼각형도 반 칸보다 촘촘하게 찍는다. 채운 뒤 한 칸 깎아
+   부풀린 만큼 되돌리되, 깎으면 사라질 얇은 부분(날·판·지느러미)은 남긴다. 가우시안(σ 0.8칸) 뒤 scikit-image 마칭 큐브(Lewiner)로
+   닫힌 면을 만든다. 껍데기가 비면 실패한다.
 2. 껍데기를 Blender Collapse로 `targetFaces`까지 줄이고 삼각형으로 나눈다. 60°보다 꺾인 모서리는 날카롭게 두고
    Smart UV(66°)로 펴서 맵 크기 기준 8px 간격으로 다시 패킹한다.
-3. 껍데기에서 2칸 안에 있는 품질본 점(보이는 면)과 저면 정점에서 서로의 표면까지 거리를 재어 `stats.surfaceError`
-   (평균·95%·최대, 가장 긴 변 대비와 m)에 남긴다. 껍데기가 채운 속면의 비율은 `hiddenFraction`이다.
+3. 품질본 점과 저면 정점에서 서로의 표면까지 거리를 재어 `stats.surfaceError`(평균·95%·최대, 가장 긴 변 대비와 m)에
+   남긴다. 껍데기에서 2칸보다 먼 품질본 점은 껍데기 속에 들었으면 숨은 면(`hiddenFraction`)으로 빼고, 껍데기 밖이면
+   잃은 형상(`lostFraction`, `lostMaxMeters`)으로 오차에 남긴다. 거르지 않은 품질본→저면 거리도 `unfiltered`에 둔다.
 4. Cycles selected-to-active로 품질본을 저면 UV에 굽는다. 광선은 95% 오차의 1.5배(가장 긴 변의 0.2~3%) 밖에서 출발해
    가장 긴 변의 5%를 더 들어간다.
    노멀은 탄젠트 공간·OpenGL(+Y)이다. 색·거칠기·금속성은 품질본 머티리얼의 Principled 입력을 잠시 Emission으로 이어
    조명 없이 굽는다. AO는 저면 메시가 광선을 가리지 않게 하고 굽는다. 금속성이 전부 0.02 미만이면 맵을 저장하지 않고 0으로 둔다.
+   저면 UV가 덮는 텍셀과 광선이 품질본에 닿은 텍셀을 따로 구워 비교해 `missFraction`과 `game/bake-misses.png`(빨강)를 남긴다.
 5. 저면 메시에 맵을 연결해 `SM_<name>.glb`(AO는 glTF occlusion)와 `SM_<name>.fbx`(미터·Y-up, PNG는 옆에 둔다)를 쓴다.
-   `T_<name>_metallicsmoothness.png`는 Unity URP Lit용으로 R에 금속성, A에 1−거칠기를 담는다.
+   `T_<name>_metallicsmoothness.png`는 Unity URP Lit용으로 R에 금속성, A에 1−거칠기를 담는다. 쓴 GLB·FBX를 빈 장면에
+   다시 불러와 면 수·크기·텍스처 수를 비교해 `bake.exportCheck`에 남긴다.
 6. 게임용 GLB를 여섯 방향으로 렌더하고, 품질본의 같은 각도 렌더와 나란히 `game/compare.png`를 만든다. 품질본의
-   렌더가 원본 작업에 있으면 다시 그리지 않고 복사한다. 결과는 `variant: game-asset`인 `pending` 에셋이다.
+   렌더가 원본 작업에 있으면 다시 그리지 않고 복사한다. TRELLIS 원본·품질본·게임용의 검수판(`game/review/review.png`)과,
+   품질본·게임용을 화면 높이 512·192·96px로 렌더해 확대한 `game/review/distance.png`를 만든다. 결과는
+   `variant: game-asset`인 `pending` 에셋이다. 면 수·텍스처 기본값은 이 비교와 사용자 승인으로 정한다.
 
 `refine-mesh`는 완료된 원본 NPZ와 입력 이미지를 **새 작업**으로 복사한 뒤 4~8단계를 실행한다.
 원본의 시드·형상 해상도는 유지하고 면 수·텍스처는 현재 요청/기본값을 따른다. 모델 추론을
@@ -381,7 +406,8 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
    `image-to-video`는 `WanImageToVideoPipeline`의 `expand_timesteps` 경로로 첫 프레임 latent를 고정한다. 시드는 CPU
    생성기라 같은 버전에서 재현된다.
 5. worker가 `video/video.mp4`(H.264, CRF·프리셋은 모델 설정의 `encode`), `first.png`·`middle.png`·`last.png`,
-   `result.json`(보낸 값 `sent`, 단계별 초, 스텝별 초, MPS 드라이버 최대 할당, 버전)을 쓴다.
+   `result.json`(보낸 값 `sent`, 단계별 초, 스텝별 초, MPS 드라이버 최대 할당, 버전)을 쓴다. 인코더를 닫은 뒤 MP4를
+   다시 디코드해 프레임 수·크기가 요청과 같을 때만 `verified`를 남기고 성공한다. 잘린 파일이면 실패한다.
 6. 엔진이 영상을 `pending` 에셋(`kind: "video"`, `role: "final"`)으로 등록한다. 미리보기는 가운데 프레임이다.
 
 | 영상 `meta` 필드 | 값 |

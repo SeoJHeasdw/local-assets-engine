@@ -89,3 +89,17 @@ def test_cutout_checks_and_transparency_detection():
     checks = imaging.cutout_checks(image)
     assert checks["objectFound"] and not checks["touchesEdge"]
     assert 0 < checks["coverage"] < 1
+
+
+def test_only_a_real_cutout_counts_as_transparent_input():
+    from PIL import Image
+    import numpy as np
+
+    almost = np.full((256, 256, 4), 255, dtype=np.uint8)
+    almost[0, 0, 3] = 254  # 한 픽셀만 거의 불투명한 알파
+    assert imaging.has_transparency(Image.fromarray(almost))
+    assert not imaging.has_cutout(Image.fromarray(almost))
+    cutout = np.zeros((256, 256, 4), dtype=np.uint8)
+    cutout[64:192, 64:192] = (200, 30, 30, 255)
+    assert imaging.has_cutout(Image.fromarray(cutout))
+    assert not imaging.has_cutout(Image.new("RGB", (8, 8)))

@@ -57,3 +57,13 @@ def test_cleaning_retains_tiny_valid_triangles_but_removes_exact_duplicates():
     assert topology(v, f)["boundaryEdges"] == 3
     with pytest.raises(ValueError):
         clean_mesh(vertices * np.nan, np.array([[0, 1, 2]]))
+
+
+def test_cleaning_can_keep_vertices_that_only_share_a_position():
+    # Marching cubes output is welded already. Merging two of its vertices that float32 put on
+    # one point can make an edge non-manifold, after which the decimator returns nothing.
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0]], dtype=np.float32)
+    faces = np.array([[0, 1, 2], [0, 3, 1]])
+    merged_v, merged_f = clean_mesh(vertices, faces)
+    kept_v, kept_f = clean_mesh(vertices, faces, merge=False)
+    assert len(merged_v) == 3 and len(kept_v) == 4 and len(kept_f) == 2

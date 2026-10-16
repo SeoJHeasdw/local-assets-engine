@@ -1,6 +1,7 @@
 import {
   JOB_STATE_LABELS, RECIPE_LABELS, REVIEW_LABELS, STAGE_STATE_LABELS,
-  buildJobRequest, escapeHtml, fileUrl, formatBytes, formatDuration, isActive, isDiagnostic, jobTimes, jobsAhead, newlyFinished, estimateLabel,
+  buildJobRequest, escapeHtml, fileUrl, findingsHtml, formatBytes, formatDuration, isActive, isDiagnostic, jobTimes, jobsAhead,
+  newlyFinished, estimateLabel, pendingFindings,
 } from "../shared/format.mjs";
 import { createPreviz } from "./previz.js";
 import { installResizer } from "./resize.js";
@@ -356,7 +357,9 @@ function jobCardHtml(job) {
   const label=job.recipe === "image" && job.params?.preset === "prop-3d" ? "3D 컨셉" : RECIPE_LABELS[job.recipe] || job.recipe;
   const images = job.assets.filter((asset) => asset.kind === "image").length;
   const compare = !isActive(job) && images >= 2 ? `<button class="ghost" type="button" data-action="compare" data-job="${escapeHtml(job.id)}">나란히 비교</button>` : "";
-  return `<header class="job-head"><div><div class="job-title">${escapeHtml(title)}</div><div class="job-meta">${escapeHtml(label)} · ${escapeHtml(timeLabel(job.createdAt))}</div></div><span class="state state-${escapeHtml(job.state)}">${escapeHtml(JOB_STATE_LABELS[job.state])}</span></header>
+  const pending = pendingFindings(job).length;
+  const findingChip = pending ? ` · <button class="finding-chip" type="button" data-action="record" data-job="${escapeHtml(job.id)}">확인할 항목 ${pending}</button>` : "";
+  return `<header class="job-head"><div><div class="job-title">${escapeHtml(title)}</div><div class="job-meta">${escapeHtml(label)} · ${escapeHtml(timeLabel(job.createdAt))}${findingChip}</div></div><span class="state state-${escapeHtml(job.state)}">${escapeHtml(JOB_STATE_LABELS[job.state])}</span></header>
     ${isActive(job) ? `<div class="job-summary"><span class="pulse"></span>${readablePhase(job)}</div>` : ""}
     ${job.error ? `<p class="job-error">${escapeHtml(job.error)}</p>` : ""}
     ${assets ? `<div class="job-assets">${assets}</div>` : ""}
@@ -364,7 +367,7 @@ function jobCardHtml(job) {
 }
 async function openRecord(jobId) {
  const job=await api(`/api/jobs/${jobId}`);
- popup("작업 기록", `<div class="record-summary"><span>${escapeHtml(job.title)}</span><span>${JOB_STATE_LABELS[job.state]}</span></div><ol class="stages">${job.stages.map(stageHtml).join("")}</ol>${job.error?`<p class="notice">${escapeHtml(job.error)}</p>`:''}<details class="advanced"><summary>입력 조건</summary><pre class="record-log">${escapeHtml(JSON.stringify(job.params,null,2))}</pre></details><details class="advanced"><summary>실행 로그</summary><pre class="record-log">${escapeHtml((job.logTail||[]).join('\n'))}</pre></details>`, {wide:true});
+ popup("작업 기록", `<div class="record-summary"><span>${escapeHtml(job.title)}</span><span>${JOB_STATE_LABELS[job.state]}</span></div><ol class="stages">${job.stages.map(stageHtml).join("")}</ol>${job.error?`<p class="notice">${escapeHtml(job.error)}</p>`:''}${job.findings?.length ? `<h3>자동 검사가 알린 항목</h3>${findingsHtml(job, job.findings)}` : ""}<details class="advanced"><summary>입력 조건</summary><pre class="record-log">${escapeHtml(JSON.stringify(job.params,null,2))}</pre></details><details class="advanced"><summary>실행 로그</summary><pre class="record-log">${escapeHtml((job.logTail||[]).join('\n'))}</pre></details>`, {wide:true});
 }
 
 function renderJobs() {
@@ -380,7 +383,7 @@ function renderJobs() {
     let previous = null;
     for (const job of jobs) {
       // 바뀐 카드만 다시 그린다. 매초 전체를 갈아 끼우면 썸네일이 깜빡인다.
-      const signature = JSON.stringify([job.state, job.stages, job.assets, job.error, jobsAhead(state.jobs, job.id)]);
+      const signature = JSON.stringify([job.state, job.stages, job.assets, job.error, job.findings, jobsAhead(state.jobs, job.id)]);
       let card = cards.get(job.id);
       if (!card) {
         card = document.createElement("article");
@@ -985,6 +988,12 @@ function wireEvents() {
       $("#asset-dialog").close(); await openAsset(jobId, assetId);
     }).catch(error => toast(error.message));
     else if (action === "record") openRecord(job).catch(e=>toast(e.message));
+    else if (action === "clear-finding") {
+      target.disabled = true;
+      api(`/api/jobs/${encodeURIComponent(job)}/findings/${encodeURIComponent(target.dataset.finding)}/review`, { method: "POST", body: { status: "cleared" } })
+        .then(() => { target.replaceWith(Object.assign(document.createElement("em"), { textContent: "확인함" })); return refreshJobs(); })
+        .catch((error) => { target.disabled = false; toast(error.message); });
+    }
     else if (action === "compare") openCompare(job).catch((error) => toast(error.message));
     else if (action === "favorite") toggleFavorite(target);
     else if (action === "library") showView("library");

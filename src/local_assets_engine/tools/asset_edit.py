@@ -112,9 +112,9 @@ def main():
     else:
         stats=edit(source, output, request['plan'], output.parent / 'scratch', request.get('stamps'))
     if output.suffix == '.png':
-        from ..imaging import cutout_checks, has_transparency
+        from ..imaging import cutout_checks, has_cutout
         with Image.open(output) as image:
-            stats['checks'] = cutout_checks(image) if has_transparency(image) else {}
+            stats['checks'] = cutout_checks(image) if has_cutout(image) else {}
     Path(request['stats']).write_text(json.dumps(stats), 'utf-8')
     print('@@progress '+json.dumps({'done':1,'total':1,'detail':'새 버전 저장 완료'}), flush=True)
 

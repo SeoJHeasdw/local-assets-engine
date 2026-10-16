@@ -100,16 +100,16 @@ def test_cutout_checks_become_findings_and_never_decide_the_review(tmp_path, mon
     from local_assets_engine.recipes import image as recipe
     from local_assets_engine.runner import Runner, Stage
 
-    boxes = {"centered": (16, 16, 48, 48), "cropped": (0, 16, 40, 48), "empty": None}
+    boxes = {"centered": (64, 64, 192, 192), "cropped": (0, 64, 160, 192), "empty": None}
 
     def generate(self, args, **_options):
         output = Path(args[args.index("--output") + 1])
         for seed in self.ctx.params["seeds"]:
-            Image.new("RGB", (64, 64), "white").save(output.with_name(f"candidate_seed_{seed}.png"))
+            Image.new("RGB", (256, 256), "white").save(output.with_name(f"candidate_seed_{seed}.png"))
 
     def remove_background(_ctx, manifest):
         for item, box in zip(json.loads(manifest.read_text("utf-8")), boxes.values()):
-            cutout = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            cutout = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
             if box:
                 cutout.paste((200, 30, 30, 255), box)
             cutout.save(item["output"])
@@ -129,3 +129,41 @@ def test_cutout_checks_become_findings_and_never_decide_the_review(tmp_path, mon
         assert all(store.resolve_file(job["id"], path).is_file() for path in finding["evidence"])
     # 검사는 알리기만 한다. 후보를 지우거나 판단을 대신 적지 않는다.
     assert [asset["review"] for asset in job["assets"]] == ["pending"] * 3
+
+
+@pytest.mark.parametrize("case, preset, expected", [
+    # 정리 뒤 최종 파일에서 물체가 사라졌다(알파 100이 픽셀화에서 투명이 된다).
+    ("weak_alpha", "pixel-art", [("fail", "image.final_empty")]),
+    # 한 픽셀만 남은 컷을 정상 물체로 받아 거대한 네모로 키웠다.
+    ("one_pixel", "item-icon", [("warn", "image.subject_tiny"), ("warn", "image.overscaled")]),
+])
+def test_final_file_and_tiny_subjects_are_checked_without_deciding(tmp_path, monkeypatch, case, preset, expected):
+    from PIL import Image
+
+    from local_assets_engine.jobs import JobStore
+    from local_assets_engine.recipes import image as recipe
+    from local_assets_engine.runner import Runner, Stage
+
+    def generate(self, args, **_options):
+        output = Path(args[args.index("--output") + 1])
+        for seed in self.ctx.params["seeds"]:
+            Image.new("RGB", (1024, 1024), "white").save(output.with_name(f"candidate_seed_{seed}.png"))
+
+    def remove_background(_ctx, manifest):
+        for item in json.loads(manifest.read_text("utf-8")):
+            cutout = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+            if case == "one_pixel":
+                cutout.putpixel((512, 512), (200, 30, 30, 255))
+            else:
+                cutout.paste((200, 30, 30, 100), (256, 256, 768, 768))
+            cutout.save(item["output"])
+
+    monkeypatch.setattr(Stage, "run", generate)
+    monkeypatch.setattr(recipe, "run_background_removal", remove_background)
+    store = JobStore(tmp_path / "jobs")
+    runner = Runner(store, recipes={"image": recipe.IMAGE}, machine_lock_path=tmp_path / ".machine.lock")
+    job = runner.run_job(runner.create("image", {"subject": "red potion", "count": 1, "seed": 7, "preset": preset})["id"])
+    assert job["state"] == "done", job["error"]
+    assert [(f["severity"], f["code"]) for f in job["findings"]] == expected
+    assert job["assets"][0]["review"] == "pending"
+    assert "final" in job["assets"][0]["meta"]["checks"]

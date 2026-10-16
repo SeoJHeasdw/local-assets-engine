@@ -207,7 +207,7 @@ class DiffusersBackend:
                 "diffusers": diffusers.__version__, "transformers": transformers.__version__}
 
 
-def write_video(frames, path: Path, fps: int, encode: dict[str, Any]) -> None:
+def write_video(frames, path: Path, fps: int, encode: dict[str, Any]) -> dict[str, Any]:
     import imageio_ffmpeg
     import numpy as np
 
@@ -222,6 +222,27 @@ def write_video(frames, path: Path, fps: int, encode: dict[str, Any]) -> None:
     for frame in frames:
         writer.send(np.ascontiguousarray(frame))
     writer.close()
+    return verify_video(path, len(frames), width, height)
+
+
+def verify_video(path: Path, frames: int, width: int, height: int) -> dict[str, Any]:
+    """Decode what was written. The encoder can exit cleanly and still leave a truncated MP4."""
+    import imageio_ffmpeg
+
+    size = path.stat().st_size if path.is_file() else 0
+    if not size:
+        raise SystemExit("MP4가 저장되지 않았습니다. 저장 공간과 쓰기 권한을 확인하세요.")
+    try:
+        reader = imageio_ffmpeg.read_frames(str(path))
+        meta = next(reader)
+        reader.close()
+        decoded, _ = imageio_ffmpeg.count_frames_and_secs(str(path))
+    except (RuntimeError, StopIteration, OSError) as error:
+        raise SystemExit(f"저장한 MP4를 디코드할 수 없습니다. 저장 공간을 확인하세요. ({error})") from error
+    if tuple(meta["size"]) != (width, height) or decoded != frames:
+        raise SystemExit(f"저장한 MP4가 요청과 다릅니다: {meta['size'][0]}×{meta['size'][1]}·{decoded}프레임 "
+                         f"(요청 {width}×{height}·{frames}프레임)")
+    return {"frames": decoded, "width": width, "height": height, "bytes": size}
 
 
 def save_frame(frame, path: Path) -> None:
@@ -287,7 +308,7 @@ def run(request: dict[str, Any], backend, *, writer: Callable = write_video,
     report("write", 0, "MP4 저장 중")
     begin = time.perf_counter()
     video = out / "video.mp4"
-    writer(frames, video, int(request["fps"]), request.get("encode") or {})
+    verified = writer(frames, video, int(request["fps"]), request.get("encode") or {})
     names = {}
     for name, index in key_frames(len(frames)).items():
         names[name] = f"{name}.png"
@@ -307,6 +328,8 @@ def run(request: dict[str, Any], backend, *, writer: Callable = write_video,
             "maxSequenceLength": int(request.get("maxSequenceLength") or 512),
         },
         "files": {"video": "video.mp4", **names},
+        # 저장한 파일을 다시 디코드해 확인한 프레임 수·크기. 확인하지 못하면 이 결과를 쓰지 않는다.
+        "verified": verified,
         "seconds": seconds,
         "stepSeconds": step_times,
         "mpsPeakBytes": backend.peak or None,

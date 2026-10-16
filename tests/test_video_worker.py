@@ -152,3 +152,32 @@ def test_missing_weights_stop_before_any_model_loads(tmp_path):
     with pytest.raises(SystemExit, match="SETUP"):
         worker.run(request(tmp_path), backend, writer=fake_writer)
     assert backend.calls == []
+
+
+VIDEO_PYTHON = Path(__file__).resolve().parents[1] / "engines/video/.venv/bin/python"
+
+
+@pytest.mark.skipif(not VIDEO_PYTHON.exists(), reason="영상 환경이 설치되지 않았다")
+def test_saved_video_is_decoded_before_it_counts_as_written(tmp_path):
+    import subprocess
+    import sys
+
+    script = f"""
+import sys, numpy as np
+from pathlib import Path
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1] / 'src')!r})
+from local_assets_engine.workers.video_runner import write_video, verify_video
+frames = np.zeros((5, 64, 64, 3), dtype=np.uint8)
+path = Path({str(tmp_path)!r}) / "ok.mp4"
+print(write_video(frames, path, 8, {{"preset": "ultrafast"}}))
+broken = path.with_name("broken.mp4")
+broken.write_bytes(path.read_bytes()[:1024])
+try:
+    verify_video(broken, 5, 64, 64)
+except SystemExit as error:
+    print("REFUSED", error)
+"""
+    done = subprocess.run([str(VIDEO_PYTHON), "-c", script], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert "'frames': 5" in done.stdout and "'width': 64" in done.stdout
+    assert "REFUSED 저장한 MP4" in done.stdout

@@ -18,19 +18,26 @@ def progress(done, total, detail):
     print("@@progress " + json.dumps({"done": done, "total": total, "detail": detail}, ensure_ascii=False), flush=True)
 
 
-def clean_mesh(vertices, faces):
-    """Remove only exact duplicates/unusable primitives; retain all components."""
+def clean_mesh(vertices, faces, merge=True):
+    """Remove only exact duplicates/unusable primitives; retain all components.
+
+    ``merge=False`` keeps vertices that only share a position. Marching cubes output is
+    already welded; merging two of its vertices that float32 rounded onto one point
+    turns a manifold surface non-manifold, and the decimator then returns nothing.
+    """
     vertices = np.asarray(vertices, dtype=np.float32)
     faces = np.asarray(faces, dtype=np.int64)
     if not np.isfinite(vertices).all() or not len(faces):
         raise ValueError("표면에 유효한 유한 좌표와 삼각형이 필요합니다.")
-    vertices, inverse = np.unique(vertices, axis=0, return_inverse=True)
-    faces = inverse[faces]
+    if merge:
+        vertices, inverse = np.unique(vertices, axis=0, return_inverse=True)
+        faces = inverse.reshape(-1)[faces]
     nonzero = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 2] != faces[:, 0])
     faces = faces[nonzero]
-    triangle = vertices[faces]
-    area = np.linalg.norm(np.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]), axis=1)
-    faces = faces[area > 0]
+    if merge:
+        triangle = vertices[faces]
+        area = np.linalg.norm(np.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]), axis=1)
+        faces = faces[area > 0]
     _, keep = np.unique(np.sort(faces, axis=1), axis=0, return_index=True)
     faces = faces[np.sort(keep)]
     used, indices = np.unique(faces, return_inverse=True)
@@ -46,6 +53,24 @@ def topology(vertices, faces):
     balance = np.bincount(inverse, weights=signs)
     return {"boundaryEdges": int((count == 1).sum()), "nonManifoldEdges": int((count > 2).sum()),
             "inconsistentWindingEdges": int(((count == 2) & (balance != 0)).sum())}
+
+
+def significant_parts(vertices, faces, share=0.002, minimum=200):
+    """Connected parts that carry at least ``share`` of the area and ``minimum`` faces."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    _, inverse = np.unique(vertices, axis=0, return_inverse=True)
+    welded = inverse.reshape(-1)[faces]
+    edges = np.concatenate([welded[:, [0, 1]], welded[:, [1, 2]]])
+    size = int(welded.max()) + 1
+    graph = coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(size, size))
+    _, labels = connected_components(graph, directed=False)
+    part = labels[welded[:, 0]]
+    triangle = vertices[faces]
+    area = np.linalg.norm(np.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]), axis=1) / 2
+    areas, counts = np.bincount(part, weights=area), np.bincount(part)
+    return int(((areas >= share * area.sum()) & (counts >= minimum)).sum())
 
 
 def project_surface(vertices, faces, source_vertices, source_faces, amount=0.7):
@@ -113,9 +138,21 @@ def reconstruct(source, output, target_faces=1_000_000, game_faces=100_000):
     vertices, faces, _, _ = marching_cubes(field, level=step * 1.2, spacing=(step,) * 3, allow_degenerate=False)
     vertices = (vertices + low * step + origin).astype(np.float32)
     del field
-    vertices, faces = clean_mesh(vertices, faces)
+    vertices, faces = clean_mesh(vertices, faces, merge=False)
+    report["warnings"] = []
+    # 가까운 부품의 띠가 합쳐지면 좁은 틈이 메워진다. 의미 있는 부품 수가 줄었는지 알린다.
+    parts = {"source": significant_parts(*clean_mesh(original_vertices, original_faces)),
+             "reconstructed": significant_parts(vertices, faces)}
+    report["parts"] = parts
+    if parts["reconstructed"] < parts["source"]:
+        report["warnings"].append(f"떨어져 있던 부품 {parts['source']}개가 재구성 후 {parts['reconstructed']}개로 "
+                                  "붙었습니다. 좁은 틈이 메워졌을 수 있습니다.")
     report["reconstructedTriangles"] = len(faces)
     report["reconstructedTopology"] = topology(vertices, faces)
+    if report["reconstructedTopology"]["nonManifoldEdges"] or report["reconstructedTopology"]["boundaryEdges"]:
+        # 열린 경계나 세 면 이상이 붙은 모서리가 있으면 감축기가 빈 결과를 내거나 메모리를 끝없이 쓴다.
+        raise SystemExit(f"재구성 표면이 닫혀 있지 않아 형상 보존 감축을 할 수 없습니다: "
+                         f"{report['reconstructedTopology']}. 원본은 보존되었습니다.")
     np.savez(output / "surface-full.npz", vertices=vertices, faces=faces)
     progress(60, 100, "표면 재구성 완료 · 형상 보존 감축")
     for index, (name, budget) in enumerate((("master", target_faces), ("game", game_faces))):
@@ -124,7 +161,10 @@ def reconstruct(source, output, target_faces=1_000_000, game_faces=100_000):
         if budget and len(faces) > budget:
             # The fast QEM implementation can turn a manifold input into
             # non-manifold edges. Preserve topology even when it takes longer.
-            reduced_v, reduced_f, _, _ = pcu.decimate_triangle_mesh(vertices, faces, budget)
+            try:
+                reduced_v, reduced_f, _, _ = pcu.decimate_triangle_mesh(vertices, faces, budget)
+            except ValueError as error:
+                raise SystemExit(f"형상 보존 감축이 실패했습니다. 원본은 보존되었습니다. ({error})") from error
             reduced_v, reduced_f = clean_mesh(reduced_v, reduced_f)
         else:
             reduced_v, reduced_f = vertices.copy(), faces.copy()

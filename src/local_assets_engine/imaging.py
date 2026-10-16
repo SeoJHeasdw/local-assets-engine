@@ -6,6 +6,15 @@ import numpy as np
 from PIL import Image
 
 ALPHA_THRESHOLD = 8
+# 배경을 지운 그림이라고 믿으려면 이만큼은 투명하고, 테두리의 절반 이상이 투명해야 한다.
+CUTOUT_MIN_TRANSPARENT = 0.01
+CUTOUT_MIN_BORDER = 0.5
+# 이보다 작은 물체는 우연히 남은 점일 수 있다(픽셀 수는 이미지 면적 대비, 변은 픽셀).
+TINY_SUBJECT_FRACTION = 0.0005
+TINY_SUBJECT_PIXELS = 64
+TINY_SUBJECT_SIDE = 8
+# 캔버스에 맞추며 이보다 크게 키우면 원본에 없는 크기로 부풀린 것이다.
+OVERSCALE = 8.0
 
 
 def has_transparency(image: Image.Image) -> bool:
@@ -13,6 +22,15 @@ def has_transparency(image: Image.Image) -> bool:
         return False
     alpha = np.asarray(image.convert("RGBA"))[:, :, 3]
     return bool((alpha < 255).any())
+
+
+def has_cutout(image: Image.Image) -> bool:
+    """Whether the alpha channel is an actual cutout, not a few stray translucent pixels."""
+    if not has_transparency(image):
+        return False
+    alpha = np.asarray(image.convert("RGBA"))[:, :, 3]
+    border = np.concatenate((alpha[0], alpha[-1], alpha[:, 0], alpha[:, -1]))
+    return bool((alpha < 128).mean() >= CUTOUT_MIN_TRANSPARENT and (border < 128).mean() >= CUTOUT_MIN_BORDER)
 
 
 def alpha_bbox(image: Image.Image, threshold: int = ALPHA_THRESHOLD) -> tuple[int, int, int, int] | None:
@@ -28,16 +46,29 @@ def cutout_checks(image: Image.Image) -> dict[str, object]:
     rgba = image.convert("RGBA")
     box = alpha_bbox(rgba)
     alpha = np.asarray(rgba)[:, :, 3]
-    coverage = float((alpha > ALPHA_THRESHOLD).mean())
-    touches_edge = False
+    pixels = int((alpha > ALPHA_THRESHOLD).sum())
+    touches_edge = tiny = False
     if box is not None:
         left, top, right, bottom = box
         touches_edge = left == 0 or top == 0 or right == rgba.width or bottom == rgba.height
+        tiny = (pixels < max(TINY_SUBJECT_PIXELS, TINY_SUBJECT_FRACTION * alpha.size)
+                or min(right - left, bottom - top) < TINY_SUBJECT_SIDE)
     return {
         "objectFound": box is not None,
-        "coverage": round(coverage, 4),
+        "coverage": round(pixels / alpha.size, 4),
+        "pixels": pixels,
         "touchesEdge": touches_edge,
+        "tiny": tiny,
     }
+
+
+def canvas_scale(image: Image.Image, width: int, height: int, padding: float = 0.06) -> float | None:
+    """How much ``fit_to_canvas`` enlarges (or shrinks) the object."""
+    box = alpha_bbox(image)
+    if box is None:
+        return None
+    inner_w, inner_h = max(1.0, width * (1 - 2 * padding)), max(1.0, height * (1 - 2 * padding))
+    return min(inner_w / (box[2] - box[0]), inner_h / (box[3] - box[1]))
 
 
 def fit_to_canvas(image: Image.Image, width: int, height: int, padding: float = 0.06) -> Image.Image:

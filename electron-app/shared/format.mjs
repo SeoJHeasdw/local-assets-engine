@@ -67,6 +67,54 @@ export function fileUrl(jobId, relative) {
   return `/files/${encodeURIComponent(jobId)}/${parts}`;
 }
 
+// 자동 검사가 남긴 finding의 문장. 판정이 아니라 사람이 볼 자리를 알린다.
+const mm = (meters) => `${((meters || 0) * 1000).toFixed(1)}mm`;
+const count = (value) => Number(value || 0).toLocaleString();
+const FINDING_TEXT = {
+  "image.subject_missing": () => "배경을 지우고 나니 남은 물체가 없습니다.",
+  "image.final_empty": () => "정리(캔버스·픽셀화)를 거친 최종 파일에서 물체가 사라졌습니다.",
+  "image.finish_failed": (p) => `정리에 실패해 정리 전 그림이 남았습니다. ${p.error || ""}`,
+  "image.touches_edge": () => "물체가 그림 가장자리에 닿았습니다. 원본에서 잘렸을 수 있습니다.",
+  "image.subject_tiny": (p) => `남은 물체가 매우 작습니다(${count(p.pixels)}픽셀). 우연히 남은 점일 수 있습니다.`,
+  "image.overscaled": (p) => `캔버스에 맞추며 물체를 ${p.scale}배로 키웠습니다.`,
+  "image.alpha_not_cutout": () => "입력 이미지의 투명 부분이 누끼로 보기에 너무 적어 알파를 버리고 배경을 다시 지웠습니다.",
+  "mesh.open_boundary": (p) => `열린 경계 모서리 ${count(p.count)}개`,
+  "mesh.non_manifold_edges": (p) => `한 모서리에 세 면 이상이 붙은 곳 ${count(p.count)}개`,
+  "mesh.inconsistent_winding": (p) => `이웃 면과 방향이 엇갈린 모서리 ${count(p.count)}개`,
+  "mesh.duplicate_faces": (p) => `중복 면 ${count(p.count)}개`,
+  "mesh.faces_over_target": (p) => `목표 ${count(p.targetFaces)}면보다 많은 ${count(p.triangles)}면이 남았습니다.`,
+  "mesh.game_shape_error": (p) => `품질본과의 표면 거리가 95% 지점에서 ${mm(p.p95Meters)}입니다.`,
+  "mesh.game_geometry_lost": (p) => `품질본 표본의 ${((p.lostFraction || 0) * 100).toFixed(1)}%가 게임용에서 사라졌습니다(최대 ${mm(p.lostMaxMeters)}).`,
+  "mesh.game_bake_misses": (p) => `UV 영역의 ${((p.missFraction || 0) * 100).toFixed(1)}%에서 굽기 광선이 품질본에 닿지 않았습니다.`,
+  "mesh.game_export_mismatch": (p) => `내보낸 파일을 다시 불러오니 굽은 결과와 다릅니다: ${(p.problems || []).join(", ")}`,
+  "mesh.parts_merged": (p) => `떨어져 있던 부품 ${count(p.source)}개가 재구성 후 ${count(p.reconstructed)}개로 붙었습니다. 좁은 틈이 메워졌을 수 있습니다.`,
+  "mesh.floating_parts": (p) => `본체와 떨어져 떠 있는 조각 ${count(p.count)}개`,
+  "mesh.inward_parts": (p) => `면이 안쪽을 향하는 닫힌 부품 ${count(p.count)}개`,
+  "mesh.intersecting_parts": (p) => `서로 파고든 닫힌 부품 ${count(p.count)}쌍`,
+};
+export const FINDING_SEVERITY_LABELS = { fail: "실패", warn: "경고" };
+
+export function findingText(finding) {
+  const text = FINDING_TEXT[finding?.code];
+  return text ? text(finding.params || {}) : finding?.code || "";
+}
+
+// 사람이 아직 확인하지 않은 항목. assetId를 주면 그 에셋과 작업 전체에 걸린 항목만.
+export function pendingFindings(job, assetId) {
+  return (job?.findings || []).filter((finding) => finding.review !== "cleared"
+    && (assetId === undefined || finding.assetId === assetId || finding.assetId == null));
+}
+
+export function findingsHtml(job, findings) {
+  if (!findings.length) return "";
+  return `<ul class="findings">${findings.map((finding) => `<li class="finding finding-${escapeHtml(finding.severity)}">
+    <span class="finding-head"><strong>${escapeHtml(FINDING_SEVERITY_LABELS[finding.severity] || finding.severity)}</strong> · ${escapeHtml(finding.where)}</span>
+    <span>${escapeHtml(findingText(finding))}</span>
+    <span class="finding-actions">${(finding.evidence || []).map((file) => `<a href="${fileUrl(job.id, file)}" target="_blank" rel="noopener">${escapeHtml(file.split("/").pop())}</a>`).join("")}
+    ${finding.review === "cleared" ? '<em>확인함</em>' : `<button class="ghost" type="button" data-action="clear-finding" data-job="${escapeHtml(job.id)}" data-finding="${escapeHtml(finding.id)}">확인함</button>`}</span>
+  </li>`).join("")}</ul>`;
+}
+
 // 폼 상태를 엔진 요청 하나로 바꾼다. 3D를 설명으로 만들 때 후보가 1장이면 바로 3D까지
 // 가고, 여러 장이면 컨셉 후보만 만든 뒤 사용자가 고른 후보를 3D로 바꾼다.
 export function buildJobRequest(form) {

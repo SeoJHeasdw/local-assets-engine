@@ -141,3 +141,29 @@ def test_default_generation_only_publishes_the_quality_master(tmp_path):
     assert job['state'] == 'done', job['error']
     assert len(job['assets']) == 1 and job['assets'][0]['meta']['variant'] == 'master'
     assert not any(s['name'] == 'lod' or s['name'].endswith('-game') for s in job['stages'])
+
+
+def test_surface_reconstruction_reports_nearby_parts_that_fused(tmp_path):
+    import subprocess
+
+    from local_assets_engine.paths import trellis_python
+
+    if not trellis_python().exists():
+        pytest.skip("TRELLIS 환경이 설치되지 않았다")
+    n = 64
+    xy = np.linspace(-0.25, 0.25, 17)
+    plane = np.array([[x, y, 0] for x in xy for y in xy], np.float32)
+    faces = np.array([f for a in range(16) for b in range(16)
+                      for f in ([a * 17 + b, a * 17 + b + 17, a * 17 + b + 18], [a * 17 + b, a * 17 + b + 18, a * 17 + b + 1])],
+                     np.int32)
+    # Two separate sheets two voxels apart: the reconstruction band joins them.
+    vertices = np.concatenate([plane + [0, 0, -1 / n], plane + [0, 0, 1 / n]]).astype(np.float32)
+    coords = np.array([[x, y, z] for x in range(14, 51) for y in range(14, 51) for z in range(29, 36)], np.int32)
+    np.savez(tmp_path / "source.npz", vertices=vertices, faces=np.concatenate([faces, faces + len(plane)]),
+             coords=coords, origin=np.array([-0.5] * 3), voxel_size=1 / n)
+    worker = Path(__file__).resolve().parents[1] / "src/local_assets_engine/workers/quality_surface.py"
+    subprocess.run([str(trellis_python()), str(worker), "--source", str(tmp_path / "source.npz"),
+                    "--output", str(tmp_path / "surface"), "--target-faces", "0", "--game-faces", "0"], check=True)
+    report = json.loads((tmp_path / "surface/surface.json").read_text("utf-8"))
+    assert report["parts"] == {"source": 2, "reconstructed": 1}
+    assert any("붙었습니다" in warning for warning in report["warnings"])

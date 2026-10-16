@@ -203,16 +203,29 @@ def _report_cutout_checks(ctx: "JobContext", record: dict[str, Any], index: int)
     checks = record["checks"]
     where = f"후보 {index} · 시드 {record['seed']}"
     asset_id = record["asset"]["id"]
+    final = checks.get("final") or {}
     if checks.get("objectFound") is False:
         ctx.add_finding(severity="fail", code="image.subject_missing", where=where, asset_id=asset_id,
                         params={"coverage": checks.get("coverage")}, evidence=[record["checked"]])
+    elif final.get("objectFound") is False:
+        # 원본 컷에는 물체가 있었지만 정리(캔버스·픽셀화)를 거친 최종 파일에서 사라졌다.
+        ctx.add_finding(severity="fail", code="image.final_empty", where=where, asset_id=asset_id,
+                        params={"coverage": checks.get("coverage")}, evidence=[record["checked"], record["file"]])
     elif record["error"]:
         ctx.add_finding(severity="fail", code="image.finish_failed", where=where, asset_id=asset_id,
                         params={"error": record["error"]}, evidence=[record["checked"]])
-    elif checks.get("touchesEdge"):
-        # 배경을 지운 그림에서 물체가 가장자리에 닿았다. 원본에서 잘렸을 수 있다.
-        ctx.add_finding(severity="warn", code="image.touches_edge", where=where, asset_id=asset_id,
-                        params={"coverage": checks.get("coverage")}, evidence=[record["checked"]])
+    else:
+        if checks.get("tiny"):
+            ctx.add_finding(severity="warn", code="image.subject_tiny", where=where, asset_id=asset_id,
+                            params={"pixels": checks.get("pixels"), "coverage": checks.get("coverage")},
+                            evidence=[record["checked"]])
+        if (checks.get("canvasScale") or 0) > imaging.OVERSCALE:
+            ctx.add_finding(severity="warn", code="image.overscaled", where=where, asset_id=asset_id,
+                            params={"scale": checks["canvasScale"]}, evidence=[record["checked"], record["file"]])
+        if checks.get("touchesEdge"):
+            # 배경을 지운 그림에서 물체가 가장자리에 닿았다. 원본에서 잘렸을 수 있다.
+            ctx.add_finding(severity="warn", code="image.touches_edge", where=where, asset_id=asset_id,
+                            params={"coverage": checks.get("coverage")}, evidence=[record["checked"]])
 
 
 def _finish_cutout(record: dict[str, Any], image: Image.Image, p: dict[str, Any], final_dir: Path) -> None:
@@ -221,7 +234,10 @@ def _finish_cutout(record: dict[str, Any], image: Image.Image, p: dict[str, Any]
     try:
         fitted = image
         if canvas := p.get("canvas"):
-            fitted = imaging.fit_to_canvas(image, canvas["width"], canvas["height"], canvas.get("padding", 0.06))
+            padding = canvas.get("padding", 0.06)
+            scale = imaging.canvas_scale(image, canvas["width"], canvas["height"], padding)
+            record["checks"]["canvasScale"] = round(scale, 3) if scale is not None else None
+            fitted = imaging.fit_to_canvas(image, canvas["width"], canvas["height"], padding)
         target = final_dir / f"seed-{seed}.png"
         fitted.save(target)
         record["file"] = record["preview"] = target
@@ -232,6 +248,9 @@ def _finish_cutout(record: dict[str, Any], image: Image.Image, p: dict[str, Any]
             small.save(pixel_path)
             imaging.upscale_nearest(small, max(1, PIXEL_PREVIEW_PX // max(small.size))).save(preview_path)
             record["file"], record["preview"] = pixel_path, preview_path
+        # 정리를 거친 최종 파일을 다시 본다. 원본 검사만으로는 정리에서 사라진 물체를 놓친다.
+        with Image.open(record["file"]) as final:
+            record["checks"]["final"] = imaging.cutout_checks(final)
     except ValueError as error:
         record["error"] = str(error)
 

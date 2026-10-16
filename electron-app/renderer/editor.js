@@ -3,7 +3,7 @@
 import {
   CROP_RATIOS, clamp, colorLayer, defaults, frameLayout, layerId, migratePlan, outputToSource, stampLayer,
 } from "../shared/editing.mjs";
-import { escapeHtml, fileUrl, formatBytes } from "../shared/format.mjs";
+import { escapeHtml, fileUrl, findingsHtml, formatBytes, pendingFindings } from "../shared/format.mjs";
 import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
 import { deleteDraft, readDraft, sameDraftVersion, writeDraft } from "./drafts.js";
 import { showVersionHistory } from "./versions.js";
@@ -1100,7 +1100,8 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       if (isMesh && !isGame) {
         try { bake = (await api("/api/recipes")).recipes.find((recipe) => recipe.name === "game-asset")?.paramsSchema?.properties || {}; } catch { /* 기본값 없이도 보낸다 */ }
       }
-      const gameInfo = isGame ? `<dl class="meta"><dt>원본 대비 최대 오차</dt><dd>${((stats.surfaceError?.maxMeters || 0) * 1000).toFixed(1)}mm</dd><dt>구운 맵</dt><dd>${escapeHtml(Object.keys(meta.files || {}).filter((key) => !["glb", "fbx"].includes(key)).join(", "))}</dd></dl>
+      const shells = stats.topology?.innerShellFaceShare ? `<p class="hint">보이지 않는 안쪽 껍질이 면의 ${Math.round(stats.topology.innerShellFaceShare * 100)}%입니다(닫힌 물체 속 빈 공간의 벽).</p>` : "";
+      const gameInfo = isGame ? `<dl class="meta"><dt>원본 대비 최대 오차</dt><dd>${((stats.surfaceError?.maxMeters || 0) * 1000).toFixed(1)}mm</dd><dt>구운 맵</dt><dd>${escapeHtml(Object.keys(meta.files || {}).filter((key) => !["glb", "fbx", "misses"].includes(key)).join(", "))}</dd></dl>
         ${meta.compareFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.compareFile)}" target="_blank" rel="noopener">품질본과 비교</a>` : ""}
         ${bridge && meta.files?.fbx ? '<button class="secondary" type="button" data-reveal-fbx>FBX·텍스처 폴더 열기</button>' : ""}` : "";
       const bakeForm = isMesh && !isGame ? `<div class="control-divider"></div><h3>게임용으로 굽기</h3><p class="hint">면을 예산까지 줄이고 이 메시의 디테일을 노멀·색·거칠기·AO 맵으로 굽습니다. 결과는 새 에셋으로 남습니다.</p>
@@ -1111,8 +1112,12 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
         <button class="secondary" type="button" data-game-bake>게임용으로 굽기</button>` : "";
       const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes ?? stats.bake?.bytes?.glb) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut ?? stats.triangles ?? 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
         ${meta.inspectionFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 보기</a>` : ""}
-        ${gameInfo}
-        ${stats.topology?.warnings?.length ? `<p class="notice">${escapeHtml(stats.topology.warnings.join(" "))}</p>` : ""}
+        ${meta.reviewFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.reviewFile)}" target="_blank" rel="noopener">형상·조명 검수판</a>` : ""}
+        ${meta.distanceFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.distanceFile)}" target="_blank" rel="noopener">화면 크기별 비교</a>` : ""}
+        ${gameInfo}${shells}
+        ${pendingFindings(job, asset.id).length ? `<h3>자동 검사가 알린 항목</h3>${findingsHtml(job, pendingFindings(job, asset.id))}`
+          // findings가 생기기 전의 작업은 위상 경고 문장만 있다.
+          : !job.findings?.length && stats.topology?.warnings?.length ? `<p class="notice">${escapeHtml(stats.topology.warnings.join(" "))}</p>` : ""}
         <div class="control-divider"></div><h3>정리</h3>
         <label class="field"><span class="label">컬렉션 <em>프로젝트·용도</em></span><input data-library="collection" list="collection-options" maxlength="60" value="${escapeHtml(asset.collection || "")}" placeholder="예: 던전 1장"><datalist id="collection-options">${collections.map((name) => `<option value="${escapeHtml(name)}">`).join("")}</datalist></label>
         <label class="field"><span class="label">태그 <em>쉼표로 구분</em></span><input data-library="tags" maxlength="400" value="${escapeHtml((asset.tags || []).join(", "))}" placeholder="예: 상자, 보상, 파란색"></label>

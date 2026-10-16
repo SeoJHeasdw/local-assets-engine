@@ -22,11 +22,27 @@ NAME = re.compile(r"[a-z0-9][a-z0-9_]{0,39}")
 MIN_FACES, MAX_FACES = 100, 200_000
 # 보이는 면의 95% 형상 오차가 가장 긴 변의 이 비율을 넘으면 사람이 보도록 알린다. 판정은 하지 않는다.
 SHAPE_ERROR_WARN = 0.02
+# 원본 표본 중 이 비율 이상이 껍데기 밖에서 사라졌으면(얇은 돌출부 소실 등) 알린다.
+LOST_WARN = 0.001
+# UV가 덮는 텍셀 중 이 비율 이상에서 굽기 광선이 품질본에 닿지 않았으면 알린다.
+MISS_WARN = 0.01
 TOOL = [sys.executable, "-m", "local_assets_engine.tools.game_bake"]
+# 화면에서 물체가 차지하는 높이(픽셀). 가까이·중간·멀리에서 남는 디테일을 본다.
+DISTANCE_HEIGHTS = (512, 192, 96)
 
 
 def game_defaults(presets: dict[str, Any]) -> dict[str, Any]:
     return presets["mesh"]["gameAsset"]
+
+
+def _existing(store: "JobStore", job_id: str, relative: str | None) -> str | None:
+    if not relative:
+        return None
+    try:
+        path = store.resolve_file(job_id, relative)
+    except (JobNotFound, ValueError):
+        return None
+    return str(path) if path.is_file() else None
 
 
 def prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") -> tuple[dict[str, Any], str]:
@@ -59,6 +75,8 @@ def prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") 
         "ao": bool_param(params, "ao", defaults["ao"]),
         "name": name,
         "sizeMeters": meta.get("sizeMeters"),
+        "sourceState": _existing(store, job_id, meta.get("sourceStateFile")),
+        "inputImage": _existing(store, job_id, "mesh/input.png"),
         "subject": job["params"].get("subject", job.get("title", "")),
     }
     return normalized, f"게임용 에셋 · {normalized['subject']}"
@@ -100,6 +118,17 @@ def run(ctx: "JobContext") -> None:
                    "--panel", f"품질본 · 삼각형 {reduced['sourceTriangles']:,}={inspection / 'master-0.png'}",
                    "--panel", f"게임용 · 삼각형 {reduced['triangles']:,} · {p['textureSize']}px={inspection / 'game-0.png'}"])
 
+    review = game / "review"
+    meshes = (["--mesh", f"source={p['sourceState']}"] if p.get("sourceState") else []) + \
+        ["--mesh", f"master={master}", "--mesh", f"game={glb}"]
+    with ctx.stage("review", "형상·조명 검수판") as stage:
+        stage.run([sys.executable, "-m", "local_assets_engine.tools.mesh_review", "--output", review, *meshes,
+                   *(["--input", p["inputImage"]] if p.get("inputImage") else [])])
+    with ctx.stage("distance", "화면 크기별 비교") as stage:
+        stage.run([sys.executable, "-m", "local_assets_engine.tools.mesh_review", "--output", review,
+                   "--distance", ",".join(str(h) for h in DISTANCE_HEIGHTS),
+                   "--mesh", f"master={master}", "--mesh", f"game={glb}"])
+
     stats = {"triangles": reduced["triangles"], "vertices": reduced["vertices"],
              "sourceTriangles": reduced["sourceTriangles"], "surfaceError": reduced["surfaceError"],
              "topology": reduced["topology"], "bake": baked}
@@ -109,6 +138,7 @@ def run(ctx: "JobContext") -> None:
         meta={"variant": "game-asset", "label": "게임용", "name": p["name"], "targetFaces": p["targetFaces"],
               "textureSize": p["textureSize"], "sizeMeters": p["sizeMeters"], "stats": stats, "files": files,
               "inspectionFile": ctx.rel(inspection / "game-contact.png"), "compareFile": ctx.rel(compare),
+              "reviewFile": ctx.rel(review / "review.png"), "distanceFile": ctx.rel(review / "distance.png"),
               "source": p["source"], "processingVersion": 2},
     )
     evidence = [compare, reduce_stats]
@@ -118,6 +148,16 @@ def run(ctx: "JobContext") -> None:
     if error["p95Relative"] > SHAPE_ERROR_WARN:
         ctx.add_finding(severity="warn", code="mesh.game_shape_error", where="게임용 메시", asset_id=asset["id"],
                         params={"p95Meters": error["p95Meters"], "p95Relative": error["p95Relative"]},
+                        evidence=evidence)
+    if baked["missFraction"] > MISS_WARN:
+        ctx.add_finding(severity="warn", code="mesh.game_bake_misses", where="게임용 텍스처", asset_id=asset["id"],
+                        params={"missFraction": baked["missFraction"]}, evidence=[game / "bake-misses.png", compare])
+    if baked["exportCheck"]["problems"]:
+        ctx.add_finding(severity="fail", code="mesh.game_export_mismatch", where="게임용 파일", asset_id=asset["id"],
+                        params={"problems": baked["exportCheck"]["problems"]}, evidence=[bake_stats])
+    if error["lostFraction"] >= LOST_WARN:
+        ctx.add_finding(severity="warn", code="mesh.game_geometry_lost", where="게임용 메시", asset_id=asset["id"],
+                        params={"lostFraction": error["lostFraction"], "lostMaxMeters": error["lostMaxMeters"]},
                         evidence=evidence)
 
 

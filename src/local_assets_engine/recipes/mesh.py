@@ -74,6 +74,9 @@ TOPOLOGY_FINDINGS = (
     ("nonManifoldEdges", "mesh.non_manifold_edges"),
     ("inconsistentWindingEdges", "mesh.inconsistent_winding"),
     ("duplicateFaces", "mesh.duplicate_faces"),
+    ("floatingParts", "mesh.floating_parts"),
+    ("inwardParts", "mesh.inward_parts"),
+    ("intersectingParts", "mesh.intersecting_parts"),
 )
 
 
@@ -120,8 +123,13 @@ def run_mesh(ctx: "JobContext", image_path: Path, p: dict[str, Any], *, concept_
     mesh_dir.mkdir(exist_ok=True)
     input_path = mesh_dir / "input.png"
     with Image.open(image_path) as image:
-        transparent = imaging.has_transparency(image)
+        alpha_present = imaging.has_transparency(image)
+        # 알파가 실제 누끼일 때만 믿는다. 거의 불투명한 알파를 넘기면 TRELLIS도 배경 제거를 건너뛴다.
+        transparent = imaging.has_cutout(image)
         image.convert("RGBA" if transparent else "RGB").save(input_path)
+    if alpha_present and not transparent:
+        ctx.add_finding(severity="warn", code="image.alpha_not_cutout", where="3D 입력 이미지",
+                        params={"removeBackground": bool(p.get("removeBackground", True))}, evidence=[input_path])
     if not transparent and p.get("removeBackground", True):
         manifest = mesh_dir / "cutout-manifest.json"
         manifest.write_text(json.dumps([{"input": str(input_path), "output": str(input_path)}]), "utf-8")
@@ -191,6 +199,7 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
         stats = json.loads(stats_path.read_text("utf-8"))
         stats["sourceTriangles"] = surface["sourceTriangles"]
         stats["reconstructedTriangles"] = surface["reconstructedTriangles"]
+        stats["surface"] = {"parts": surface.get("parts"), "warnings": surface.get("warnings", [])}
         if name == "game":
             stats["lod"] = json.loads((mesh_dir / "surface/game.json").read_text("utf-8"))
             stats["topology"]["warnings"].extend(stats["lod"]["warnings"])
@@ -209,6 +218,13 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
         for name, _label, _size, final_glb, *_ in artifacts:
             command += ["--mesh", f"{name}={final_glb}"]
         stage.run(command)
+    with ctx.stage("review", "형상·조명 검수판") as stage:
+        # TRELLIS 원본과 나란히 두어 손상이 모델에서 왔는지 후처리에서 왔는지 가른다.
+        command = [sys.executable, "-m", "local_assets_engine.tools.mesh_review", "--output", mesh_dir / "review",
+                   "--input", mesh_dir / "input.png", "--mesh", f"source={source}"]
+        for name, _label, _size, final_glb, *_ in artifacts:
+            command += ["--mesh", f"{name}={final_glb}"]
+        stage.run(command)
     assets = []
     for name, label, size, final_glb, raw_glb, optimized, stats in artifacts:
         assets.append(ctx.add_asset(
@@ -219,15 +235,20 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
                   "rawFile": ctx.rel(raw_glb), "sourceStateFile": ctx.rel(source),
                   "optimizedFile": ctx.rel(optimized) if optimized else None,
                   "optimizedBytes": optimized.stat().st_size if optimized else None,
-                  "inspectionFile": f"mesh/inspection/{name}-contact.png",
+                  "inspectionFile": f"mesh/inspection/{name}-contact.png", "reviewFile": "mesh/review/review.png",
                   "source": p.get("source"), "conceptAsset": concept_asset_id,
                   "processingVersion": 2},
         ))
         # 형상을 지키려고 목표 면 수를 넘길 수 있는 것은 게임용 감축뿐이다.
         lod = stats.get("lod")
-        report_mesh_checks(ctx, assets[-1], stats, where=f"{label} 메시",
-                           evidence=[mesh_dir / f"inspection/{name}-contact.png", final_glb.with_suffix(".stats.json")],
+        evidence = [mesh_dir / f"inspection/{name}-contact.png", final_glb.with_suffix(".stats.json")]
+        report_mesh_checks(ctx, assets[-1], stats, where=f"{label} 메시", evidence=evidence,
                            faces=(lod["targetFaces"], lod["triangles"]) if lod else None)
+        parts = surface.get("parts") or {}
+        if parts.get("reconstructed", 0) < parts.get("source", 0):
+            # 가까운 부품의 재구성 띠가 합쳐졌다. 좁은 틈이 메워졌을 수 있다.
+            ctx.add_finding(severity="warn", code="mesh.parts_merged", where=f"{label} 메시", asset_id=assets[-1]["id"],
+                            params=parts, evidence=evidence)
     return assets[0]
 
 
@@ -302,7 +323,8 @@ def _prepare_text_to_3d(params: dict[str, Any], presets: dict[str, Any], _store:
 
 def _run_text_to_3d(ctx: "JobContext") -> None:
     candidates = generate_candidates(ctx, ctx.params, role="concept")
-    usable = [c for c in candidates if not c["error"] and c["checks"].get("objectFound", True)]
+    usable = [c for c in candidates if not c["error"] and c["checks"].get("objectFound", True)
+              and not c["checks"].get("tiny") and (c["checks"].get("final") or {}).get("objectFound", True)]
     if not usable:
         raise RuntimeError("3D로 바꿀 만한 컨셉 이미지가 나오지 않았습니다. 설명을 바꿔 다시 시도하세요.")
     chosen = usable[0]

@@ -629,6 +629,12 @@ button.ghost.pv-small { height: 26px; padding: 0 var(--s2); font-size: var(--fs-
   border: 1px solid var(--line); border-radius: 50%; background: rgba(10, 12, 9, .7); color: var(--text); cursor: pointer;
 }
 .notice { padding: var(--s3); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-sm); }
+.findings { display: flex; flex-direction: column; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.finding { display: flex; flex-direction: column; gap: 2px; padding: var(--s3); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-sm); }
+.finding-fail { background: var(--danger-soft); color: var(--danger); }
+.finding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.finding-actions a { color: inherit; }
+.finding-chip { padding: 0 6px; border: 0; border-radius: var(--r-sm, 4px); background: var(--warn-soft); color: var(--warn); font: inherit; cursor: pointer; }
 
 /* ---- 환경 ---- */
 .capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s3); margin-bottom: var(--s5); }

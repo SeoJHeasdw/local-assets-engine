@@ -24,6 +24,7 @@ dependencies = [
     "trimesh>=5.1.0",
     "uvicorn[standard]>=0.53.0",
     "urllib3>=2.8.0,<3",
+    "scikit-image>=0.26.0",
 ]
 
 [project.scripts]
@@ -41,3 +42,5 @@ packages = ["src/local_assets_engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# scikit-image 0.26의 마칭 큐브가 NumPy 2.5에서 사용 중단된 shape 대입을 쓴다. 동작은 같다.
+filterwarnings = ["ignore:Setting the shape on a NumPy array:DeprecationWarning:skimage"]

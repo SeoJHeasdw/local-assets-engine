@@ -105,3 +105,21 @@ test("queue position, waiting vs processing time and finished jobs are told apar
   assert.deepEqual(newlyFinished(before, after).map((job) => job.id), ["a"]);
   assert.deepEqual(newlyFinished(null, after), []);
 });
+
+test("findings read as sentences, keep their evidence and offer a clear button only while pending", async () => {
+  const { findingText, findingsHtml, pendingFindings } = await import("../../electron-app/shared/format.mjs");
+  const job = { id: "j1", findings: [
+    { id: "f01", severity: "warn", code: "mesh.game_geometry_lost", where: "게임용 메시", assetId: "a01",
+      params: { lostFraction: 0.35, lostMaxMeters: 0.296 }, evidence: ["game/compare.png"], review: "pending" },
+    { id: "f02", severity: "fail", code: "image.final_empty", where: "후보 1", assetId: "a02", params: {}, evidence: [], review: "cleared" },
+    { id: "f03", severity: "warn", code: "image.alpha_not_cutout", where: "3D 입력 이미지", assetId: null, params: {}, evidence: [], review: "pending" },
+  ] };
+  assert.equal(findingText(job.findings[0]), "품질본 표본의 35.0%가 게임용에서 사라졌습니다(최대 296.0mm).");
+  assert.equal(findingText({ code: "unknown.code" }), "unknown.code");
+  assert.deepEqual(pendingFindings(job).map((f) => f.id), ["f01", "f03"]);
+  assert.deepEqual(pendingFindings(job, "a01").map((f) => f.id), ["f01", "f03"]);
+  const html = findingsHtml(job, job.findings);
+  assert.match(html, /href="\/files\/j1\/game\/compare\.png"/);
+  assert.equal((html.match(/data-action="clear-finding"/g) || []).length, 2);
+  assert.match(html, /<em>확인함<\/em>/);
+});

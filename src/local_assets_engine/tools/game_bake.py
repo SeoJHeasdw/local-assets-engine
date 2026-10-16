@@ -20,6 +20,8 @@ from pathlib import Path
 
 from . import progress_line
 
+# 복셀 표면 찍기에서 한 번에 만드는 점 수. 큰 삼각형도 나눠서 끝까지 찍는다.
+POINTS_PER_BATCH = 4_000_000
 EMIT_CHANNELS = (("basecolor", "Base Color", "sRGB"), ("roughness", "Roughness", "Non-Color"),
                  ("metallic", "Metallic", "Non-Color"))
 
@@ -82,90 +84,76 @@ def occupancy(coords, triangles, voxel: float, ground: float | None):
     a, b, c = coords[triangles[:, 0]], coords[triangles[:, 1]], coords[triangles[:, 2]]
     longest = np.maximum.reduce([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1),
                                  np.linalg.norm(a - c, axis=1)])
-    steps = np.clip(np.ceil(longest / (voxel * 0.5)).astype(int), 1, 64)
+    steps = np.maximum(np.ceil(longest / (voxel * 0.5)).astype(int), 1)
     pad = 3
     origin = low - pad * voxel
     shape = np.ceil((high - low) / voxel).astype(int) + 2 * pad + 1
     shell = np.zeros(shape, dtype=bool)
     for n in np.unique(steps):
-        # A barycentric lattice per triangle, finer than half a voxel.
+        # A barycentric lattice per triangle, finer than half a voxel however large the triangle.
         lattice = np.array([(i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)])
-        chosen = steps == n
-        points = (a[chosen, None] * (1 - lattice.sum(axis=1))[None, :, None]
-                  + b[chosen, None] * lattice[None, :, 0, None] + c[chosen, None] * lattice[None, :, 1, None])
-        index = np.floor((points.reshape(-1, 3) - origin) / voxel).astype(int)
-        shell[index[:, 0], index[:, 1], index[:, 2]] = True
+        chosen = np.flatnonzero(steps == n)
+        batch = max(1, POINTS_PER_BATCH // len(lattice))
+        for start in range(0, len(chosen), batch):
+            part = chosen[start:start + batch]
+            points = (a[part, None] * (1 - lattice.sum(axis=1))[None, :, None]
+                      + b[part, None] * lattice[None, :, 0, None] + c[part, None] * lattice[None, :, 1, None])
+            index = np.floor((points.reshape(-1, 3) - origin) / voxel).astype(int)
+            shell[index[:, 0], index[:, 1], index[:, 2]] = True
     shell = ndimage.binary_dilation(shell, iterations=1)
     slab = np.zeros_like(shell)
     if ground is not None:
         slab[:, :, :int(np.floor((ground - origin[2]) / voxel))] = True
     solid = ndimage.binary_fill_holes(shell | slab) & ~slab
-    # Undo the dilation where it only thickened the outside.
-    solid = ndimage.binary_erosion(solid, iterations=1) | (solid & ~ndimage.binary_dilation(~solid, iterations=1))
+    # Undo the dilation on the bulk, but keep parts at most three voxels thick (fins, blades,
+    # sheets) as they are: eroded to one voxel they would vanish in the smoothing. Thickness is
+    # the deepest distance-to-outside nearby, so the edges and corners of thick parts stay eroded.
+    depth = ndimage.maximum_filter(ndimage.distance_transform_edt(solid), size=5)
+    solid = ndimage.binary_erosion(solid, iterations=1) | (solid & (depth <= 2))
     return ndimage.gaussian_filter(solid.astype(np.float32), sigma=0.8), origin
 
 
-def surface_nets(field, origin, voxel: float, iso: float = 0.5):
-    """Closed quad mesh of the iso surface: one vertex per crossing cell, one quad per crossing edge."""
+def outer_surface(field, origin, voxel: float, iso: float = 0.5):
+    """Closed triangle surface of the smoothed hull field, facing outward.
+
+    Lewiner marching cubes resolves the ambiguous cells that a naive dual method turns into
+    non-manifold edges where two parts touch only along a voxel edge or corner.
+    """
+    import numpy as np
+    from skimage.measure import marching_cubes
+
+    if field.max() <= iso:
+        return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int64)
+    vertices, faces, _, _ = marching_cubes(field, level=iso, allow_degenerate=False)
+    # Field samples sit at voxel centers.
+    vertices = vertices * voxel + origin + voxel * 0.5
+    a, b, c = vertices[faces[:, 0]], vertices[faces[:, 1]], vertices[faces[:, 2]]
+    if np.einsum("ij,ij->i", a, np.cross(b, c)).sum() < 0:
+        faces = faces[:, ::-1]
+    return vertices, faces.astype(np.int64)
+
+
+def solid_lookup(field, origin, voxel: float):
+    """Whether points lie inside the filled hull (the smoothed field above one half)."""
     import numpy as np
 
-    nx, ny, nz = field.shape
-    inside = field > iso
-    corners = [(dx, dy, dz) for dx in (0, 1) for dy in (0, 1) for dz in (0, 1)]
-    edges = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)]
-    values = np.stack([field[dx:nx - 1 + dx, dy:ny - 1 + dy, dz:nz - 1 + dz] for dx, dy, dz in corners], axis=-1)
-    offsets = np.array(corners, dtype=np.float32)
-    total = np.zeros(values.shape[:3] + (3,), dtype=np.float32)
-    count = np.zeros(values.shape[:3], dtype=np.int32)
-    for e0, e1 in edges:
-        v0, v1 = values[..., e0], values[..., e1]
-        crossing = (v0 > iso) != (v1 > iso)
-        delta = np.where(v1 == v0, 1.0, v1 - v0)
-        t = np.where(crossing, (iso - v0) / delta, 0.0)
-        total += np.where(crossing[..., None], offsets[e0] + t[..., None] * (offsets[e1] - offsets[e0]), 0.0)
-        count += crossing
-    active = count > 0
-    ids = -np.ones(active.shape, dtype=np.int64)
-    ids[active] = np.arange(int(active.sum()))
-    cells = np.argwhere(active)
-    vertices = (cells + total[active] / count[active][:, None]) * voxel + origin + voxel * 0.5
-    quads = []
-    for axis in range(3):
-        first, second = [other for other in range(3) if other != axis]
-        lower = inside[tuple(slice(1, -1) if k != axis else slice(0, -1) for k in range(3))]
-        upper = inside[tuple(slice(1, -1) if k != axis else slice(1, None) for k in range(3))]
-        changes = np.argwhere(lower != upper)
-        base = changes.copy()
-        base[:, first] += 1
-        base[:, second] += 1
+    def inside(points):
+        index = np.floor((np.asarray(points) - origin) / voxel).astype(int)
+        valid = np.all((index >= 0) & (index < field.shape), axis=1)
+        result = np.zeros(len(index), dtype=bool)
+        result[valid] = field[tuple(index[valid].T)] > 0.5
+        return result
 
-        def cell(d1, d2):
-            at = base.copy()
-            at[:, first] -= d1
-            at[:, second] -= d2
-            return ids[at[:, 0], at[:, 1], at[:, 2]]
-
-        quad = np.stack([cell(1, 1), cell(0, 1), cell(0, 0), cell(1, 0)], axis=1)
-        reverse = lower[tuple(changes.T)]
-        # (first, second) is right-handed around x and z but left-handed around y.
-        if axis == 1:
-            reverse = ~reverse
-        quad[reverse] = quad[reverse][:, ::-1]
-        quads.append(quad)
-    quads = np.concatenate(quads)
-    quads = quads[(quads >= 0).all(axis=1)]
-    # Winding must face outward for the bake cage; fix it from the signed volume.
-    a, b, c = vertices[quads[:, 0]], vertices[quads[:, 1]], vertices[quads[:, 2]]
-    if np.einsum("ij,ij->i", a, np.cross(b, c)).sum() < 0:
-        quads = quads[:, ::-1]
-    return vertices, quads
+    return inside
 
 
-def surface_error(high, low, span: float, visible_within: float, samples: int = 60000) -> dict:
+def surface_error(high, low, span: float, visible_within: float, inside, samples: int = 60000) -> dict:
     """Nearest-surface distance between master and low, relative to the longest side.
 
-    Master points farther than ``visible_within`` from the outer hull are hidden inner
-    walls that the hull filled; they are counted separately, not as error.
+    A master point far from the hull surface is *hidden* only when the hull's solid
+    encloses it (an inner wall that was filled). Far points outside the solid are master
+    shape the hull *lost*; they stay in the error and are counted on their own. The
+    unfiltered master-to-low distances are kept as well.
     """
     import bpy
     import numpy as np
@@ -180,14 +168,28 @@ def surface_error(high, low, span: float, visible_within: float, samples: int = 
         coords, _ = mesh_arrays(obj)
         return coords[rng.choice(len(coords), samples, replace=False)] if len(coords) > samples else coords
 
+    def nearest(tree, points):
+        return np.array([tree.find_nearest(tuple(p))[3] for p in points], dtype=np.float64)
+
     master_points = sample(high)
-    hidden = np.array([hull_tree.find_nearest(tuple(p))[3] > visible_within for p in master_points])
-    to_low = np.array([low_tree.find_nearest(tuple(p))[3] for p in master_points[~hidden]])
-    to_high = np.array([high_tree.find_nearest(tuple(p))[3] for p in sample(low)])
-    both = np.concatenate((to_low, to_high)) / span
-    return {"meanRelative": round(float(both.mean()), 6), "p95Relative": round(float(np.percentile(both, 95)), 6),
-            "maxRelative": round(float(both.max()), 6), "p95Meters": round(float(np.percentile(both, 95) * span), 5),
-            "maxMeters": round(float(both.max() * span), 5), "hiddenFraction": round(float(hidden.mean()), 4)}
+    far = nearest(hull_tree, master_points) > visible_within
+    enclosed = inside(master_points)
+    hidden, lost = far & enclosed, far & ~enclosed
+    master_to_low = nearest(low_tree, master_points)
+    both = np.concatenate((master_to_low[~hidden], nearest(high_tree, sample(low)))) / span
+    every = master_to_low / span
+
+    def summary(values):
+        return {"meanRelative": round(float(values.mean()), 6),
+                "p95Relative": round(float(np.percentile(values, 95)), 6),
+                "maxRelative": round(float(values.max()), 6),
+                "p95Meters": round(float(np.percentile(values, 95) * span), 5),
+                "maxMeters": round(float(values.max() * span), 5)}
+
+    return {**summary(both), "hiddenFraction": round(float(hidden.mean()), 4),
+            "lostFraction": round(float(lost.mean()), 4),
+            "lostMaxMeters": round(float(master_to_low[lost].max()), 5) if lost.any() else 0.0,
+            "unfiltered": summary(every)}
 
 
 def reduce(args) -> int:
@@ -204,9 +206,11 @@ def reduce(args) -> int:
     print(progress_line(1, 6, f"바깥 껍데기 만드는 중 (복셀 {args.voxels})"), flush=True)
     ground = float(coords[:, 2].min()) if args.seal_ground else None
     field, origin = occupancy(coords, triangles, voxel, ground)
-    vertices, quads = surface_nets(field, origin, voxel)
+    vertices, faces = outer_surface(field, origin, voxel)
+    if not len(faces):
+        raise SystemExit("바깥 껍데기가 비었습니다. 원본 메시가 닫혀 있는지 확인하세요.")
     hull_mesh = bpy.data.meshes.new("hull")
-    hull_mesh.from_pydata(vertices.tolist(), [], quads.tolist())
+    hull_mesh.from_pydata(vertices.tolist(), [], faces.tolist())
     hull_mesh.validate(verbose=False)
     hull = bpy.data.objects.new("hull", hull_mesh)
     low = bpy.data.objects.new("low", hull_mesh.copy())
@@ -240,7 +244,8 @@ def reduce(args) -> int:
     bpy.ops.object.mode_set(mode="OBJECT")
 
     print(progress_line(4, 6, "원본과의 형상 오차 재는 중"), flush=True)
-    error = surface_error(high, low, span, visible_within=voxel * 2)
+    error = surface_error(high, low, span, visible_within=voxel * 2,
+                          inside=solid_lookup(field, origin, voxel))
     low_coords, low_triangles = mesh_arrays(low)
     topology = topology_checks(low_coords, low_triangles)
 
@@ -295,19 +300,21 @@ def _surface_output(material):
     return None
 
 
-def _route_to_emission(materials, socket_name):
-    """Temporarily drive each material's surface with one Principled input as emission."""
+def _route_to_emission(materials, socket_name, constant=None):
+    """Temporarily drive each material's surface with one Principled input (or a constant) as emission."""
     restore = []
     for material in materials:
         tree = material.node_tree
         principled, output = _principled(material), _surface_output(material)
-        if principled is None or output is None:
+        if output is None or (principled is None and constant is None):
             continue
         previous = output.inputs["Surface"].links[0].from_socket if output.inputs["Surface"].is_linked else None
         emission = tree.nodes.new("ShaderNodeEmission")
         emission.inputs["Strength"].default_value = 1.0
-        source = principled.inputs[socket_name]
-        if source.is_linked:
+        source = principled.inputs[socket_name] if socket_name else None
+        if constant is not None:
+            emission.inputs["Color"].default_value = (constant, constant, constant, 1.0)
+        elif source.is_linked:
             tree.links.new(source.links[0].from_socket, emission.inputs["Color"])
         else:
             value = source.default_value
@@ -337,6 +344,33 @@ def _save(image, path: Path) -> None:
     image.filepath_raw = str(path)
     image.file_format = "PNG"
     image.save()
+
+
+def check_exports(glb: Path, fbx: Path, triangles: int, dimensions) -> dict:
+    """Load what was written back in a clean scene and compare it with the baked mesh."""
+    import bpy
+    from mathutils import Vector
+
+    expected = sorted(round(float(value), 4) for value in dimensions)
+    report = {"problems": []}
+    for label, path, importer in (("glb", glb, bpy.ops.import_scene.gltf), ("fbx", fbx, bpy.ops.import_scene.fbx)):
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        importer(filepath=str(path))
+        meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+        found = sum(_triangles(obj) for obj in meshes)
+        corners = [obj.matrix_world @ Vector(c) for obj in meshes for c in obj.bound_box]
+        size = sorted(round(max(c[i] for c in corners) - min(c[i] for c in corners), 4) for i in range(3)) if corners else []
+        images = sorted({node.image.name for obj in meshes for slot in obj.material_slots if slot.material
+                         and slot.material.node_tree for node in slot.material.node_tree.nodes
+                         if node.type == "TEX_IMAGE" and node.image and node.image.size[0] > 0})
+        report[label] = {"triangles": found, "dimensionsMeters": size, "textures": len(images)}
+        if found != triangles:
+            report["problems"].append(f"{label} 면 수 {found} ≠ {triangles}")
+        if len(size) != 3 or any(abs(a - b) > max(1e-3, 0.002 * b) for a, b in zip(size, expected)):
+            report["problems"].append(f"{label} 크기 {size} ≠ {expected}")
+        if len(images) < 3:
+            report["problems"].append(f"{label} 텍스처 {len(images)}장만 읽힘")
+    return report
 
 
 def _occlusion_group():
@@ -398,18 +432,55 @@ def bake(args) -> int:
         timings[key] = round(time.monotonic() - begin, 2)
         images[key] = image
 
-    print(progress_line(1, 8, f"노멀맵 굽는 중 ({device})"), flush=True)
+    print(progress_line(1, 9, f"노멀맵 굽는 중 ({device})"), flush=True)
     run_bake("normal", "Non-Color", "NORMAL", normal_space="TANGENT",
              normal_r="POS_X", normal_g="POS_Y", normal_b="POS_Z")
-    for step, (key, socket, colorspace) in enumerate(EMIT_CHANNELS, start=2):
-        print(progress_line(step, 8, f"{key} 굽는 중"), flush=True)
+
+    def mask(selected_to_active):
+        image = bpy.data.images.new("mask", args.texture_size, args.texture_size, alpha=False)
+        image.colorspace_settings.name = "Non-Color"
+        target.image = image
+        margin, scene.render.bake.margin = scene.render.bake.margin, 0
+        try:
+            bpy.ops.object.bake(type="EMIT", use_selected_to_active=selected_to_active, cage_extrusion=extrusion,
+                                max_ray_distance=reach, target="IMAGE_TEXTURES")
+        finally:
+            scene.render.bake.margin = margin
+        values = _pixels(image)[..., 0] > 0.5
+        bpy.data.images.remove(image)
+        return values
+
+    print(progress_line(2, 9, "굽기 광선이 품질본에 닿는지 확인 중"), flush=True)
+    # UV islands of the low mesh alone, then the texels whose rays reach the master.
+    high.select_set(False)
+    restore = _route_to_emission([material], None, constant=1.0)
+    try:
+        covered = mask(False)
+    finally:
+        _restore(restore)
+    high.select_set(True)
+    restore = _route_to_emission(high_materials, None, constant=1.0)
+    try:
+        hit = mask(True)
+    finally:
+        _restore(restore)
+    missed = covered & ~hit
+    miss_fraction = float(missed.sum() / max(1, covered.sum()))
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    from PIL import Image as PILImage
+    picture = np.zeros(covered.shape + (3,), dtype=np.uint8)
+    picture[covered] = (90, 90, 90)
+    picture[missed] = (230, 40, 40)
+    PILImage.fromarray(picture[::-1]).save(args.output_dir / "bake-misses.png")
+    for step, (key, socket, colorspace) in enumerate(EMIT_CHANNELS, start=3):
+        print(progress_line(step, 9, f"{key} 굽는 중"), flush=True)
         restore = _route_to_emission(high_materials, socket)
         try:
             run_bake(key, colorspace, "EMIT")
         finally:
             _restore(restore)
     if args.ao:
-        print(progress_line(5, 8, "AO 굽는 중"), flush=True)
+        print(progress_line(6, 9, "AO 굽는 중"), flush=True)
         # The low mesh must not shadow the master it samples.
         for flag in ("visible_diffuse", "visible_glossy", "visible_shadow", "visible_transmission"):
             setattr(low, flag, False)
@@ -417,8 +488,7 @@ def bake(args) -> int:
         run_bake("occlusion", "Non-Color", "AO")
         scene.cycles.samples = args.samples
 
-    print(progress_line(6, 8, "텍스처 저장 중"), flush=True)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    print(progress_line(7, 9, "텍스처 저장 중"), flush=True)
     metallic = _pixels(images["metallic"])[..., 0]
     metallic_constant = float(metallic.max()) < 0.02
     roughness = _pixels(images["roughness"])[..., 0]
@@ -440,7 +510,7 @@ def bake(args) -> int:
     _save(unity, unity_path)
     files["unityMetallicSmoothness"] = unity_path.name
 
-    print(progress_line(7, 8, "게임용 머티리얼과 파일 만드는 중"), flush=True)
+    print(progress_line(8, 9, "게임용 머티리얼과 파일 만들고 다시 불러와 확인하는 중"), flush=True)
     tree.nodes.remove(target)
     principled = _principled(material)
     output = _surface_output(material)
@@ -479,13 +549,16 @@ def bake(args) -> int:
                              apply_scale_options="FBX_SCALE_UNITS", axis_forward="-Z", axis_up="Y",
                              bake_space_transform=True, mesh_smooth_type="FACE", use_tspace=True,
                              path_mode="STRIP", embed_textures=False)
+    exported = check_exports(glb, fbx, _triangles(low), low.dimensions)
     stats = {"device": device, "samples": args.samples, "textureSize": args.texture_size,
-             "cageExtrusionMeters": round(extrusion, 5), "metallicConstant": metallic_constant,
-             "bakeSeconds": timings, "files": {**files, "glb": glb.name, "fbx": fbx.name},
+             "cageExtrusionMeters": round(extrusion, 5), "rayReachMeters": round(reach, 5),
+             "metallicConstant": metallic_constant, "missFraction": round(miss_fraction, 5),
+             "exportCheck": exported, "bakeSeconds": timings,
+             "files": {**files, "glb": glb.name, "fbx": fbx.name, "misses": "bake-misses.png"},
              "bytes": {"glb": glb.stat().st_size, "fbx": fbx.stat().st_size},
              "seconds": round(time.monotonic() - started, 2)}
     args.stats.write_text(json.dumps(stats, ensure_ascii=False, indent=2), "utf-8")
-    print(progress_line(8, 8, f"완료 · {args.texture_size}px 맵 {len(files)}장"), flush=True)
+    print(progress_line(9, 9, f"완료 · {args.texture_size}px 맵 {len(files)}장 · 광선 누락 {miss_fraction * 100:.2f}%"), flush=True)
     return 0
 
 
