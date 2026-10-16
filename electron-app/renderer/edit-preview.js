@@ -1,6 +1,6 @@
 // 편집 미리보기 계산을 화면 밖 스레드에서 한다. 저장과 같은 renderEdit를 부른다.
 import {renderEdit,meshContext,needsGeometry} from '../shared/editing.mjs';
-import {parseGlb,primitives,baseImages} from '../shared/glb.mjs';
+import {parseGlb,primitives,baseImages,checkMesh} from '../shared/glb.mjs';
 let images=[],mesh=false,glb=null,context=null;
 const stamps={},cache=new Map();
 async function decode(blob,max=1024){const bitmap=await createImageBitmap(blob),ratio=Math.min(1,max/Math.max(bitmap.width,bitmap.height));
@@ -13,7 +13,8 @@ self.onmessage=async ({data:message})=>{try{
   mesh=message.kind==='mesh';const response=await fetch(message.url);if(!response.ok)throw Error('파일을 불러오지 못했습니다.');
   if(mesh){glb=parseGlb(await response.arrayBuffer());const entries=baseImages(glb);if(!entries.length)throw Error('색상 텍스처가 없는 메시입니다.');
     images=await Promise.all(entries.map(async entry=>({...await decode(new Blob([entry.bytes],{type:entry.mime})),materials:entry.materials,index:entry.index})));
-    primitives(glb);
+    // 편집할 수 없는 메시는 열 때 알린다. 형상은 로고·브러시를 처음 쓸 때 한 번만 푼다.
+    checkMesh(glb);
   }else images=[await decode(await response.blob())];
   self.postMessage({type:'ready',width:images[0].width,height:images[0].height,materials:images.map(i=>i.materials)});
  }else if(message.type==='stamp'){

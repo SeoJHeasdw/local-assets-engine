@@ -27,8 +27,8 @@ LOST_WARN = 0.001
 # UV가 덮는 텍셀 중 이 비율 이상에서 굽기 광선이 품질본에 닿지 않았으면 알린다.
 MISS_WARN = 0.01
 TOOL = [sys.executable, "-m", "local_assets_engine.tools.game_bake"]
-# 화면에서 물체가 차지하는 높이(픽셀). 가까이·중간·멀리에서 남는 디테일을 본다.
-DISTANCE_HEIGHTS = (512, 192, 96)
+# 화면 속 물체 높이(픽셀). 1080p에서 0.5m 소품이 가까이·중간·멀리 있을 때의 크기쯤이다.
+DISTANCE_HEIGHTS = (256, 96, 48)
 
 
 def game_defaults(presets: dict[str, Any]) -> dict[str, Any]:
@@ -139,6 +139,7 @@ def run(ctx: "JobContext") -> None:
               "textureSize": p["textureSize"], "sizeMeters": p["sizeMeters"], "stats": stats, "files": files,
               "inspectionFile": ctx.rel(inspection / "game-contact.png"), "compareFile": ctx.rel(compare),
               "reviewFile": ctx.rel(review / "review.png"), "distanceFile": ctx.rel(review / "distance.png"),
+              "reviewView": json.loads((review / "review.json").read_text("utf-8"))["view"],
               "source": p["source"], "processingVersion": 2},
     )
     evidence = [compare, reduce_stats]

@@ -22,6 +22,10 @@ from . import progress_line
 
 # 복셀 표면 찍기에서 한 번에 만드는 점 수. 큰 삼각형도 나눠서 끝까지 찍는다.
 POINTS_PER_BATCH = 4_000_000
+# 껍데기에서 먼 품질본 점의 노출도: 바깥쪽 반구로 쏜 광선 중 빠져나간 비율. 이 이상이면 보이던 면이다.
+EXPOSED = 0.05
+EXPOSURE_RAYS = 64
+EXPOSURE_SAMPLES = 4000
 EMIT_CHANNELS = (("basecolor", "Base Color", "sRGB"), ("roughness", "Roughness", "Non-Color"),
                  ("metallic", "Metallic", "Non-Color"))
 
@@ -70,6 +74,40 @@ def mesh_arrays(obj):
     return coords.reshape(-1, 3), triangles.reshape(-1, 3)
 
 
+def _shell(coords, triangles, voxel: float, pad: int):
+    """Voxels the surface passes through, sampled finer than half a voxel however large the triangle."""
+    import numpy as np
+
+    low, high = coords.min(axis=0), coords.max(axis=0)
+    a, b, c = coords[triangles[:, 0]], coords[triangles[:, 1]], coords[triangles[:, 2]]
+    longest = np.maximum.reduce([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1),
+                                 np.linalg.norm(a - c, axis=1)])
+    steps = np.maximum(np.ceil(longest / (voxel * 0.5)).astype(int), 1)
+    origin = low - pad * voxel
+    shape = np.ceil((high - low) / voxel).astype(int) + 2 * pad + 1
+    shell = np.zeros(shape, dtype=bool)
+    for n in np.unique(steps):
+        lattice = np.array([(i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)])
+        chosen = np.flatnonzero(steps == n)
+        batch = max(1, POINTS_PER_BATCH // len(lattice))
+        for start in range(0, len(chosen), batch):
+            part = chosen[start:start + batch]
+            points = (a[part, None] * (1 - lattice.sum(axis=1))[None, :, None]
+                      + b[part, None] * lattice[None, :, 0, None] + c[part, None] * lattice[None, :, 1, None])
+            index = np.floor((points.reshape(-1, 3) - origin) / voxel).astype(int)
+            shell[index[:, 0], index[:, 1], index[:, 2]] = True
+    return shell, origin
+
+
+def _ground_slab(shape, origin, voxel: float, ground: float | None):
+    import numpy as np
+
+    slab = np.zeros(shape, dtype=bool)
+    if ground is not None:
+        slab[:, :, :int(np.floor((ground - origin[2]) / voxel))] = True
+    return slab
+
+
 def occupancy(coords, triangles, voxel: float, ground: float | None):
     """Solid voxels of everything the surface encloses, as a smoothed field.
 
@@ -80,30 +118,9 @@ def occupancy(coords, triangles, voxel: float, ground: float | None):
     import numpy as np
     from scipy import ndimage
 
-    low, high = coords.min(axis=0), coords.max(axis=0)
-    a, b, c = coords[triangles[:, 0]], coords[triangles[:, 1]], coords[triangles[:, 2]]
-    longest = np.maximum.reduce([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1),
-                                 np.linalg.norm(a - c, axis=1)])
-    steps = np.maximum(np.ceil(longest / (voxel * 0.5)).astype(int), 1)
-    pad = 3
-    origin = low - pad * voxel
-    shape = np.ceil((high - low) / voxel).astype(int) + 2 * pad + 1
-    shell = np.zeros(shape, dtype=bool)
-    for n in np.unique(steps):
-        # A barycentric lattice per triangle, finer than half a voxel however large the triangle.
-        lattice = np.array([(i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)])
-        chosen = np.flatnonzero(steps == n)
-        batch = max(1, POINTS_PER_BATCH // len(lattice))
-        for start in range(0, len(chosen), batch):
-            part = chosen[start:start + batch]
-            points = (a[part, None] * (1 - lattice.sum(axis=1))[None, :, None]
-                      + b[part, None] * lattice[None, :, 0, None] + c[part, None] * lattice[None, :, 1, None])
-            index = np.floor((points.reshape(-1, 3) - origin) / voxel).astype(int)
-            shell[index[:, 0], index[:, 1], index[:, 2]] = True
+    shell, origin = _shell(coords, triangles, voxel, pad=3)
     shell = ndimage.binary_dilation(shell, iterations=1)
-    slab = np.zeros_like(shell)
-    if ground is not None:
-        slab[:, :, :int(np.floor((ground - origin[2]) / voxel))] = True
+    slab = _ground_slab(shell.shape, origin, voxel, ground)
     solid = ndimage.binary_fill_holes(shell | slab) & ~slab
     # Undo the dilation on the bulk, but keep parts at most three voxels thick (fins, blades,
     # sheets) as they are: eroded to one voxel they would vanish in the smoothing. Thickness is
@@ -133,27 +150,30 @@ def outer_surface(field, origin, voxel: float, iso: float = 0.5):
     return vertices, faces.astype(np.int64)
 
 
-def solid_lookup(field, origin, voxel: float):
-    """Whether points lie inside the filled hull (the smoothed field above one half)."""
+def exposure(tree, points, normals, reach: float, rays: int = EXPOSURE_RAYS):
+    """Share of rays over each point's outward hemisphere that leave the mesh without a hit."""
     import numpy as np
+    from mathutils import Vector
 
-    def inside(points):
-        index = np.floor((np.asarray(points) - origin) / voxel).astype(int)
-        valid = np.all((index >= 0) & (index < field.shape), axis=1)
-        result = np.zeros(len(index), dtype=bool)
-        result[valid] = field[tuple(index[valid].T)] > 0.5
-        return result
+    directions = np.random.default_rng(1).normal(size=(rays, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    result = np.empty(len(points))
+    for i, (point, normal) in enumerate(zip(points, normals)):
+        facing = np.where((directions @ normal)[:, None] < 0, -directions, directions)
+        start = Vector(point + normal * reach * 1e-4)
+        result[i] = sum(tree.ray_cast(start, Vector(d), reach)[0] is None for d in facing) / rays
+    return result
 
-    return inside
 
-
-def surface_error(high, low, span: float, visible_within: float, inside, samples: int = 60000) -> dict:
+def surface_error(high, low, span: float, visible_within: float, samples: int = 60000) -> dict:
     """Nearest-surface distance between master and low, relative to the longest side.
 
-    A master point far from the hull surface is *hidden* only when the hull's solid
-    encloses it (an inner wall that was filled). Far points outside the solid are master
-    shape the hull *lost*; they stay in the error and are counted on their own. The
-    unfiltered master-to-low distances are kept as well.
+    Master points far from the hull surface are either walls the hull hid (the inside of a
+    closed box, seen at most through cracks) or shape it lost (the walls of a groove it filled).
+    Being inside the new solid cannot tell them apart, so each far point's exposure is measured:
+    the share of rays over its outward hemisphere that escape the master. Exposed far points
+    are lost shape and stay in the error; the rest are hidden. The unfiltered master-to-low
+    distances are kept as well.
     """
     import bpy
     import numpy as np
@@ -164,20 +184,27 @@ def surface_error(high, low, span: float, visible_within: float, inside, samples
     hull_tree = BVHTree.FromObject(bpy.data.objects["hull"], depsgraph)
     rng = np.random.default_rng(0)
 
-    def sample(obj):
-        coords, _ = mesh_arrays(obj)
-        return coords[rng.choice(len(coords), samples, replace=False)] if len(coords) > samples else coords
-
     def nearest(tree, points):
         return np.array([tree.find_nearest(tuple(p))[3] for p in points], dtype=np.float64)
 
-    master_points = sample(high)
-    far = nearest(hull_tree, master_points) > visible_within
-    enclosed = inside(master_points)
-    hidden, lost = far & enclosed, far & ~enclosed
+    coords, _ = mesh_arrays(high)
+    normals = np.empty(len(coords) * 3)
+    high.data.vertex_normals.foreach_get("vector", normals)
+    pick = rng.choice(len(coords), samples, replace=False) if len(coords) > samples else np.arange(len(coords))
+    master_points, master_normals = coords[pick], normals.reshape(-1, 3)[pick]
+    far = np.flatnonzero(nearest(hull_tree, master_points) > visible_within)
+    probe = far if len(far) <= EXPOSURE_SAMPLES else rng.choice(far, EXPOSURE_SAMPLES, replace=False)
+    exposed = exposure(high_tree, master_points[probe], master_normals[probe], span * 3) >= EXPOSED
+    # Far points not probed take the exposed share of the probed ones.
+    lost_share = float(exposed.mean()) if len(probe) else 0.0
+    hidden = np.zeros(len(master_points), dtype=bool)
+    hidden[np.setdiff1d(far, probe[exposed])] = True
     master_to_low = nearest(low_tree, master_points)
-    both = np.concatenate((master_to_low[~hidden], nearest(high_tree, sample(low)))) / span
+    low_coords, _ = mesh_arrays(low)
+    low_points = low_coords[rng.choice(len(low_coords), samples, replace=False)] if len(low_coords) > samples else low_coords
+    both = np.concatenate((master_to_low[~hidden], nearest(high_tree, low_points))) / span
     every = master_to_low / span
+    lost_points = probe[exposed]
 
     def summary(values):
         return {"meanRelative": round(float(values.mean()), 6),
@@ -186,9 +213,9 @@ def surface_error(high, low, span: float, visible_within: float, inside, samples
                 "p95Meters": round(float(np.percentile(values, 95) * span), 5),
                 "maxMeters": round(float(values.max() * span), 5)}
 
-    return {**summary(both), "hiddenFraction": round(float(hidden.mean()), 4),
-            "lostFraction": round(float(lost.mean()), 4),
-            "lostMaxMeters": round(float(master_to_low[lost].max()), 5) if lost.any() else 0.0,
+    return {**summary(both), "hiddenFraction": round(len(far) / len(master_points) * (1 - lost_share), 4),
+            "lostFraction": round(len(far) / len(master_points) * lost_share, 4),
+            "lostMaxMeters": round(float(master_to_low[lost_points].max()), 5) if len(lost_points) else 0.0,
             "unfiltered": summary(every)}
 
 
@@ -244,8 +271,7 @@ def reduce(args) -> int:
     bpy.ops.object.mode_set(mode="OBJECT")
 
     print(progress_line(4, 6, "원본과의 형상 오차 재는 중"), flush=True)
-    error = surface_error(high, low, span, visible_within=voxel * 2,
-                          inside=solid_lookup(field, origin, voxel))
+    error = surface_error(high, low, span, visible_within=voxel * 2)
     low_coords, low_triangles = mesh_arrays(low)
     topology = topology_checks(low_coords, low_triangles)
 
@@ -472,6 +498,7 @@ def bake(args) -> int:
     picture[covered] = (90, 90, 90)
     picture[missed] = (230, 40, 40)
     PILImage.fromarray(picture[::-1]).save(args.output_dir / "bake-misses.png")
+    del picture, covered, hit, missed
     for step, (key, socket, colorspace) in enumerate(EMIT_CHANNELS, start=3):
         print(progress_line(step, 9, f"{key} 굽는 중"), flush=True)
         restore = _route_to_emission(high_materials, socket)
@@ -489,9 +516,10 @@ def bake(args) -> int:
         scene.cycles.samples = args.samples
 
     print(progress_line(7, 9, "텍스처 저장 중"), flush=True)
-    metallic = _pixels(images["metallic"])[..., 0]
+    # Keep the one channel each, not the whole RGBA buffer a view would hold on to.
+    metallic = _pixels(images["metallic"])[..., 0].copy()
     metallic_constant = float(metallic.max()) < 0.02
-    roughness = _pixels(images["roughness"])[..., 0]
+    roughness = _pixels(images["roughness"])[..., 0].copy()
     files = {}
     for key, image in images.items():
         if key == "metallic" and metallic_constant:
@@ -508,6 +536,7 @@ def bake(args) -> int:
     unity.pixels.foreach_set(packed.ravel())
     unity_path = args.output_dir / f"T_{args.name}_metallicsmoothness.png"
     _save(unity, unity_path)
+    del packed, metallic, roughness
     files["unityMetallicSmoothness"] = unity_path.name
 
     print(progress_line(8, 9, "게임용 머티리얼과 파일 만들고 다시 불러와 확인하는 중"), flush=True)

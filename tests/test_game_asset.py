@@ -141,3 +141,36 @@ def test_hull_keeps_large_flat_triangles_and_thin_fins():
     field, origin = occupancy(np.asarray(master.vertices), np.asarray(master.faces), 1.1 / 192, 0.0)
     vertices, _ = outer_surface(field, origin, 1.1 / 192)
     assert vertices[:, 2].max() > 1.08
+
+
+def test_a_groove_the_hull_filled_counts_as_lost_shape_not_hidden(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    import trimesh
+
+    # A closed block with a slot 1 cm wide, 20 cm long and 30 cm deep cut into its top.
+    outer = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    inner = [(.495, .4), (.505, .4), (.505, .6), (.495, .6)]
+    vertices = np.array([(x, y, 0) for x, y in outer] + [(x, y, 1) for x, y in outer]
+                        + [(x, y, 1) for x, y in inner] + [(x, y, .7) for x, y in inner], float)
+    quads = [(3, 2, 1, 0), (12, 13, 14, 15)]
+    for i in range(4):
+        j = (i + 1) % 4
+        quads += [(i, j, 4 + j, 4 + i), (4 + i, 4 + j, 8 + j, 8 + i), (8 + i, 8 + j, 12 + j, 12 + i)]
+    triangles = np.array([t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))])
+    master = trimesh.Trimesh(vertices=vertices, faces=triangles, process=False)
+    for _ in range(4):
+        master = master.subdivide()
+    # glTF is Y-up; the block's Z-up height becomes Y. The change of axes is a rotation, so the winding stays.
+    master.vertices = master.vertices[:, [0, 2, 1]] * [1, 1, -1]
+    master.export(tmp_path / "master.glb")
+    subprocess.run([sys.executable, "-m", "local_assets_engine.tools.game_bake", "reduce",
+                    "--master", str(tmp_path / "master.glb"), "--output", str(tmp_path / "low.glb"),
+                    "--stats", str(tmp_path / "reduce.json"), "--target-faces", "500"], check=True)
+    error = json.loads((tmp_path / "reduce.json").read_text())["surfaceError"]
+    # The slot's walls near its mouth saw outside; they are lost shape, not hidden walls, and raise the warning.
+    assert error["lostFraction"] >= 0.001 and error["lostMaxMeters"] > 0.02, error
+    # Deeper down they see nothing, but the unfiltered distance still shows the whole 30 cm the hull filled.
+    assert error["unfiltered"]["maxMeters"] > 0.25, error

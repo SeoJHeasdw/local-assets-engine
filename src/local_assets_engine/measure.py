@@ -60,13 +60,111 @@ KILLED_MARKERS = ("time: signal:", "Killed", "signal: killed")
 OUT_OF_MEMORY_MARKERS = ("insufficient memory", "out of memory")
 
 
+# 단계가 도는 동안 기기 전체 메모리를 보는 간격(초).
+SYSTEM_SAMPLE_S = 5.0
+
+
+class SystemSampler:
+    """Whole-machine memory while a stage runs: swap in use, the free share and the RSS of the stage's
+    process tree.
+
+    The footprint from ``time`` is one process's own peak and stays the stage's measurement. These
+    show whether the machine as a whole ran short (a 1024 model swapping on 36GB); they overlap with
+    the footprint and with each other, so they are never added together.
+    """
+
+    def __init__(self, interval: float | None = None):
+        self.interval = SYSTEM_SAMPLE_S if interval is None else interval
+        self.group: int | None = None
+        self.peaks: dict[str, int] = {}
+        self.samples = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="system-memory", daemon=True)
+
+    def start(self) -> "SystemSampler":
+        # An auxiliary measurement: if its thread cannot start, the stage runs without it.
+        try:
+            self._thread.start()
+        except RuntimeError:
+            pass
+        return self
+
+    def _run(self) -> None:
+        while True:
+            self.sample()
+            if self._stop.wait(self.interval):
+                return
+
+    def sample(self) -> None:
+        swap, free, tree = _swap_used_bytes(), _free_percent(), _tree_rss_bytes(self.group)
+        for key, value, better in (("peakSwapBytes", swap, max), ("minFreePercent", free, min),
+                                   ("peakTreeRssBytes", tree, max)):
+            if value is not None:
+                self.peaks[key] = value if key not in self.peaks else better(self.peaks[key], value)
+        self.samples += 1
+
+    def stop(self) -> dict[str, int] | None:
+        self._stop.set()
+        if self._thread.ident is not None:
+            self._thread.join()
+        self.sample()
+        return {**self.peaks, "samples": self.samples} if self.peaks else None
+
+
+def _sysctl(name: str, value):
+    import ctypes
+    import ctypes.util
+
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        size = ctypes.c_size_t(ctypes.sizeof(value))
+        if libc.sysctlbyname(name.encode(), ctypes.byref(value), ctypes.byref(size), None, 0) != 0:
+            return None
+    except (OSError, AttributeError):
+        return None
+    return value
+
+
+def _swap_used_bytes() -> int | None:
+    import ctypes
+
+    class SwapUsage(ctypes.Structure):
+        _fields_ = [("total", ctypes.c_uint64), ("avail", ctypes.c_uint64), ("used", ctypes.c_uint64),
+                    ("pagesize", ctypes.c_uint32), ("encrypted", ctypes.c_bool)]
+
+    usage = _sysctl("vm.swapusage", SwapUsage())
+    return int(usage.used) if usage is not None else None
+
+
+def _free_percent() -> int | None:
+    import ctypes
+
+    # macOS memory_pressure의 "System-wide memory free percentage"와 같은 값이다.
+    level = _sysctl("kern.memorystatus_level", ctypes.c_int())
+    return int(level.value) if level is not None else None
+
+
+def _tree_rss_bytes(group: int | None) -> int | None:
+    if group is None:
+        return None
+    try:
+        output = subprocess.run(["ps", "-o", "rss=", "-g", str(group)], capture_output=True, text=True,
+                                timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    values = [int(line) for line in output.split() if line.strip().isdigit()]
+    return sum(values) * 1024 if values else None
+
+
 class StageCancelled(Exception):
     """The user stopped the job while this stage was running."""
 
     def __init__(self, *, seconds: float | None = None, peak_memory_bytes: int | None = None,
                  max_rss_bytes: int | None = None, code: int | None = None,
-                 launched: bool = False, measurement_unavailable_reason: str | None = None):
+                 launched: bool = False, measurement_unavailable_reason: str | None = None,
+                 system: dict[str, int] | None = None):
         super().__init__()
+        self.system = system
         self.seconds = seconds
         self.peak_memory_bytes = peak_memory_bytes
         self.max_rss_bytes = max_rss_bytes
@@ -80,8 +178,10 @@ class StageFailed(Exception):
     def __init__(self, message: str, *, code: int | None, tail: list[str],
                  peak_memory_bytes: int | None = None, max_rss_bytes: int | None = None,
                  seconds: float | None = None, launched: bool = True,
-                 measurement_unavailable_reason: str | None = None, stopped_by_engine: bool = False):
+                 measurement_unavailable_reason: str | None = None, stopped_by_engine: bool = False,
+                 system: dict[str, int] | None = None):
         super().__init__(message)
+        self.system = system
         self.code = code
         self.tail = tail
         self.peak_memory_bytes = peak_memory_bytes
@@ -100,6 +200,7 @@ class StageResult:
     max_rss_bytes: int | None
     stdout: str
     measurement_unavailable_reason: str | None = None
+    system: dict[str, int] | None = None
 
 
 def is_gpu_busy(failure: "StageFailed") -> bool:
@@ -277,6 +378,8 @@ def run_measured(
 
     pumps = [threading.Thread(target=pump, args=(stream, name), daemon=True)
              for stream, name in ((proc.stdout, "stdout"), (proc.stderr, "stderr"))]
+    sampler = SystemSampler().start()
+    system: dict[str, int] | None = None
     group: int | None = None
     cancelled = False
     stopping = False
@@ -290,7 +393,7 @@ def run_measured(
                 try:
                     value = os.read(read_fd, 64)
                     if value:
-                        group = int(value)
+                        group = sampler.group = int(value)
                 except BlockingIOError:
                     pass
             code = proc.poll()
@@ -359,6 +462,7 @@ def run_measured(
                 pump(stream, name)
         for stream in (proc.stdout, proc.stderr):
             stream.close()
+        system = sampler.stop()
 
     code = proc.returncode
     seconds = round(time.monotonic() - started, 2)
@@ -367,18 +471,18 @@ def run_measured(
     if errors:
         raise StageFailed(f"단계 출력 처리 실패: {errors[0]}", code=code, tail=list(tail),
                           seconds=seconds, peak_memory_bytes=peak, max_rss_bytes=rss,
-                          measurement_unavailable_reason=missing, stopped_by_engine=True) from errors[0]
+                          measurement_unavailable_reason=missing, stopped_by_engine=True, system=system) from errors[0]
     if cancelled:
         raise StageCancelled(seconds=seconds, code=code, launched=True,
                              peak_memory_bytes=peak, max_rss_bytes=rss,
-                             measurement_unavailable_reason=missing)
+                             measurement_unavailable_reason=missing, system=system)
     if code != 0:
         lines = list(tail)
         detail = failure_detail(lines)
         raise StageFailed(
             f"종료 코드 {code}" + (f": {detail[-600:]}" if detail else ""),
             code=code, tail=lines, seconds=seconds, peak_memory_bytes=peak, max_rss_bytes=rss,
-            measurement_unavailable_reason=missing,
+            measurement_unavailable_reason=missing, system=system,
         )
     return StageResult(seconds=seconds, peak_memory_bytes=peak, max_rss_bytes=rss,
-                       stdout="\n".join(stdout_parts), measurement_unavailable_reason=missing)
+                       stdout="\n".join(stdout_parts), measurement_unavailable_reason=missing, system=system)

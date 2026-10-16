@@ -154,6 +154,7 @@ class Stage:
                         "peakMemoryBytes": failure.peak_memory_bytes,
                         "maxRssBytes": failure.max_rss_bytes, "returnCode": failure.code,
                         "measurementUnavailableReason": failure.measurement_unavailable_reason,
+                        "system": failure.system,
                     })
                 if isinstance(failure, StageCancelled):
                     raise
@@ -169,6 +170,7 @@ class Stage:
                 "command": command, "seconds": result.seconds, "peakMemoryBytes": result.peak_memory_bytes,
                 "maxRssBytes": result.max_rss_bytes, "state": "done", "returnCode": 0,
                 "measurementUnavailableReason": result.measurement_unavailable_reason,
+                "system": result.system,
             })
             return result
         raise AssertionError("unreachable")
@@ -191,10 +193,15 @@ class Stage:
             stage.update(state=state, progress=round(self.fraction, 4), detail=self.detail)
             if final:
                 peaks = [p["peakMemoryBytes"] for p in self.processes if p["peakMemoryBytes"]]
+                systems = [p["system"] for p in self.processes if p.get("system")]
                 stage.update(
                     seconds=round(time.monotonic() - self._started, 2),
                     peakMemoryBytes=max(peaks) if peaks else None,
                     processes=self.processes,
+                    # 기기 전체 메모리. 단계 footprint와 더하지 않는다.
+                    system={key: pick(s[key] for s in systems if key in s)
+                            for key, pick in (("peakSwapBytes", max), ("minFreePercent", min), ("peakTreeRssBytes", max))
+                            if any(key in s for s in systems)} or None,
                 )
 
         self.ctx.mutate(apply)

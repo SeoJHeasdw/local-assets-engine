@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {
   defaults,adjustPixels,frameImage,overlayImage,projectOverlay,migratePlan,renderEdit,colorLayer,stampLayer,
-  outputToSource,sourceToOutput,frameLayout,imageRegionMask,meshContext,texturedFaces,surfaceRegionMask,stampFaces,needsGeometry,
+  outputToSource,sourceToOutput,frameLayout,imageRegionMask,meshContext,texturedFaces,surfaceRegionMask,stampFaces,needsGeometry,usedStamps,
 } from '../../electron-app/shared/editing.mjs';
 import {buildJobRequest} from '../../electron-app/shared/format.mjs';
 
@@ -157,4 +157,13 @@ test('concept-first is explicit even with one candidate, imported sources work',
  assert.equal(buildJobRequest(form).recipe,'image');
  const direct=buildJobRequest({...form,count:4,workflow:'direct'});assert.equal(direct.recipe,'text-to-3d');assert.equal(direct.params.count,1);assert.equal(direct.params.gameFaces,0);
  assert.deepEqual(buildJobRequest({...form,source:'image',uploadId:'abc'}).params.uploadId,'abc');
+});
+
+
+test('drafts and reopened edits keep only the pictures their layers use', () => {
+  const plan = {layers: [{id: 'stamp-2', type: 'stamp'}, {id: 'color-1', type: 'color'}]};
+  const stamps = new Map([['stamp-1', {image: 'deleted'}], ['stamp-2', {image: 'kept'}]]);
+  assert.deepEqual([...usedStamps(plan, stamps).keys()], ['stamp-2']);
+  // 원본 Map은 되돌리기 기록이 들고 있을 수 있으므로 건드리지 않는다.
+  assert.equal(stamps.size, 2);
 });

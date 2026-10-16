@@ -22,6 +22,24 @@ function matrix(node){if(node.matrix)return node.matrix;const [x,y,z,w]=node.rot
   return [(1-2*y*y-2*z*z)*s[0],(2*x*y+2*z*w)*s[0],(2*x*z-2*y*w)*s[0],0,
     (2*x*y-2*z*w)*s[1],(1-2*x*x-2*z*z)*s[1],(2*y*z+2*x*w)*s[1],0,
     (2*x*z+2*y*w)*s[2],(2*y*z-2*x*w)*s[2],(1-2*x*x-2*y*y)*s[2],0,...t,1];}
+// primitives()가 거절할 메시를 형상을 풀지 않고 같은 문장으로 거절한다. 미리보기를 열 때 쓴다.
+export function checkMesh(glb) {
+  const formats=new Set([5126,5125,5123,5121]);
+  function walk(id){const node=glb.doc.nodes[id];
+    if(node.skin!==undefined)throw Error("리깅된 메시는 표면 편집을 지원하지 않습니다.");
+    for(const p of (glb.doc.meshes?.[node.mesh]?.primitives||[])){
+      if((p.mode??4)!==4)continue;
+      if(p.extensions?.KHR_draco_mesh_compression)throw Error("압축 전 품질본을 선택해 주세요.");
+      for(const id of [p.attributes.POSITION,p.attributes.TEXCOORD_0,p.indices]){
+        if(id===undefined)continue;const a=glb.doc.accessors[id];
+        if(a.sparse)throw Error("희소 메시 속성은 표면 편집을 지원하지 않습니다.");
+        if(!formats.has(a.componentType))throw Error("지원하지 않는 메시 좌표 형식입니다.");
+      }
+    }
+    for(const child of node.children||[])walk(child);
+  }
+  for(const node of glb.doc.scenes?.[glb.doc.scene??0]?.nodes||[])walk(node);
+}
 export function primitives(glb) {
   const list=[];
   function walk(id,parent){const node=glb.doc.nodes[id],m=multiply(parent,matrix(node));

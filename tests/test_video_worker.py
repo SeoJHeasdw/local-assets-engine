@@ -181,3 +181,10 @@ except SystemExit as error:
     assert done.returncode == 0, done.stderr
     assert "'frames': 5" in done.stdout and "'width': 64" in done.stdout
     assert "REFUSED 저장한 MP4" in done.stdout
+
+
+def test_in_place_frame_packing_matches_the_float_expression():
+    frames = np.random.default_rng(5).normal(0.5, 0.6, (3, 8, 8, 3)).astype(np.float32)
+    frames[0, 0, 0] = [0.5 / 255, 254.5 / 255, 1.0]
+    expected = (np.clip(frames, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+    assert worker.to_bytes(frames.copy()).tobytes() == expected.tobytes()

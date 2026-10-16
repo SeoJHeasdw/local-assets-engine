@@ -134,3 +134,33 @@ def test_stamp_font_round_trip_and_hidden_unplaced_mesh_layer(tmp_path):
     assert stamps['logo']==resolve_upload(store,upload['id'])
     with pytest.raises(PresetError):normalize_plan({'layers':[{**hidden,'visible':True}]},'mesh',store)
     with pytest.raises(PresetError):normalize_plan({'layers':[{**hidden,'position':[0,0,0]}]},'mesh',store)
+
+
+def test_glb_rewrite_keeps_the_bytes_of_the_previous_writer(tmp_path):
+    import struct
+
+    from local_assets_engine.tools.asset_edit import write_glb
+
+    def previous(path, doc, binary, replacements):
+        chunks = bytearray()
+        for index, view in enumerate(doc['bufferViews']):
+            data = replacements.get(index, binary[view.get('byteOffset', 0):view.get('byteOffset', 0) + view['byteLength']])
+            view['byteOffset'], view['byteLength'] = len(chunks), len(data)
+            chunks.extend(data)
+            chunks.extend(b'\0' * (-len(chunks) % 4))
+        doc['buffers'][0]['byteLength'] = len(chunks)
+        header = json.dumps(doc, ensure_ascii=False, separators=(',', ':')).encode()
+        header += b' ' * (-len(header) % 4)
+        Path(path).write_bytes(struct.pack('<III', 0x46546c67, 2, 28 + len(header) + len(chunks)) +
+                               struct.pack('<II', len(header), 0x4e4f534a) + header +
+                               struct.pack('<II', len(chunks), 0x004e4942) + chunks)
+
+    binary = bytes(range(256)) * 3
+    def document():
+        return {"asset": {"version": "2.0"}, "buffers": [{"byteLength": len(binary)}], "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 13}, {"buffer": 0, "byteOffset": 16, "byteLength": 300},
+            {"buffer": 0, "byteLength": 7}]}
+    replacements = {1: b"new-image-bytes"}
+    previous(tmp_path / "a.glb", document(), binary, dict(replacements))
+    write_glb(tmp_path / "b.glb", document(), binary, dict(replacements))
+    assert (tmp_path / "a.glb").read_bytes() == (tmp_path / "b.glb").read_bytes()

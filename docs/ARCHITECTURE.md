@@ -242,9 +242,9 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `mesh.open_boundary`·`mesh.non_manifold_edges`·`mesh.inconsistent_winding`·`mesh.duplicate_faces` (`warn`) | `stats.topology`의 해당 개수가 0이 아니다 | `count` |
 | `mesh.faces_over_target` (`warn`) | 형상을 지키느라 게임용이 목표 면 수를 넘었다(이전 복구 경로는 감축 뒤에도 넘었을 때) | `targetFaces`, `triangles` |
 | `mesh.floating_parts`·`mesh.inward_parts`·`mesh.intersecting_parts` (`warn`) | 본체에서 가장 긴 변의 1%보다 떨어진 조각, 어디에도 들지 않았는데 안쪽을 향한 닫힌 부품, 서로 파고들거나 안에 든 바깥 향함 부품이 있다 | `count` |
-| `mesh.parts_merged` (`warn`) | 품질본 재구성에서 의미 있는 부품(면적 0.2%·200면 이상) 수가 원본보다 줄었다. 좁은 틈이 메워졌을 수 있다 | `source`, `reconstructed` |
+| `mesh.parts_merged` (`warn`) | 원본에서 떨어져 있던 의미 있는 부품(면적 0.2%·200면 이상) 둘 이상이 재구성의 같은 바깥 면에 대응한다. 좁은 틈이 메워졌을 수 있다 | `merged`, `source`, `reconstructed` |
 | `mesh.game_shape_error` (`warn`) | `game-asset`의 저면 메시와 품질본의 보이는 면 사이 95% 표면 거리가 가장 긴 변의 2%를 넘었다 | `p95Meters`, `p95Relative` |
-| `mesh.game_geometry_lost` (`warn`) | 품질본 표본의 0.1% 이상이 바깥 껍데기 밖에서 사라졌다(얇은 돌출부 소실 등) | `lostFraction`, `lostMaxMeters` |
+| `mesh.game_geometry_lost` (`warn`) | 품질본에서 보이던 면 표본의 0.1% 이상이 게임용에서 메워지거나 사라졌다(홈·틈·얇은 부분) | `lostFraction`, `lostMaxMeters` |
 | `mesh.game_bake_misses` (`warn`) | UV가 덮는 텍셀의 1%보다 많은 곳에서 굽기 광선이 품질본에 닿지 않았다(`game/bake-misses.png`) | `missFraction` |
 | `mesh.game_export_mismatch` (`fail`) | 내보낸 GLB·FBX를 다시 불러오니 면 수·크기·텍스처 수가 굽은 결과와 다르다 | `problems` |
 
@@ -285,8 +285,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `post-master`·`post-game` | `python -m local_assets_engine.tools.blender_post` | 크기·원점만 정리, 추가 감축 없음 |
 | `optimize-master`·`optimize-game` | `gltfpack ... -noq` | 추가 감축·양자화 없는 전송용 사본 |
 | `inspect` | `python -m local_assets_engine.tools.mesh_inspect` | 실제 GLB의 네 측면·위·아래 렌더 |
-| `review` | `python -m local_assets_engine.tools.mesh_review` | 입력 시점의 점토·무조명 색·왼쪽/오른쪽 조명 렌더 → `review.png` |
-| `distance` | `python -m local_assets_engine.tools.mesh_review --distance 512,192,96` | 품질본·게임용을 화면 높이별로 렌더해 확대 → `distance.png` |
+| `review` | `python -m local_assets_engine.tools.mesh_review` | 입력 실루엣에 맞춘 시점(누끼가 없으면 고정 3/4)의 점토·무조명 색·왼쪽/오른쪽 조명 렌더 → `review.png`·`review.json` |
+| `distance` | `python -m local_assets_engine.tools.mesh_review --distance 256,96,48` | 품질본·게임용을 화면 속 물체 높이가 정확히 그 픽셀이 되게 렌더해 확대 → `distance.png` |
 | `game-reduce` | `python -m local_assets_engine.tools.game_bake reduce` | 복셀 바깥 껍데기 → Collapse 감축 → 날카로운 모서리 → Smart UV·패킹 → 보이는 면 표면 거리 |
 | `game-bake` | `python -m local_assets_engine.tools.game_bake bake` | Cycles(가능하면 Metal) 맵별 굽기 → 머티리얼 → GLB·FBX·PNG |
 | `compare` | `python -m local_assets_engine.tools.game_bake compare` | 품질본·게임용 렌더를 나란히 붙인다 |
@@ -304,6 +304,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 - `peakMemoryBytes`는 `/usr/bin/time -l`의 peak memory footprint다. Metal 할당이 포함되는지는
   확인하지 않았다(포함으로 추정). 같은 측정 방식의 기록끼리만 비교한다.
 - 모델을 처음 내려받은 실행은 시간 비교에서 빼고 본다.
+- 단계가 도는 동안 5초마다 기기 전체 메모리를 따로 본다. 시스템 스왑 사용량 최대, 남은 메모리 비율 최저
+  (`kern.memorystatus_level`, macOS `memory_pressure`의 free percentage), 단계 프로세스 그룹의 RSS 합 최대를
+  프로세스·단계 기록의 `system`에 남긴다. 단계 footprint와 겹치는 값이므로 더하지 않고, 36GB 안에서 버텼는지는
+  이 값으로 본다. 표본 스레드를 띄우지 못해도 단계는 그대로 돈다.
 - 실행된 모든 성공·실패·취소 시도에 초·최대 footprint·RSS·상태·종료 코드를 남긴다. 측정이 없으면
   `measurementUnavailableReason`을 기록하며 time이 없을 때 미계측 실행은 하지 않는다. 로그 콜백 실패는
   제어 스레드로 전달하고 출력 파이프를 계속 비운 뒤 단계를 정리한다.
@@ -328,8 +332,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
    물체 내부를 통째로 채우지 않아 고리 구멍과 열린 얇은 면을 보존한다. 그래서 닫힌 물체마다 바깥 껍질과
    그 안쪽 1~2복셀에 숨은 안쪽 껍질이 생긴다(`stats.topology.innerShellFaceShare`). 마칭 큐브 출력은 이미 이어져
    있으므로 좌표만 같은 정점을 합치지 않는다(합치면 비다양체가 생겨 감축이 빈 결과를 낸다). 열린 경계나 비다양체가
-   남으면 감축하지 않고 실패한다. 원본과 재구성의 의미 있는 부품 수를 비교해 줄었으면 알린다. 가장 짧은 모서리부터
-   위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다.
+   남으면 감축하지 않고 실패한다. 원본의 의미 있는 부품마다 가장 가까운 재구성 바깥 면을 찾아, 둘 이상이 같은 면에
+   대응하면 알린다(부품 수는 안쪽 껍질 때문에 오히려 늘 수 있어 비교 기준이 아니다). 가장 짧은 모서리부터
+   위상을 보존하며 품질본 면 수로 감축하고, 뒤집힘을 막으며 원본 표면에 가깝게 투영한다. 감축·투영 뒤에도
+   좌표 병합은 하지 않는다.
 5. 게임용은 기본 생성에서 생략한다. API에 `gameFaces > 0`을 명시한 경우에만 **품질본에서 UV를 펴기 전에** 형상 오차를 제한하며 감축한다. 위상이 나빠지면
    오차를 더 엄격히 하여 재시도하고 끝내 통과하지 못하면 품질본 형상을 유지한다. 목표 면 수를
    맞추려고 형상을 망가뜨리지 않으며, 초과한 실제 면 수와 이유를 경고에 기록한다.
@@ -339,8 +345,10 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
    위치·부드러운 노멀·텍스처에 함께 적용한다.
 7. Blender는 **추가 감축 없이** 바닥 중심과 미터 크기만 맞춘다. 품질본과 게임용은 동일한
    변환을 공유한다. gltfpack 사본도 감축·정밀도 양자화를 하지 않는다.
-8. 실제 최종 GLB를 여섯 방향으로 렌더하고, TRELLIS 원본(`source.npz`, 점토만)과 최종 GLB를 입력 이미지 시점에서
-   점토·무조명 색·왼쪽/오른쪽 조명으로 렌더해 `review/review.png`를 만든다. 원본부터 틀렸는지 후처리에서 상했는지,
+8. 실제 최종 GLB를 여섯 방향으로 렌더하고, TRELLIS 원본(`source.npz`, 점토만)과 최종 GLB를 같은 시점에서
+   점토·무조명 색·왼쪽/오른쪽 조명으로 렌더해 `review/review.png`를 만든다. 시점은 품질본의 실루엣을 방위 20°·고도
+   6단계로 훑은 뒤 10°·5°로 좁혀 입력 누끼와 가장 많이 겹치는 곳이고(6만 면 대역으로 렌더), 그 겹침(IoU)을
+   `meta.reviewView.silhouetteIoU`에 남긴다. 사진의 원근은 맞추지 않는다(정사영). 원본부터 틀렸는지 후처리에서 상했는지,
    색으로만 그린 홈인지, 입력 사진의 그림자가 색에 남았는지를 사람이 본다. 품질본을 `pending` 에셋으로 등록한다.
    게임용을 요청한 경우에도 별도 `pending` 에셋이다.
    카드의 그림은 생성 입력이 아니라 해당 GLB의 렌더다.
@@ -367,8 +375,11 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 2. 껍데기를 Blender Collapse로 `targetFaces`까지 줄이고 삼각형으로 나눈다. 60°보다 꺾인 모서리는 날카롭게 두고
    Smart UV(66°)로 펴서 맵 크기 기준 8px 간격으로 다시 패킹한다.
 3. 품질본 점과 저면 정점에서 서로의 표면까지 거리를 재어 `stats.surfaceError`(평균·95%·최대, 가장 긴 변 대비와 m)에
-   남긴다. 껍데기에서 2칸보다 먼 품질본 점은 껍데기 속에 들었으면 숨은 면(`hiddenFraction`)으로 빼고, 껍데기 밖이면
-   잃은 형상(`lostFraction`, `lostMaxMeters`)으로 오차에 남긴다. 거르지 않은 품질본→저면 거리도 `unfiltered`에 둔다.
+   남긴다. 껍데기에서 2칸보다 먼 품질본 점은 바깥쪽 반구로 광선 64개를 쏴서 5% 이상이 품질본 밖으로 빠져나가면
+   보이던 면이 메워지거나 사라진 것(`lostFraction`, `lostMaxMeters`, 오차에 포함)으로, 아니면 숨은 면
+   (`hiddenFraction`, 닫힌 상자 속처럼 틈으로만 보이는 벽)으로 본다. 껍데기 속에 들었는지로는 메운 홈과 숨은 벽을
+   가를 수 없다. 거르지 않은 품질본→저면 거리도 `unfiltered`에 둔다. 깊은 홈의 바닥처럼 거의 보이지 않는 손실은
+   경고 대신 `unfiltered`에 드러난다.
 4. Cycles selected-to-active로 품질본을 저면 UV에 굽는다. 광선은 95% 오차의 1.5배(가장 긴 변의 0.2~3%) 밖에서 출발해
    가장 긴 변의 5%를 더 들어간다.
    노멀은 탄젠트 공간·OpenGL(+Y)이다. 색·거칠기·금속성은 품질본 머티리얼의 Principled 입력을 잠시 Emission으로 이어
@@ -379,7 +390,8 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
    다시 불러와 면 수·크기·텍스처 수를 비교해 `bake.exportCheck`에 남긴다.
 6. 게임용 GLB를 여섯 방향으로 렌더하고, 품질본의 같은 각도 렌더와 나란히 `game/compare.png`를 만든다. 품질본의
    렌더가 원본 작업에 있으면 다시 그리지 않고 복사한다. TRELLIS 원본·품질본·게임용의 검수판(`game/review/review.png`)과,
-   품질본·게임용을 화면 높이 512·192·96px로 렌더해 확대한 `game/review/distance.png`를 만든다. 결과는
+   품질본·게임용을 화면 속 물체 높이 256·96·48px(1080p에서 0.5m 소품의 가까이·중간·멀리)로 렌더해 확대한
+   `game/review/distance.png`를 만든다. 결과는
    `variant: game-asset`인 `pending` 에셋이다. 면 수·텍스처 기본값은 이 비교와 사용자 승인으로 정한다.
 
 `refine-mesh`는 완료된 원본 NPZ와 입력 이미지를 **새 작업**으로 복사한 뒤 4~8단계를 실행한다.

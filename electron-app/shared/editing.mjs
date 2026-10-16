@@ -28,6 +28,13 @@ export const stampLayer = (fields={}) => ({id:"stamp-1", type:"stamp", name:"로
 
 // 예전 편집 설정(recolor 하나 + overlay 하나)을 레이어 목록으로 옮긴다. 저장된 편집본을
 // 다시 열거나 예전 임시 편집을 복원할 때 같은 결과가 나와야 한다.
+// 레이어가 쓰는 그림만 남긴다. 지운 레이어의 그림은 되돌리기 기록이 따로 들고 있으므로
+// 임시 저장·다시 열기에서 쓰지 않는 그림을 들고 다닐 이유가 없다.
+export function usedStamps(plan, stamps) {
+  const used = new Set(plan.layers.filter((layer) => layer.type === "stamp").map((layer) => layer.id));
+  return new Map([...stamps].filter(([id]) => used.has(id)));
+}
+
 export function migratePlan(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const plan = {...defaults(), ...source};

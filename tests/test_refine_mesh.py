@@ -165,5 +165,47 @@ def test_surface_reconstruction_reports_nearby_parts_that_fused(tmp_path):
     subprocess.run([str(trellis_python()), str(worker), "--source", str(tmp_path / "source.npz"),
                     "--output", str(tmp_path / "surface"), "--target-faces", "0", "--game-faces", "0"], check=True)
     report = json.loads((tmp_path / "surface/surface.json").read_text("utf-8"))
-    assert report["parts"] == {"source": 2, "reconstructed": 1}
+    assert report["parts"]["source"] == 2 and report["parts"]["merged"] == 2
     assert any("붙었습니다" in warning for warning in report["warnings"])
+
+
+def test_merges_are_found_by_correspondence_and_variants_are_not_rewelded(tmp_path):
+    import subprocess
+
+    from local_assets_engine.paths import trellis_python
+
+    if not trellis_python().exists():
+        pytest.skip("TRELLIS 환경이 설치되지 않았다")
+    workers = Path(__file__).resolve().parents[1] / "src/local_assets_engine/workers"
+    script = f"""
+import sys, json
+import numpy as np, trimesh
+sys.path.insert(0, {str(workers)!r})
+from quality_surface import clean_mesh, finish_variant, reconstruct, topology
+from pathlib import Path
+# Two closed boxes two voxels apart: their bands join but both inner shells remain, so the part count grows.
+n = 64
+a, b = trimesh.creation.box(extents=[.25] * 3), trimesh.creation.box(extents=[.25] * 3)
+a.apply_translation([-(.125 + 1 / n), 0, 0]); b.apply_translation([.125 + 1 / n, 0, 0])
+for _ in range(3):
+    a, b = a.subdivide(), b.subdivide()
+mesh = trimesh.util.concatenate([a, b])
+coords = np.indices((n, n, n)).reshape(3, -1).T.astype(np.int32)
+work = Path({str(tmp_path)!r})
+np.savez(work / "source.npz", vertices=mesh.vertices.astype(np.float32), faces=mesh.faces.astype(np.int32),
+         coords=coords, origin=np.array([-.5] * 3), voxel_size=1 / n)
+reconstruct(work / "source.npz", work / "surface", target_faces=0, game_faces=0)
+parts = json.loads((work / "surface/surface.json").read_text())["parts"]
+# Two tetrahedra touching only by position: keeping them separate after projection keeps them manifold.
+v = np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1],[0,0,0],[1,0,0],[0,-1,0],[0,0,-1]], np.float32)
+f0 = np.array([[0,2,1],[0,1,3],[0,3,2],[1,2,3]], np.int32)
+f = np.concatenate([f0, f0 + 4])
+kept_v, kept_f = clean_mesh(v, f, merge=False)
+done_v, done_f = finish_variant(kept_v, kept_f, v, f)
+print(json.dumps({{"parts": parts, "vertices": len(done_v), "topology": topology(done_v, done_f)}}))
+"""
+    done = subprocess.run([str(trellis_python()), "-c", script], capture_output=True, text=True, timeout=600)
+    assert done.returncode == 0, done.stderr[-2000:]
+    result = json.loads(done.stdout.strip().splitlines()[-1])
+    assert result["parts"]["source"] == 2 and result["parts"]["merged"] == 2
+    assert result["vertices"] == 8 and result["topology"]["nonManifoldEdges"] == 0

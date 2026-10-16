@@ -1,7 +1,7 @@
 // 에셋 편집 공간. 편집은 레이어(색 바꾸기·로고·문구) 목록이고 저장하면 새 버전이 된다.
 // 계산은 edit-preview.js(Web Worker)가 저장과 같은 renderEdit로 하고, 여기서는 조작과 기록만 다룬다.
 import {
-  CROP_RATIOS, clamp, colorLayer, defaults, frameLayout, layerId, migratePlan, outputToSource, stampLayer,
+  CROP_RATIOS, clamp, colorLayer, defaults, frameLayout, layerId, migratePlan, outputToSource, stampLayer, usedStamps,
 } from "../shared/editing.mjs";
 import { escapeHtml, fileUrl, findingsHtml, formatBytes, pendingFindings } from "../shared/format.mjs";
 import { popup, toast, pickFile, uploadBlob, waitJob } from "./ui.js";
@@ -50,10 +50,21 @@ async function textStamp(text, color, font = "bold") {
   return new Promise((resolve) => canvas.toBlob(resolve));
 }
 
+// 메모리에 두는 임시 편집 수. 나머지는 IndexedDB에 있다.
+const DRAFTS_IN_MEMORY = 4;
+
 export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevizScene, bridge, quietJob = () => {} }) {
   let session = null;
   let opening = 0;
   const drafts = new Map();
+  // 마지막 값까지 IndexedDB에 쓴 임시 편집. 이것만 메모리에서 내려놓을 수 있다(다시 열면 IndexedDB에서 읽는다).
+  const persisted = new Set();
+  function trimDrafts(active) {
+    for (const key of [...drafts.keys()]) {
+      if (drafts.size <= DRAFTS_IN_MEMORY) break;
+      if (key !== active && persisted.has(key)) drafts.delete(key);
+    }
+  }
 
   function close() {
     opening++;
@@ -62,7 +73,10 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
 
   // 예전 임시 편집(로고 하나)과 새 형식(레이어별 그림)을 모두 읽는다.
   function draftState(old) {
-    if (old.version === 2) return { plan: migratePlan(old.plan), stamps: new Map(old.stamps || []), selected: old.selected || null };
+    if (old.version === 2) {
+      const plan = migratePlan(old.plan);
+      return { plan, stamps: usedStamps(plan, new Map(old.stamps || [])), selected: old.selected || null };
+    }
     const plan = migratePlan(old.plan);
     const stamps = new Map();
     const stampId = plan.layers.find((layer) => layer.type === "stamp")?.id;
@@ -211,17 +225,22 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
     }
 
     // ---- 임시 보관 -----------------------------------------------------------------
-    const draftValue = () => ({ version: 2, draftVersion: { ...s.draftVersion }, name: $("#edit-name").value, plan: clone(s.plan), stamps: [...s.stamps], selected: s.selected });
+    const draftValue = () => ({ version: 2, draftVersion: { ...s.draftVersion }, name: $("#edit-name").value, plan: clone(s.plan),
+      stamps: [...usedStamps(s.plan, s.stamps)], selected: s.selected });
     async function flushDraft() {
       clearTimeout(s.draftTimer);
       if (!s.dirty || s.saved) return;
       const current = drafts.get(s.key);
       if (current && current.draftVersion?.generation !== s.draftVersion.generation) return;
       const value = draftValue();
+      drafts.delete(s.key);
       drafts.set(s.key, value);
+      persisted.delete(s.key);
       s.draftWrites = s.draftWrites.then(async () => {
         if (drafts.get(s.key)?.draftVersion?.generation !== s.draftVersion.generation) return;
-        if (!await writeDraft(s.key, value, { previous: s.draftPredecessor }) && !s.closed) status("임시 보관을 못 했습니다. 저장 공간을 확인하거나 새 버전으로 저장해 주세요.");
+        const written = await writeDraft(s.key, value, { previous: s.draftPredecessor });
+        if (written && drafts.get(s.key) === value) persisted.add(s.key);
+        if (!written && !s.closed) status("임시 보관을 못 했습니다. 저장 공간을 확인하거나 새 버전으로 저장해 주세요.");
       });
       await s.draftWrites;
     }
@@ -870,6 +889,8 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
             if (target.locked) break;
             remember("레이어 삭제");
             s.plan.layers = s.plan.layers.filter((entry) => entry.id !== rowId);
+            // 되돌리기 기록이 지운 레이어의 그림을 따로 들고 있다. 지금 상태에서는 놓아준다.
+            s.stamps.delete(rowId);
             if (s.selected === rowId) s.selected = s.plan.layers.at(-1)?.id || null;
             setTool(null);
             changed();
@@ -1113,6 +1134,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes ?? stats.bake?.bytes?.glb) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut ?? stats.triangles ?? 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
         ${meta.inspectionFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 보기</a>` : ""}
         ${meta.reviewFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.reviewFile)}" target="_blank" rel="noopener">형상·조명 검수판</a>` : ""}
+        ${meta.reviewView?.silhouetteIoU != null ? `<p class="hint">입력 사진과 실루엣 일치 ${meta.reviewView.silhouetteIoU.toFixed(2)} (검수판은 입력 시점에 맞춤)</p>` : ""}
         ${meta.distanceFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.distanceFile)}" target="_blank" rel="noopener">화면 크기별 비교</a>` : ""}
         ${gameInfo}${shells}
         ${pendingFindings(job, asset.id).length ? `<h3>자동 검사가 알린 항목</h3>${findingsHtml(job, pendingFindings(job, asset.id))}`
@@ -1187,6 +1209,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
     dialog.addEventListener("close", () => {
       if (!s.saved && s.dirty) flushDraft();
       s.closed = true;
+      s.draftWrites.then(() => trimDrafts(session?.key));
       clearTimeout(s.timer);
       clearTimeout(textTimer);
       window.removeEventListener("pagehide", flushDraft);

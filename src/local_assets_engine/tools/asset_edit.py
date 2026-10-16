@@ -29,18 +29,26 @@ def read_glb(path):
 
 
 def write_glb(path, doc, binary, replacements):
+    # Views of the source, not copies; a replaced view never slices the source at all.
+    source = memoryview(binary)
     chunks = bytearray()
     for index, view in enumerate(doc['bufferViews']):
-        data = replacements.get(index, binary[view.get('byteOffset', 0):view.get('byteOffset', 0) + view['byteLength']])
+        if index in replacements:
+            data = replacements[index]
+        else:
+            start = view.get('byteOffset', 0)
+            data = source[start:start + view['byteLength']]
         view['byteOffset'], view['byteLength'] = len(chunks), len(data)
         chunks.extend(data)
         chunks.extend(b'\0' * (-len(chunks) % 4))
     doc['buffers'][0]['byteLength'] = len(chunks)
     header = json.dumps(doc, ensure_ascii=False, separators=(',', ':')).encode()
     header += b' ' * (-len(header) % 4)
-    Path(path).write_bytes(struct.pack('<III', 0x46546c67, 2, 28+len(header)+len(chunks)) +
-                          struct.pack('<II', len(header), 0x4e4f534a) + header +
-                          struct.pack('<II', len(chunks), 0x004e4942) + chunks)
+    with Path(path).open('wb') as handle:
+        handle.write(struct.pack('<III', 0x46546c67, 2, 28 + len(header) + len(chunks)))
+        handle.write(struct.pack('<II', len(header), 0x4e4f534a) + header)
+        handle.write(struct.pack('<II', len(chunks), 0x004e4942))
+        handle.write(chunks)
 
 
 def rgba_file(image, file, **extras):

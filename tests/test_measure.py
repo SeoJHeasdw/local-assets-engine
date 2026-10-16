@@ -182,3 +182,18 @@ def test_normal_descendant_teardown_keeps_successful_stage(tmp_path):
     assert result.peak_memory_bytes > 0
     with pytest.raises(ProcessLookupError):
         os.kill(int(marker.read_text()), 0)
+
+
+def test_stages_also_record_whole_machine_memory_without_changing_the_footprint(monkeypatch):
+    import sys
+
+    from local_assets_engine import measure
+
+    monkeypatch.setattr(measure, "SYSTEM_SAMPLE_S", 0.1)
+    result = measure.run_measured([sys.executable, "-c", "import time; x = bytearray(60_000_000); time.sleep(0.8)"])
+    assert result.peak_memory_bytes and result.peak_memory_bytes >= 60_000_000
+    system = result.system
+    assert system and system["samples"] >= 3
+    # The stage's own process tree held the 60MB buffer; swap and the free share describe the machine.
+    assert system["peakTreeRssBytes"] >= 60_000_000
+    assert 0 <= system["minFreePercent"] <= 100 and system["peakSwapBytes"] >= 0

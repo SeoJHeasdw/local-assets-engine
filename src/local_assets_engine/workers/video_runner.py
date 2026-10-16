@@ -195,9 +195,7 @@ class DiffusersBackend:
             video = vae.decode(latents / inverse_std + mean, return_dict=False)[0]
             self.sample_memory()
             frames = self.pipe.video_processor.postprocess_video(video, output_type="np")[0]
-        import numpy as np
-
-        return (np.clip(frames, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+        return to_bytes(frames)
 
     def versions(self) -> dict[str, str]:
         import diffusers
@@ -205,6 +203,17 @@ class DiffusersBackend:
 
         return {"python": platform.python_version(), "torch": self.torch.__version__,
                 "diffusers": diffusers.__version__, "transformers": transformers.__version__}
+
+
+def to_bytes(frames):
+    """[0, 1] float frames as 8-bit, computed in place: the same values as
+    ``(np.clip(frames, 0, 1) * 255).round().astype(np.uint8)`` without two full float copies."""
+    import numpy as np
+
+    np.clip(frames, 0.0, 1.0, out=frames)
+    np.multiply(frames, 255.0, out=frames)
+    np.round(frames, out=frames)
+    return frames.astype(np.uint8)
 
 
 def write_video(frames, path: Path, fps: int, encode: dict[str, Any]) -> dict[str, Any]:

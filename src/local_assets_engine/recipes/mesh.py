@@ -225,6 +225,7 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
         for name, _label, _size, final_glb, *_ in artifacts:
             command += ["--mesh", f"{name}={final_glb}"]
         stage.run(command)
+    review_view = json.loads((mesh_dir / "review/review.json").read_text("utf-8"))["view"]
     assets = []
     for name, label, size, final_glb, raw_glb, optimized, stats in artifacts:
         assets.append(ctx.add_asset(
@@ -236,6 +237,7 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
                   "optimizedFile": ctx.rel(optimized) if optimized else None,
                   "optimizedBytes": optimized.stat().st_size if optimized else None,
                   "inspectionFile": f"mesh/inspection/{name}-contact.png", "reviewFile": "mesh/review/review.png",
+                  "reviewView": review_view,
                   "source": p.get("source"), "conceptAsset": concept_asset_id,
                   "processingVersion": 2},
         ))
@@ -245,7 +247,7 @@ def finish_quality_mesh(ctx: "JobContext", p: dict[str, Any], *, concept_asset_i
         report_mesh_checks(ctx, assets[-1], stats, where=f"{label} 메시", evidence=evidence,
                            faces=(lod["targetFaces"], lod["triangles"]) if lod else None)
         parts = surface.get("parts") or {}
-        if parts.get("reconstructed", 0) < parts.get("source", 0):
+        if parts.get("merged"):
             # 가까운 부품의 재구성 띠가 합쳐졌다. 좁은 틈이 메워졌을 수 있다.
             ctx.add_finding(severity="warn", code="mesh.parts_merged", where=f"{label} 메시", asset_id=assets[-1]["id"],
                             params=parts, evidence=evidence)

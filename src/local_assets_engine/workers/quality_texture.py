@@ -95,11 +95,41 @@ def rasterize(vertices, faces, uvs, size):
     return positions, mask
 
 
+def quantize(values):
+    """Native PBR samples (up to 6 channels) as glTF base color RGBA and metallic-roughness G/B bytes.
+
+    The same float32 expressions the padded float texture used, applied per chunk so the
+    6-channel float texture never exists in full.
+    """
+    chunk = np.zeros((len(values), 6), dtype=np.float32)
+    chunk[:, :values.shape[1]] = values
+    if values.shape[1] < 6:
+        chunk[:, 5] = 1
+    rgba = (chunk[:, [0, 1, 2, 5]] * 255).round().astype(np.uint8)
+    green, blue = np.empty(len(values), dtype=np.uint8), np.empty(len(values), dtype=np.uint8)
+    green[:], blue[:] = (chunk[:, 4] * 255).round(), (chunk[:, 3] * 255).round()
+    return rgba, green, blue
+
+
+def pad(images, mask, rows=64):
+    """Copy every empty texel from its nearest valid one, in place, a band of rows at a time.
+
+    Dilation across chart padding keeps filtering from mixing with black. A valid texel's
+    nearest is itself, so the copies never read a texel this loop has changed.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    nearest = distance_transform_edt(~mask, return_distances=False, return_indices=True)
+    for begin in range(0, mask.shape[0], rows):
+        band = slice(begin, begin + rows)
+        for image in images:
+            image[band] = image[nearest[0, band], nearest[1, band]]
+
+
 def bake(source, geometry, output, texture_size=4096):
     import point_cloud_utils as pcu
     import trimesh
     import xatlas
-    from scipy.ndimage import distance_transform_edt
     from gltf_export import export_glb_with_texture
 
     start = time.perf_counter()
@@ -108,8 +138,7 @@ def bake(source, geometry, output, texture_size=4096):
     model_faces = np.asarray(data["faces"], dtype=np.int32)
     geom = np.load(geometry, allow_pickle=False)
     vertices, faces = np.asarray(geom["vertices"], dtype=np.float32), np.asarray(geom["faces"], dtype=np.uint32)
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-    normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
+    normals = np.asarray(trimesh.Trimesh(vertices=vertices, faces=faces, process=False).vertex_normals, dtype=np.float32)
     progress(0, "최종 형상에 UV 펼치기")
     atlas = xatlas.Atlas()
     atlas.add_mesh(vertices, faces, normals=normals)
@@ -126,7 +155,9 @@ def bake(source, geometry, output, texture_size=4096):
     raster_seconds = time.perf_counter() - start - uv_seconds
     sampler = SparseSampler(data["coords"], data["attrs"], data["origin"], data["voxel_size"])
     indices = np.flatnonzero(mask)
-    colors = np.zeros((texture_size * texture_size, 6), dtype=np.float32)
+    base_color = np.zeros((texture_size, texture_size, 4), dtype=np.uint8)
+    mr = np.zeros((texture_size, texture_size, 3), dtype=np.uint8)
+    flat_color, flat_mr = base_color.reshape(-1, 4), mr.reshape(-1, 3)
     samples = positions.reshape(-1, 3)
     fallback, maximum_distance = 0, 0.0
     for begin in range(0, len(indices), 1_000_000):
@@ -136,20 +167,15 @@ def bake(source, geometry, output, texture_size=4096):
         for offset in range(0, len(selected), 131072):
             part = selected[offset:offset + 131072]
             values, missed = sampler.sample(projected[offset:offset + len(part)])
-            colors[part, :values.shape[1]] = values
-            if values.shape[1] < 6:
-                colors[part, 5] = 1
+            flat_color[part], flat_mr[part, 1], flat_mr[part, 2] = quantize(values)
             fallback += missed
         maximum_distance = max(maximum_distance, float(distance.max(initial=0)))
         progress(50 + 40 * (begin + len(selected)) / len(indices), "원본 PBR 재질 굽기")
     if not len(indices):
         raise ValueError("UV 아틀라스에 유효한 텍셀이 없습니다.")
-    # Dilation across chart padding prevents filtering from mixing with black.
-    nearest = distance_transform_edt(~mask, return_distances=False, return_indices=True)
-    filled = colors.reshape(texture_size, texture_size, 6)[nearest[0], nearest[1]]
-    base_color = (filled[..., [0, 1, 2, 5]] * 255).round().astype(np.uint8)
-    mr = np.zeros((texture_size, texture_size, 3), dtype=np.uint8)
-    mr[..., 1], mr[..., 2] = (filled[..., 4] * 255).round(), (filled[..., 3] * 255).round()
+    # The source model, sampler and texel positions are done; free them before padding and export.
+    del sampler, samples, positions, model_vertices, model_faces, data, projected, distance, face_id, barycentric
+    pad((base_color, mr), mask)
     output.parent.mkdir(parents=True, exist_ok=True)
     export_glb_with_texture(atlas_vertices, atlas_faces, uv, base_color, mr, output,
                             normals=normals[mapping], native_pbr=True)

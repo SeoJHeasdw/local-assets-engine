@@ -114,7 +114,7 @@ test("findings read as sentences, keep their evidence and offer a clear button o
     { id: "f02", severity: "fail", code: "image.final_empty", where: "후보 1", assetId: "a02", params: {}, evidence: [], review: "cleared" },
     { id: "f03", severity: "warn", code: "image.alpha_not_cutout", where: "3D 입력 이미지", assetId: null, params: {}, evidence: [], review: "pending" },
   ] };
-  assert.equal(findingText(job.findings[0]), "품질본 표본의 35.0%가 게임용에서 사라졌습니다(최대 296.0mm).");
+  assert.equal(findingText(job.findings[0]), "품질본에서 보이던 면의 35.0%가 게임용에서 메워지거나 사라졌습니다(최대 296.0mm). 틈·홈·얇은 부분을 검수판에서 확인하세요.");
   assert.equal(findingText({ code: "unknown.code" }), "unknown.code");
   assert.deepEqual(pendingFindings(job).map((f) => f.id), ["f01", "f03"]);
   assert.deepEqual(pendingFindings(job, "a01").map((f) => f.id), ["f01", "f03"]);

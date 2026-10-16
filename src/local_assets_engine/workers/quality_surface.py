@@ -38,6 +38,7 @@ def clean_mesh(vertices, faces, merge=True):
         triangle = vertices[faces]
         area = np.linalg.norm(np.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]), axis=1)
         faces = faces[area > 0]
+        del triangle, area
     _, keep = np.unique(np.sort(faces, axis=1), axis=0, return_index=True)
     faces = faces[np.sort(keep)]
     used, indices = np.unique(faces, return_inverse=True)
@@ -55,22 +56,61 @@ def topology(vertices, faces):
             "inconsistentWindingEdges": int(((count == 2) & (balance != 0)).sum())}
 
 
-def significant_parts(vertices, faces, share=0.002, minimum=200):
-    """Connected parts that carry at least ``share`` of the area and ``minimum`` faces."""
+def _parts(vertices, faces):
+    """Connected part of each vertex and each face, and the area of each part."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
-    _, inverse = np.unique(vertices, axis=0, return_inverse=True)
-    welded = inverse.reshape(-1)[faces]
-    edges = np.concatenate([welded[:, [0, 1]], welded[:, [1, 2]]])
-    size = int(welded.max()) + 1
-    graph = coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(size, size))
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]]])
+    graph = coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(len(vertices),) * 2)
     _, labels = connected_components(graph, directed=False)
-    part = labels[welded[:, 0]]
-    triangle = vertices[faces]
+    triangle = vertices[faces].astype(np.float64)
     area = np.linalg.norm(np.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]), axis=1) / 2
-    areas, counts = np.bincount(part, weights=area), np.bincount(part)
-    return int(((areas >= share * area.sum()) & (counts >= minimum)).sum())
+    part = labels[faces[:, 0]]
+    return labels, part, np.bincount(part, weights=area, minlength=labels.max() + 1), area.sum(), triangle
+
+
+def merged_parts(source_vertices, source_faces, vertices, faces, share=0.002, minimum=200, samples=400):
+    """Which separate source parts the reconstruction joined into one outer surface.
+
+    Counting parts misses a merge: two closed parts whose bands join keep both inner
+    shells, so the count even grows. Each significant source part is matched to the
+    outward reconstructed surface nearest to it; parts that share one were joined.
+    """
+    from scipy.spatial import cKDTree
+
+    unique, inverse = np.unique(source_vertices, axis=0, return_inverse=True)
+    welded = inverse.reshape(-1)[source_faces]
+    _, source_part, source_area, source_total, _ = _parts(unique, welded)
+    counts = np.bincount(source_part, minlength=len(source_area))
+    significant = np.flatnonzero((source_area >= share * source_total) & (counts >= minimum))
+    labels, part, _, _, triangle = _parts(vertices, faces)
+    volume = np.bincount(part, weights=np.einsum("ij,ij->i", triangle[:, 0], np.cross(triangle[:, 1], triangle[:, 2])) / 6)
+    outward = np.flatnonzero(volume > 0)
+    report = {"source": len(significant), "reconstructed": len(outward), "merged": 0}
+    if len(significant) < 2 or not len(outward):
+        return report
+    surface = np.flatnonzero(np.isin(labels, outward))
+    tree = cKDTree(vertices[surface])
+    owner = {}
+    for index in significant:
+        corners = np.unique(welded[source_part == index].reshape(-1))
+        picked = corners[np.linspace(0, len(corners) - 1, min(samples, len(corners))).astype(int)]
+        _, nearest = tree.query(unique[picked])
+        owner[index] = int(np.bincount(labels[surface[nearest]]).argmax())
+    shared = np.bincount(list(owner.values()))
+    report["merged"] = int(sum(1 for value in owner.values() if shared[value] > 1))
+    return report
+
+
+def finish_variant(vertices, faces, source_vertices, source_faces):
+    """Project onto the source surface and drop unusable faces, without merging by position.
+
+    The decimated and projected meshes stay welded by index. Merging vertices that only
+    share a position here can join two sheets into a non-manifold edge again.
+    """
+    projected = project_surface(vertices, faces, source_vertices, source_faces)
+    return clean_mesh(projected, faces, merge=False)
 
 
 def project_surface(vertices, faces, source_vertices, source_faces, amount=0.7):
@@ -140,13 +180,12 @@ def reconstruct(source, output, target_faces=1_000_000, game_faces=100_000):
     del field
     vertices, faces = clean_mesh(vertices, faces, merge=False)
     report["warnings"] = []
-    # 가까운 부품의 띠가 합쳐지면 좁은 틈이 메워진다. 의미 있는 부품 수가 줄었는지 알린다.
-    parts = {"source": significant_parts(*clean_mesh(original_vertices, original_faces)),
-             "reconstructed": significant_parts(vertices, faces)}
+    # 가까운 부품의 띠가 합쳐지면 좁은 틈이 메워진다. 원본 부품이 같은 바깥 면으로 이어졌는지 본다.
+    parts = merged_parts(*clean_mesh(original_vertices, original_faces), vertices, faces)
     report["parts"] = parts
-    if parts["reconstructed"] < parts["source"]:
-        report["warnings"].append(f"떨어져 있던 부품 {parts['source']}개가 재구성 후 {parts['reconstructed']}개로 "
-                                  "붙었습니다. 좁은 틈이 메워졌을 수 있습니다.")
+    if parts["merged"]:
+        report["warnings"].append(f"원본에서 떨어져 있던 부품 {parts['merged']}개가 재구성에서 서로 붙었습니다. "
+                                  "좁은 틈이 메워졌을 수 있습니다.")
     report["reconstructedTriangles"] = len(faces)
     report["reconstructedTopology"] = topology(vertices, faces)
     if report["reconstructedTopology"]["nonManifoldEdges"] or report["reconstructedTopology"]["boundaryEdges"]:
@@ -165,11 +204,9 @@ def reconstruct(source, output, target_faces=1_000_000, game_faces=100_000):
                 reduced_v, reduced_f, _, _ = pcu.decimate_triangle_mesh(vertices, faces, budget)
             except ValueError as error:
                 raise SystemExit(f"형상 보존 감축이 실패했습니다. 원본은 보존되었습니다. ({error})") from error
-            reduced_v, reduced_f = clean_mesh(reduced_v, reduced_f)
         else:
             reduced_v, reduced_f = vertices.copy(), faces.copy()
-        reduced_v = project_surface(reduced_v, reduced_f, original_vertices, original_faces)
-        reduced_v, reduced_f = clean_mesh(reduced_v, reduced_f)
+        reduced_v, reduced_f = finish_variant(reduced_v, reduced_f, original_vertices, original_faces)
         checks = topology(reduced_v, reduced_f)
         np.savez(output / f"{name}.npz", vertices=reduced_v, faces=reduced_f)
         report["variants"][name] = {"targetFaces": budget, "vertices": len(reduced_v),
