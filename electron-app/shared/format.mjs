@@ -11,7 +11,7 @@ export const REVIEW_LABELS = { pending: "검토 대기", approved: "승인", rej
 export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
   "repair-mesh": "기존 3D 복구",
-  "refine-mesh": "3D 원본 재구성", "game-asset": "게임용 에셋 굽기", "edit-asset": "에셋 편집", "import-image": "가져온 이미지",
+  "refine-mesh": "3D 원본 재구성", "game-asset": "게임용 에셋 굽기", "building-kit": "건축 키트", "edit-asset": "에셋 편집", "import-image": "가져온 이미지",
   selftest: "엔진 자체 점검",
 };
 
@@ -86,6 +86,7 @@ const FINDING_TEXT = {
   "mesh.game_shape_error": (p) => `품질본과의 표면 거리가 95% 지점에서 ${mm(p.p95Meters)}입니다.`,
   "mesh.game_geometry_lost": (p) => `품질본에서 보이던 면의 ${((p.lostFraction || 0) * 100).toFixed(1)}%가 게임용에서 메워지거나 사라졌습니다(최대 ${mm(p.lostMaxMeters)}). 틈·홈·얇은 부분을 검수판에서 확인하세요.`,
   "mesh.game_bake_misses": (p) => `UV 영역의 ${((p.missFraction || 0) * 100).toFixed(1)}%에서 굽기 광선이 품질본에 닿지 않았습니다.`,
+  "mesh.kit_triangles": (p) => `건축 부품 삼각형 ${(p.triangles || 0).toLocaleString()}개가 기준 ${(p.limit || 0).toLocaleString()}개를 넘습니다. 배치물 예산을 확인하세요.`,
   "mesh.game_export_mismatch": (p) => `내보낸 파일을 다시 불러오니 굽은 결과와 다릅니다: ${(p.problems || []).join(", ")}`,
   "mesh.parts_merged": (p) => `원본에서 떨어져 있던 부품 ${count(p.merged)}개가 재구성에서 서로 붙었습니다. 좁은 틈이 메워졌을 수 있습니다.`,
   "mesh.floating_parts": (p) => `본체와 떨어져 떠 있는 조각 ${count(p.count)}개`,

@@ -24,6 +24,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `image-to-3d` | 고른 이미지 → TRELLIS.2 원본 → 표면 재구성 → PBR | 품질본 GLB, 여섯 방향·형상·조명 검수판 |
 | `refine-mesh` | 저장된 생성 원본 → 출력 설정을 바꿔 표면·PBR 재구성 | 모델 추론 없이 새 품질본 |
 | `game-asset` | 완성된 품질본 → 삼각형 예산까지 줄이기·UV → 품질본에서 노멀·색·거칠기·금속성·AO 굽기 | 게임용 GLB·FBX와 PNG 맵, 품질본과 나란히 비교·검수판·화면 크기별 비교 |
+| `building-kit` | CC0 나무 스캔 → 트림 시트 한 장 → 게임 격자에 맞춘 바닥·벽·문·창·지붕·계단·난간·울타리 10종 | 부품별 FBX·GLB, 공용 PNG 맵, 조립한 집 렌더와 콘셉트 비교 |
 | `edit-asset` | 색상·재질·로고·문구·2D 구성 편집 → 새 버전 저장 | 원본을 보존한 PNG·GLB |
 | `import-image` | 로컬 이미지 가져오기 | 편집하거나 3D로 만들 이미지 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
@@ -128,6 +129,16 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 ```bash
 .venv/bin/python -m local_assets_engine run game-asset \
   --params '{"source": {"jobId": "<3D 작업 ID>", "assetId": "a01"}, "targetFaces": 2000, "textureSize": 1024, "name": "wood_chest"}'
+```
+
+손에 드는 도구·무기처럼 사진에서 비스듬히 누운 것은 `"upright": true`로 자루를 세운 뒤 길이를 맞춘다.
+
+건축 부품은 생성 모델 대신 Blender로 격자에 맞춰 만든다. 재질을 한 번 받은 뒤(`python -m local_assets_engine.materials fetch`,
+약 50MB) 다음 명령을 쓴다. 결과는 `kit/`의 `SM_wood_<부품>.fbx`와 `kit/atlas/T_wood_kit_*.png`이고 `kit/review.png`에서
+조립한 집을 콘셉트와 나란히 본다.
+
+```bash
+.venv/bin/python -m local_assets_engine run building-kit --params '{"name": "wood", "referenceImage": "/절대/경로/concept.png"}'
 ```
 
 예전 에셋 중 원본 NPZ가 없는 것은 입력 이미지로 새로 생성해야 전체 개선이 적용된다.

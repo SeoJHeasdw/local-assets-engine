@@ -137,7 +137,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `image-to-3d` | `imagePath`(절대 경로), `uploadId`, 또는 `source: {jobId, assetId}`, 3D 입력, `removeBackground` | 배경 제거 켬 |
 | `repair-mesh` | `source: {jobId, assetId}`(완료된 이전 KDTree 메시) | 원본의 시드·해상도·면 수·크기 유지 |
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
-| `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `sizeMeters` 0.01~1,000(가장 긴 변), `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`), 크기는 품질본의 `sizeMeters` |
+| `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `sizeMeters` 0.01~1,000(가장 긴 변), `upright`, `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`), 크기는 품질본의 `sizeMeters`, 세우지 않음 |
+| `building-kit` | `name`(영문 소문자·숫자·`_`, 24자 이하), `pieces`(아래 부품 중 고름), `seed`, `atlasWidth` 1024·2048·4096, `cellMeters`, `storyMeters`, `wallThickness`, `referenceImage`(검수판용 경로) | `presets.json`의 `buildingKit`(`wood`, 10종 전부, 7, 2048, 4m, 3m, 0.25m) |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `1024`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
@@ -368,7 +369,9 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 
 `game-asset`은 완료된 품질본을 바꾸지 않고 **새 작업**에 게임용 에셋을 만든다. `sizeMeters`를 주면 두 단계 모두
 품질본을 바닥 중심 기준으로 가장 긴 변이 그 길이가 되게 균일하게 늘리거나 줄여 불러온다. 복셀·광선 거리·텍셀이 모두
-가장 긴 변을 따르므로 같은 굽기를 그 크기로 옮긴 결과이고, 품질본을 다시 만들지 않는다.
+가장 긴 변을 따르므로 같은 굽기를 그 크기로 옮긴 결과이고, 품질본을 다시 만들지 않는다. `upright`는 그보다 먼저
+점들의 주축으로 가장 긴 축을 세로(+Z)로 세우고 넓은 끝을 위로, 가장 얇은 축을 Y로 둔다(입력 사진에서 보이던 면은 −Y,
+GLB +Z). 사진처럼 비스듬히 누운 도구·무기에 쓴다. 세운 뒤에도 바닥 가운데가 원점이다.
 
 1. 품질본은 겉면 안쪽에 또 한 겹이 있는 얇은 이중 껍질이라 그대로 줄이면 두 겹이 서로 뚫는다. 그래서 먼저 바깥 껍데기를
    만든다. 가장 긴 변을 192칸(`--voxels`)으로 나눈 복셀에 표면을 찍고, 바깥에서 닿지 않는 곳을 채운다. 바닥 아래를 벽으로
@@ -415,6 +418,36 @@ UV 경계의 동일 위치 정점은 검사할 때만 합친다. 검사는 경�
 이미 손실된 형상은 되살리지 못한다. 이전 `audit: true` 작업의 `mesh/audit/decoded.npz`는
 `refine-mesh`의 원본으로 사용할 수 있다. 새 생성은 `audit` 여부와 관계없이 원본을 항상 남긴다.
 진단용 `trellis_audit.py`는 이전 경로 재현용이며 일반 생성 기본 경로는 아니다.
+
+## 건축 키트 계약
+
+`building-kit`은 게임 격자에 맞춘 모듈 부품을 Blender로 만들고, 모든 부품을 CC0 스캔 재질로 만든 트림 시트 한 장에
+매핑한다. 생성 모델을 쓰지 않는다. 재질은 `presets.json`의 `buildingKit.materials`가 URL·md5로 고정하고
+`python -m local_assets_engine.materials fetch`가 `models/materials/<id>/`(Git 제외)에 받는다. 작업 안에서는 받지 않는다.
+
+1. `kit-atlas`(`tools.kit_atlas`): 2W×W(가로 `atlasWidth`) 트림 시트. 위 절반은 가로 판자 스캔 한 장이고, AO의 좁은 골로
+   찾은 판자 사이 이음을 양쪽에서 거울로 채워 지우고(노멀 x는 뒤집음), 판자마다 넓은 색을 평균 쪽으로 85% 당긴다. 높이 지도의
+   틈으로 찾은 판자 줄이 `layout.json`의 `rows`다. 아래 두 구역은 거친 나무 스캔을 정수 개 타일로 깐 것으로, 결을 U로 돌리고
+   판자 색에 맞춘 `timber`(기둥·보·서까래)와, 너와 폭·이음 틈·아래 끝 그늘을 그린 `shingles` 띠 4개다. 모든 구역이 가로
+   전체를 반복하므로 판자의 U는 길이를 따라 감기고 V는 한 구역 안에 있다. 한 U는 판자 스캔의 실제 폭(m)이다.
+   맵은 `T_<name>_kit_basecolor`(sRGB)·`normal`(OpenGL +Y)·`roughness`·`occlusion`과 Unity용 `metallicsmoothness`(R 0, G AO, A 매끄러움)다.
+2. `kit-build`(`tools.kit_build`): 부품마다 판자·각재 상자를 만들고 UV를 트림 시트에 둔다. 판자 하나가 판자 줄 하나다.
+   Blender 축은 X 오른쪽, Y 앞, Z 위이고 원점은 칸(벽은 경계) 가운데의 층 바닥 높이다. 게임용 굽기와 같은 FBX 설정이라
+   Unity에서는 (x, y, z) = Blender (X, Z, Y)가 되어 프리팹 +Z가 앞이며 돌릴 필요가 없다.
+   - 크기는 게임 격자를 따른다. 바닥 칸 4×4m·두께 0.1m, 평지붕은 층 위 0.2m, 경사 지붕은 앞(+Z)으로 칸의 절반을 오른다.
+     벽은 칸 경계를 따라 놓이고 양 끝 모서리 기둥(벽 두께 + 0.05m 정사각)까지가 길이다. 문 1.6×2.4m, 창 1.6m 폭·1.0~2.2m,
+     계단은 12단으로 층 높이 + 바닥 두께를 오르고 꼭대기 0.4m가 평평하다. 난간 1m·울타리 1.2m 기둥은 1m 간격, 울타리 문은
+     두 짝이 앞으로 70° 열려 있다. 충돌체는 게임이 만든다.
+   - 벽은 양면 세로 판자(폭 약 0.17m, 판자마다 ±3mm 앞뒤)와 벽보다 두꺼운 기둥·하인방·인방, 문 머리 높이의 띠장이다.
+     창의 유리는 두 번째 재질 슬롯 `M_glass`다. 경사 지붕은 서까래·덮개 판자·조금씩 들린 너와 줄·용마루 반쪽과 양옆 박공
+     세로 판자·박공판을 포함해, 마주 놓은 두 칸이 닫힌 박공지붕이 된다.
+   - 이웃이 겹치는 곳: 모서리 기둥은 정사각이고 네 면을 같게 매핑해, 두 부품의 기둥이 겹쳐도 같은 그림이라 깜빡이지 않는다.
+     가로대·평판·지붕 줄은 칸 경계에서 끝나 이웃과 면이 겹치지 않는다.
+   - 부품마다 `SM_<name>_<부품>.fbx`(게임)·`.glb`(JPEG 텍스처를 담은 미리보기)를 쓰고, FBX는 Blender로, GLB는 trimesh로 다시
+     읽어 면 수·크기를 비교한다(`exportProblems`). 부품 미리보기, 게임처럼 놓아 조립한 `house.png`, 부품 모음 `pieces.png`,
+     콘셉트 이미지와 나란한 `review.png`, 부품별 삼각형·Unity 경계를 담은 `kit.json`을 남긴다.
+3. 부품마다 `variant: building-kit`인 `pending` 메시 에셋을 등록한다. 내보낸 파일이 다르면 `mesh.game_export_mismatch`(fail),
+   삼각형이 12,000을 넘으면 `mesh.kit_triangles`(warn)다.
 
 ## 영상 계약
 

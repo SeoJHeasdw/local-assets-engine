@@ -14,7 +14,7 @@ from PIL import Image
 
 from local_assets_engine.jobs import JobStore
 from local_assets_engine.presets import PresetError, load_presets
-from local_assets_engine.recipes import RECIPES, describe_recipes
+from local_assets_engine.recipes import RECIPES, building_kit, describe_recipes
 from local_assets_engine.recipes.schemas import SCHEMAS
 from local_assets_engine.uploads import save_upload
 
@@ -82,6 +82,7 @@ def world(tmp_path_factory):
         "repair-mesh": [{"source": legacy}],
         "refine-mesh": [{"source": mesh}],
         "game-asset": [{"source": mesh}],
+        "building-kit": [{"pieces": ["wall", "floor"]}],
         "import-image": [{"uploadId": upload}],
         "edit-asset": [
             {"source": image, "plan": {"frame": {"crop": {}}, "layers": [color, stamp]}},
@@ -97,7 +98,11 @@ def world(tmp_path_factory):
     }
     presets = load_presets()
     schemas = {recipe["name"]: recipe["paramsSchema"] for recipe in describe_recipes(RECIPES, presets)}
-    return store, presets, bases, schemas
+    # 건축 키트 재질은 기기에 받아 두는 파일이라, 스키마 검사에서는 받아 둔 것으로 친다.
+    patch = pytest.MonkeyPatch()
+    patch.setattr(building_kit, "missing", lambda _presets: [])
+    yield store, presets, bases, schemas
+    patch.undo()
 
 
 def accepted(recipe_id, params, world):

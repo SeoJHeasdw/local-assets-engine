@@ -80,6 +80,7 @@ def prepare(params: dict[str, Any], presets: dict[str, Any], store: "JobStore") 
         "name": name,
         "sizeMeters": size,
         "resize": params.get("sizeMeters") is not None,
+        "upright": bool_param(params, "upright", False),
         "sourceState": _existing(store, job_id, meta.get("sourceStateFile")),
         "inputImage": _existing(store, job_id, "mesh/input.png"),
         "subject": job["params"].get("subject", job.get("title", "")),
@@ -93,7 +94,7 @@ def run(ctx: "JobContext") -> None:
     game.mkdir()
     master = Path(p["masterPath"])
     low, reduce_stats, bake_stats = game / "low.glb", game / "reduce.json", game / "bake.json"
-    resize = ["--size", p["sizeMeters"]] if p.get("resize") else []
+    resize = (["--size", p["sizeMeters"]] if p.get("resize") else []) + (["--upright"] if p.get("upright") else [])
     with ctx.stage("game-reduce", "면 줄이기·UV 펴기") as stage:
         stage.run([*TOOL, "reduce", "--master", master, "--output", low, "--stats", reduce_stats,
                    "--target-faces", p["targetFaces"], "--texture-size", p["textureSize"], *resize])
@@ -142,7 +143,8 @@ def run(ctx: "JobContext") -> None:
     asset = ctx.add_asset(
         kind="mesh", role="final", file=glb, preview=inspection / "game-0.png",
         meta={"variant": "game-asset", "label": "게임용", "name": p["name"], "targetFaces": p["targetFaces"],
-              "textureSize": p["textureSize"], "sizeMeters": p["sizeMeters"], "stats": stats, "files": files,
+              "textureSize": p["textureSize"], "sizeMeters": p["sizeMeters"], "upright": p.get("upright", False),
+              "stats": stats, "files": files,
               "inspectionFile": ctx.rel(inspection / "game-contact.png"), "compareFile": ctx.rel(compare),
               "reviewFile": ctx.rel(review / "review.png"), "distanceFile": ctx.rel(review / "distance.png"),
               "reviewView": json.loads((review / "review.json").read_text("utf-8"))["view"],

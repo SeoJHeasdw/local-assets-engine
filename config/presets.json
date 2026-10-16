@@ -79,6 +79,84 @@
       "ao": true
     }
   },
+  "buildingKit": {
+    "label": "나무 건축 키트",
+    "name": "wood",
+    "seed": 7,
+    "atlasWidth": 2048,
+    "atlasWidths": [
+      1024,
+      2048,
+      4096
+    ],
+    "cellMeters": 4.0,
+    "storyMeters": 3.0,
+    "wallThickness": 0.25,
+    "materials": {
+      "planks": {
+        "source": "polyhaven",
+        "id": "raw_plank_wall",
+        "page": "https://polyhaven.com/a/raw_plank_wall",
+        "license": "CC0",
+        "licenseUrl": "https://polyhaven.com/license",
+        "sizeMeters": 1.87,
+        "resolution": "4k",
+        "files": {
+          "diff": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/raw_plank_wall/raw_plank_wall_diff_4k.jpg",
+            "md5": "aafed6c308139515b8ee9f0800ebb339"
+          },
+          "nor_gl": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/raw_plank_wall/raw_plank_wall_nor_gl_4k.jpg",
+            "md5": "2206397597b2677dd3fbb111275c6173"
+          },
+          "rough": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/raw_plank_wall/raw_plank_wall_rough_4k.jpg",
+            "md5": "7d59d6568fa2035fedab3ea8536c039a"
+          },
+          "ao": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/raw_plank_wall/raw_plank_wall_ao_4k.jpg",
+            "md5": "d56f5ce08f645138cb5410fc4eaf760e"
+          },
+          "disp": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/raw_plank_wall/raw_plank_wall_disp_4k.jpg",
+            "md5": "42bc0f0941ac694441999f9a4bb0523c"
+          }
+        }
+      },
+      "timber": {
+        "source": "polyhaven",
+        "id": "rough_wood",
+        "page": "https://polyhaven.com/a/rough_wood",
+        "license": "CC0",
+        "licenseUrl": "https://polyhaven.com/license",
+        "sizeMeters": 0.5,
+        "resolution": "2k",
+        "files": {
+          "diff": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rough_wood/rough_wood_diff_2k.jpg",
+            "md5": "f5f9c55696f047ceaa49dc97c5aa5526"
+          },
+          "nor_gl": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rough_wood/rough_wood_nor_gl_2k.jpg",
+            "md5": "62594f2d00eb246581b9d4fde30209f1"
+          },
+          "rough": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rough_wood/rough_wood_rough_2k.jpg",
+            "md5": "832d6d549a8e76c16b9af2586f429d6c"
+          },
+          "ao": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rough_wood/rough_wood_ao_2k.jpg",
+            "md5": "e75813ed06185a5f1cecd4b6e2c082f0"
+          },
+          "disp": {
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rough_wood/rough_wood_disp_2k.jpg",
+            "md5": "4e04c41245146e21ca500ff72eac74d9"
+          }
+        }
+      }
+    }
+  },
   "videoModel": {
     "id": "wan2.2-ti2v-5b",
     "label": "Wan2.2 TI2V 5B",

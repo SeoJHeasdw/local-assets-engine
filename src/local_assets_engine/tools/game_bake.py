@@ -63,17 +63,59 @@ def _load_joined(path: Path, name: str):
     return obj
 
 
-def _fit(obj, size: float | None) -> None:
+def upright_matrix(coords):
+    """Rotation and offset that stand a long object on end: longest axis up, wider end on top.
+
+    Principal axes of the points: the longest becomes Z, the thinnest Y (keeping the side that
+    faced -Y, the input photo's view, toward -Y), the third X. The rotated points sit with their
+    bottom at z = 0 and their bounding box centered on x = y = 0, like every master.
+    """
+    import numpy as np
+
+    sample = coords[:: max(1, len(coords) // 200_000)]
+    center = sample.mean(axis=0)
+    _, _, axes = np.linalg.svd(sample - center, full_matrices=False)
+    long, thin = axes[0], axes[2]
+    along = (sample - center) @ long
+    upper = along > np.median(along)
+    side = (sample - center) @ axes[1]
+    if np.ptp(side[~upper]) > np.ptp(side[upper]):
+        long = -long
+    if thin[1] < 0:
+        thin = -thin
+    rotation = np.stack([np.cross(thin, long), thin, long])
+    turned = (coords - center) @ rotation.T
+    low, high = turned.min(axis=0), turned.max(axis=0)
+    offset = -np.array([(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, low[2]])
+    return rotation, offset - rotation @ center
+
+
+def _upright(obj) -> None:
+    import numpy as np
+    from mathutils import Matrix
+
+    rotation, offset = upright_matrix(mesh_arrays(obj)[0])
+    transform = np.eye(4)
+    transform[:3, :3], transform[:3, 3] = rotation, offset
+    obj.data.transform(Matrix(transform.tolist()))
+    obj.data.update()
+
+
+def _fit(obj, size: float | None, upright: bool = False) -> None:
     """Scale ``obj`` about the origin (the master's bottom center) so its longest side is ``size`` meters.
 
     The hull voxels, ray distances and texel layout all follow the longest side, so a game copy
     at another size is the same bake scaled, without rebuilding the master.
     """
+    if upright:
+        _upright(obj)
     if not size:
         return
     import bpy
+    import numpy as np
 
-    longest = max(obj.dimensions)
+    # From the vertices: the object's cached dimensions do not follow a mesh just rotated in place.
+    longest = float(np.ptp(mesh_arrays(obj)[0], axis=0).max())
     if longest <= 0 or abs(size / longest - 1) < 1e-6:
         return
     obj.scale = (size / longest,) * 3
@@ -255,7 +297,7 @@ def reduce(args) -> int:
     print(progress_line(0, 6, "원본 불러오는 중"), flush=True)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     high = _load_joined(args.master, "high")
-    _fit(high, args.size)
+    _fit(high, args.size, args.upright)
     coords, triangles = mesh_arrays(high)
     span = float((coords.max(axis=0) - coords.min(axis=0)).max())
     voxel = span / args.voxels
@@ -517,7 +559,7 @@ def bake(args) -> int:
     print(progress_line(0, 8, "원본·저면 메시 불러오는 중"), flush=True)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     high = _load_joined(args.master, "high")
-    _fit(high, args.size)
+    _fit(high, args.size, args.upright)
     low = _load_joined(args.low, f"SM_{args.name}")
     reduce_stats = json.loads(args.reduce_stats.read_text("utf-8"))
     span = reduce_stats["spanMeters"]
@@ -740,6 +782,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--voxels", type=int, default=192, help="voxels along the longest side for the outer hull")
     r.add_argument("--seal-ground", action=argparse.BooleanOptionalAction, default=True)
     r.add_argument("--size", type=float, help="longest side in meters; the master's own when omitted")
+    r.add_argument("--upright", action="store_true", help="stand the longest axis up first (tools, weapons)")
     b = sub.add_parser("bake")
     b.add_argument("--master", required=True, type=Path)
     b.add_argument("--low", required=True, type=Path)
@@ -751,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--samples", type=int, default=16)
     b.add_argument("--ao", action=argparse.BooleanOptionalAction, default=True)
     b.add_argument("--size", type=float, help="longest side in meters; must match the reduce step")
+    b.add_argument("--upright", action="store_true", help="must match the reduce step")
     c = sub.add_parser("compare")
     c.add_argument("--panel", action="append", required=True, help="label=/path.png")
     c.add_argument("--output", required=True, type=Path)

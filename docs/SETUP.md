@@ -13,6 +13,7 @@
 | CPU 표면·PBR 도구(scikit-image 0.26.0, point-cloud-utils 0.34.0, xatlas) | 설치됨 (2026-09-17). `scripts/setup_trellis.sh`에 포함 |
 | Hugging Face 로그인, DINOv3 승인 | 완료 (2026-09-16). `npm run doctor`에서 3D 생성 ✓ |
 | 영상 모델 Wan2.2 TI2V 5B (환경 `engines/video`, 가중치 34.2GB) | 설치됨 (2026-09-24). 가중치 sha256 확인, `npm run doctor`에서 영상 생성 ✓. 아래 5단계의 4번(첫 측정) 진행 중 |
+| 건축 키트 CC0 재질 (Poly Haven `raw_plank_wall` 4k·`rough_wood` 2k, 48MB) | 받음 (2026-10-16). 새 기기에서는 `.venv/bin/python -m local_assets_engine.materials fetch` |
 | 3스텝 증류판 FastWan2.2-TI2V-5B 트랜스포머 (10.0GB) | 사용자가 내려받음 (2026-09-24). 엔진 연결 전. 다음 작업 시작 때 sha256 `a1cf4acd5d02…`로 완료를 확인한다. 아래 6단계 |
 
 ## 0. 가중치 내려받기가 끊길 때

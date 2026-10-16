@@ -15,6 +15,7 @@ from typing import Any
 from .paths import (
     MODEL_VIEWER_JS, child_env, engine_bin, find_tool, trellis_generate_script, trellis_python, video_python,
 )
+from .materials import missing as missing_materials
 from .presets import image_models, load_presets
 from .workers.video_runner import missing_weight_files
 from .workers.model_cache import json_file, valid_safetensors, weight_files_missing
@@ -178,6 +179,9 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         hint="docs/SETUP.md의 고정 커밋 가중치 준비")
     add("metalCompiler", "Xcode Metal 컴파일러", _metal_compiler(), required=False,
         hint="docs/SETUP.md 2단계")
+    gone = missing_materials(presets)
+    add("kitMaterials", "건축 키트 CC0 재질", not gone, required=False, detail=", ".join(gone[:2]),
+        hint="python -m local_assets_engine.materials fetch (약 50MB, 라이선스는 docs/DECISIONS.md)")
     add("modelViewer", "앱 3D 미리보기 (model-viewer)", MODEL_VIEWER_JS.exists(), required=False,
         hint="npm install")
     ok, detail = _run_python(trellis_python(),
@@ -223,6 +227,7 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         "gameReady": ready("gltfpack"),
         # 프리비즈는 Blender만 쓴다. 이미지·3D 모델이 없어도 샷을 잡을 수 있다.
         "previz": ready("bpy"),
+        "buildingKit": ready("bpy", "kitMaterials"),
         # 가중치는 작업 안에서 내려받지 않으므로 받아 둔 것까지 갖춰야 만들 수 있다.
         "video": ready("appleSilicon", "videoEngine", "videoWeights", "mps") if "videoEngine" in checks else False,
     }
@@ -241,6 +246,7 @@ CAPABILITY_LABELS = {
     "meshTexture": "원본 PBR 텍스처 굽기",
     "gameReady": "게임용 GLB 최적화",
     "previz": "프리비즈 샷 렌더",
+    "buildingKit": "건축 키트",
     "video": "영상 생성",
 }
 

@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from ..presets import CAMERA_PARTS, image_models, video_models
 from ..uploads import ID_PATTERN as UPLOAD_ID
-from . import edit_asset, game_asset, image, previz, selftest, video
+from . import building_kit, edit_asset, game_asset, image, previz, selftest, video
 from .base import MAX_SEED
 
 Schema = dict[str, Any]
@@ -186,9 +186,26 @@ def _game_asset(presets: dict[str, Any]) -> Schema:
         "ao": _boolean(defaults["ao"], "앰비언트 오클루전 맵을 함께 굽는다"),
         "sizeMeters": _number(game_asset.MIN_SIZE, game_asset.MAX_SIZE, None,
                               "가장 긴 변(m). 비우면 품질본 크기, 바닥 중심 기준으로 배율만 바꾼다"),
+        "upright": _boolean(False, "가장 긴 축을 세로로 세우고 넓은 끝을 위로 둔다(도구·무기). 사진에서 보이던 면은 -Y 쪽"),
         "name": {"type": "string", "pattern": f"^{game_asset.NAME.pattern}$", "default": defaults["name"],
                  "description": "파일 이름. SM_<name>.fbx·T_<name>_*.png"},
     }, required=["source"])
+
+
+def _building_kit(presets: dict[str, Any]) -> Schema:
+    defaults = building_kit.kit_defaults(presets)
+    return _object({
+        "name": {"type": "string", "pattern": f"^{building_kit.NAME.pattern}$", "default": defaults["name"],
+                 "description": "파일 이름 앞부분. SM_<name>_<부품>.fbx·T_<name>_kit_*.png"},
+        "pieces": {"type": "array", "items": {"enum": list(building_kit.PIECES)},
+                   "default": list(building_kit.PIECES), "description": "만들 부품. 비우면 전부"},
+        "seed": _integer(0, 2**31 - 1, defaults["seed"], "판자 배치·색 변화"),
+        "atlasWidth": _choice(defaults["atlasWidths"], defaults["atlasWidth"], "트림 시트 가로 픽셀(세로는 두 배)"),
+        "cellMeters": _number(1.0, 16.0, defaults["cellMeters"], "구조 칸 한 변(m). 벽 길이는 칸 + 벽 두께"),
+        "storyMeters": _number(2.0, 8.0, defaults["storyMeters"], "층 높이(m)"),
+        "wallThickness": _number(0.1, 0.6, defaults["wallThickness"], "벽 두께(m)"),
+        "referenceImage": _text(description="검수판에 조립한 집과 나란히 둘 콘셉트 이미지의 절대 경로"),
+    })
 
 
 def _import_image(_presets: dict[str, Any]) -> Schema:
@@ -353,6 +370,7 @@ SCHEMAS: dict[str, Callable[[dict[str, Any]], Schema]] = {
     "repair-mesh": _repair_mesh,
     "refine-mesh": _refine_mesh,
     "game-asset": _game_asset,
+    "building-kit": _building_kit,
     "import-image": _import_image,
     "edit-asset": _edit_asset,
     "previz": _previz,

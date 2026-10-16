@@ -1131,6 +1131,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
         <label class="field"><span class="label">크기 <em>가장 긴 변 m</em></span><input data-game="sizeMeters" type="number" min="${bake.sizeMeters?.minimum ?? 0.01}" max="${bake.sizeMeters?.maximum ?? 1000}" step="0.01" value="${meta.sizeMeters ?? ""}"></label>
         <label class="field"><span class="label">파일 이름 <em>영문 소문자·숫자·_</em></span><input data-game="name" maxlength="40" value="${escapeHtml(bake.name?.default || "")}"></label>
         <label class="check-label"><input type="checkbox" data-game="ao" ${bake.ao?.default === false ? "" : "checked"}>AO 맵도 굽기</label>
+        <label class="check-label"><input type="checkbox" data-game="upright">긴 축을 세로로 세우기 (도구·무기)</label>
         <button class="secondary" type="button" data-game-bake>게임용으로 굽기</button>` : "";
       const info = popup("정보·정리", `<dl class="meta"><dt>파일</dt><dd>${escapeHtml(asset.file)}</dd><dt>크기</dt><dd>${isMesh ? formatBytes(stats.bytes ?? stats.bake?.bytes?.glb) : `${meta.width} × ${meta.height}px`}</dd>${isMesh ? `<dt>면 수</dt><dd>${(stats.facesOut ?? stats.triangles ?? 0).toLocaleString()}</dd><dt>텍스처</dt><dd>${meta.textureSize || "–"}px</dd>` : ""}<dt>시드</dt><dd>${meta.seed ?? "–"}</dd>${meta.model ? `<dt>생성 모델</dt><dd>${escapeHtml(job.params?.imageModelConfig?.label || meta.model)}</dd>` : ""}</dl>
         ${meta.inspectionFile ? `<a class="secondary button-link" href="${fileUrl(job.id, meta.inspectionFile)}" target="_blank" rel="noopener">여섯 방향 보기</a>` : ""}
@@ -1164,7 +1165,7 @@ export function createEditor({ api, refreshJobs, openAsset, makeMesh, addToPrevi
       info.querySelector("[data-reveal-fbx]")?.addEventListener("click", () => bridge.reveal(job.id, meta.files.fbx));
       info.querySelector("[data-game-bake]")?.addEventListener("click", async (event) => {
         const field = (key) => info.querySelector(`[data-game="${key}"]`);
-        const params = { source: { jobId: job.id, assetId: asset.id }, ao: field("ao").checked };
+        const params = { source: { jobId: job.id, assetId: asset.id }, ao: field("ao").checked, upright: field("upright").checked };
         if (field("targetFaces").value) params.targetFaces = Number(field("targetFaces").value);
         if (field("textureSize").value) params.textureSize = Number(field("textureSize").value);
         if (field("name").value.trim()) params.name = field("name").value.trim();

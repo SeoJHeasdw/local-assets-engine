@@ -157,6 +157,29 @@ def test_outer_hull_is_closed_consistently_wound_and_fills_a_ground_opening():
         assert ground is None or abs(vertices[:, 2].min()) < 1e-3 / 32
 
 
+def test_upright_stands_a_lying_tool_on_its_handle_with_the_head_on_top():
+    from local_assets_engine.tools.game_bake import upright_matrix
+
+    rng = np.random.default_rng(0)
+    # A handle 0.5 m long and a 0.15 m wide head at one end, lying at 45° in the x-z plane, 2 cm thick.
+    handle = np.c_[rng.uniform(0, 0.5, 4000), rng.uniform(-0.01, 0.01, 4000), rng.uniform(-0.015, 0.015, 4000)]
+    head = np.c_[rng.uniform(0.42, 0.5, 3000), rng.uniform(-0.01, 0.01, 3000), rng.uniform(-0.12, 0.03, 3000)]
+    tool = np.r_[handle, head]
+    turn = np.array([[np.cos(np.pi / 4), 0, -np.sin(np.pi / 4)], [0, 1, 0], [np.sin(np.pi / 4), 0, np.cos(np.pi / 4)]])
+    lying = tool @ turn.T + [0.3, -0.2, 0.1]
+    rotation, offset = upright_matrix(lying)
+    standing = lying @ rotation.T + offset
+    size = np.ptp(standing, axis=0)
+    assert size[2] == pytest.approx(0.5, abs=0.02) and size[1] < 0.03
+    assert standing[:, 2].min() == pytest.approx(0.0, abs=1e-9)
+    assert abs(standing[:, 0].min() + standing[:, 0].max()) < 1e-9
+    assert np.allclose(rotation @ rotation.T, np.eye(3)) and np.linalg.det(rotation) == pytest.approx(1.0)
+    # The head (the wide end) is on top.
+    top = standing[standing[:, 2] > 0.4]
+    bottom = standing[standing[:, 2] < 0.1]
+    assert np.ptp(top[:, 0]) > 2 * np.ptp(bottom[:, 0])
+
+
 def test_fill_outside_copies_the_nearest_valid_texel_to_the_edge():
     from local_assets_engine.tools.game_bake import fill_outside, nearest_valid
 
