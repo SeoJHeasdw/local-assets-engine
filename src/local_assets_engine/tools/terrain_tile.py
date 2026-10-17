@@ -85,18 +85,19 @@ def hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     return rgb + m[..., None]
 
 
-def resample_periodic(array: np.ndarray, size: int) -> np.ndarray:
-    """Resize a seamless square map to ``size``² pixels, wrapping at the edges, antialiased when shrinking."""
+def resample_periodic(array: np.ndarray, size: int | tuple[int, int]) -> np.ndarray:
+    """Resize a seamless map to ``size``² pixels (or ``(rows, columns)``), wrapping at the edges, antialiased
+    when shrinking."""
     from scipy.ndimage import gaussian_filter, zoom
 
-    source = array.shape[0]
-    if source == size:
+    shape = (size, size) if isinstance(size, int) else tuple(size)
+    if array.shape[:2] == shape:
         return array.astype(np.float32)
-    factor = size / source
+    factors = [shape[0] / array.shape[0], shape[1] / array.shape[1]]
     extra = [0] * (array.ndim - 2)
-    if factor < 1:
-        array = gaussian_filter(array, [0.45 / factor] * 2 + extra, mode="wrap")
-    resized = zoom(array, [factor, factor] + [1] * (array.ndim - 2), order=3, mode="grid-wrap", grid_mode=True)
+    if min(factors) < 1:
+        array = gaussian_filter(array, [0.45 / f if f < 1 else 0.0 for f in factors] + extra, mode="wrap")
+    resized = zoom(array, factors + [1] * (array.ndim - 2), order=3, mode="grid-wrap", grid_mode=True)
     return resized.astype(np.float32)
 
 
@@ -107,8 +108,9 @@ def _read(path: Path, mode: str) -> np.ndarray:
         return np.asarray(image.convert(mode), dtype=np.float32) / 255.0
 
 
-def load_scan(folder: Path, size: int) -> dict[str, np.ndarray]:
-    """A texture scan's maps at ``size``² pixels: linear color, unit normals, roughness, occlusion, height."""
+def load_scan(folder: Path, size: int | tuple[int, int]) -> dict[str, np.ndarray]:
+    """A texture scan's maps at ``size``² pixels (or ``(rows, columns)``): linear color, unit normals,
+    roughness, occlusion, height."""
     maps = {
         "color": srgb_to_linear(resample_periodic(_read(folder / "diff.jpg", "RGB"), size)),
         "normal": resample_periodic(_read(folder / "nor_gl.jpg", "RGB") * 2 - 1, size),
@@ -174,16 +176,24 @@ def grid(size: int, patch_px: float) -> tuple[int, int]:
     return count, size // count
 
 
-def patch_offsets(rng: np.random.Generator, period: int, patch: int, count: int, margin: int = 4) -> np.ndarray:
-    """Top-left corners of candidate patches that stay inside the scan.
+def patch_offsets(rng: np.random.Generator, period: int | tuple[int, int], patch: int, count: int,
+                  margin: int = 4) -> np.ndarray:
+    """Top-left corners (row, column) of candidate patches that stay inside the scan.
 
     Scans sold as seamless still step at their own edge (``forest_leaves_02`` 1.4–1.7 times an ordinary
     neighbor step), and a patch taken across it would carry that line into the tile. Too small a scan wraps.
+    ``period`` is the scan's side, or ``(rows, columns)`` for a scan that is not square (tree bark).
     """
-    room = period - patch - 2 * margin
-    if room <= 0:
-        return rng.integers(0, period, size=(count, 2))
-    return margin + rng.integers(0, room + 1, size=(count, 2))
+    if isinstance(period, int):
+        room = period - patch - 2 * margin
+        if room <= 0:
+            return rng.integers(0, period, size=(count, 2))
+        return margin + rng.integers(0, room + 1, size=(count, 2))
+    columns = []
+    for side in period:
+        room = side - patch - 2 * margin
+        columns.append(rng.integers(0, side, size=count) if room <= 0 else margin + rng.integers(0, room + 1, size=count))
+    return np.stack(columns, axis=1)
 
 
 def graph_cut(cost: np.ndarray, known: np.ndarray, pinned: np.ndarray) -> np.ndarray:
@@ -273,7 +283,8 @@ def quilt(source: dict[str, np.ndarray], size: int, patch_px: float, px_per_mete
     """A ``size``² tile with period ``size`` made of patches of the periodic ``source`` maps."""
     from scipy.ndimage import gaussian_filter
 
-    period = source["height"].shape[0]
+    rows, columns = source["height"].shape
+    period = rows if rows == columns else (rows, columns)
     count, step = grid(size, patch_px)
     overlap = max(4, step // 3)
     patch = step + overlap
@@ -295,13 +306,13 @@ def quilt(source: dict[str, np.ndarray], size: int, patch_px: float, px_per_mete
             ly, lx = ly * sub, lx * sub
             if ly.size:
                 target = out_feats[ys[ly], xs[lx]]
-                sy = (offsets[:, 0, None] + ly[None]) % period
-                sx = (offsets[:, 1, None] + lx[None]) % period
+                sy = (offsets[:, 0, None] + ly[None]) % rows
+                sx = (offsets[:, 1, None] + lx[None]) % columns
                 error = ((feats[sy, sx] - target[None]) ** 2).sum(axis=-1).mean(axis=-1)
             else:
                 error = np.zeros(CANDIDATES)
-            oy = (offsets[:, 0, None, None] + probe[None, :, None]) % period
-            ox = (offsets[:, 1, None, None] + probe[None, None, :]) % period
+            oy = (offsets[:, 0, None, None] + probe[None, :, None]) % rows
+            ox = (offsets[:, 1, None, None] + probe[None, None, :]) % columns
             outliers = marked[oy, ox].sum(axis=(1, 2))
             refused += int((outliers > 0).sum())
             ranked = error + outliers * BLOCKED
@@ -309,7 +320,7 @@ def quilt(source: dict[str, np.ndarray], size: int, patch_px: float, px_per_mete
             pool = np.nonzero(ranked <= best * (1 + TOLERANCE) + 1e-9)[0]
             pick = int(rng.choice(pool))
             errors.append(float(error[pick]))
-            py, px = (offsets[pick, 0] + np.arange(patch)) % period, (offsets[pick, 1] + np.arange(patch)) % period
+            py, px = (offsets[pick, 0] + np.arange(patch)) % rows, (offsets[pick, 1] + np.arange(patch)) % columns
             piece = np.ix_(py, px)
             new_feats = feats[piece]
             take = np.ones((patch, patch), dtype=bool)
@@ -469,7 +480,12 @@ def build(spec: dict, report=None) -> tuple[dict[str, np.ndarray], dict]:
     def layer(source: dict, label: str, start: float) -> dict[str, np.ndarray]:
         if report:
             report(start, f"{label} 스캔 불러오는 중")
-        scan_px = max(16, round(float(source["sizeMeters"]) * px_per_meter))
+        if source.get("dimensionsMeters"):
+            # 가로·세로가 다른 스캔(나무껍질 1×2m)은 세로를 늘이지 않고 제 비율로 줄인다.
+            width, height = source["dimensionsMeters"]
+            scan_px = (max(16, round(float(height) * px_per_meter)), max(16, round(float(width) * px_per_meter)))
+        else:
+            scan_px = max(16, round(float(source["sizeMeters"]) * px_per_meter))
         maps = load_scan(Path(source["dir"]), scan_px)
         slope = directional_light(maps["color"], maps["normal"])
         left = remove_directional(maps, slope)
@@ -534,7 +550,7 @@ def pack(maps: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
             "mask": byte(mask)}
 
 
-def preview(images: dict[str, np.ndarray], title: str, tile_px: int = 400, map_px: int = 240):
+def preview(images: dict[str, np.ndarray], title: str, tile_px: int = 400, map_px: int = 240, blue: str = "B height"):
     """3×3 tiles lit from the upper left (repeat and seams show here) beside the separate maps."""
     from PIL import Image, ImageDraw
 
@@ -549,7 +565,7 @@ def preview(images: dict[str, np.ndarray], title: str, tile_px: int = 400, map_p
     tiled = np.tile(lit, (3, 3, 1))
     mask = images["mask"]
     panels = [("basecolor", images["basecolor"]), ("normal", images["normal"]),
-              ("G occlusion", np.repeat(mask[..., 1:2], 3, axis=-1)), ("B height", np.repeat(mask[..., 2:3], 3, axis=-1)),
+              ("G occlusion", np.repeat(mask[..., 1:2], 3, axis=-1)), (blue, np.repeat(mask[..., 2:3], 3, axis=-1)),
               ("A smoothness", np.repeat(mask[..., 3:4], 3, axis=-1))]
     board = Image.new("RGB", (tile_px * 3 + map_px, max(tile_px * 3, map_px * len(panels)) + 28), (36, 38, 42))
     board.paste(Image.fromarray(tiled), (0, 28))

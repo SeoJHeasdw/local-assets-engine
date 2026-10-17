@@ -129,8 +129,8 @@ def _check_scans(data: dict[str, Any]) -> None:
     """Every pinned scan has a checksum per file, and terrain presets only name texture scans."""
     library = data.get("scanLibrary", {})
     for scan_id, scan in library.items():
-        if scan.get("kind") not in ("texture", "model") or not scan.get("files"):
-            raise PresetError(f"scanLibrary.{scan_id}: kind(texture·model)와 files가 필요합니다.")
+        if scan.get("kind") not in ("texture", "model", "leaves") or not scan.get("files"):
+            raise PresetError(f"scanLibrary.{scan_id}: kind(texture·model·leaves)와 files가 필요합니다.")
         if any(not entry.get("md5") or not (entry.get("url") or entry.get("member")) for entry in scan["files"].values()):
             raise PresetError(f"scanLibrary.{scan_id}: 파일마다 url(또는 압축 안 member)과 md5를 고정해야 합니다.")
         if any(entry.get("member") for entry in scan["files"].values()) and not scan.get("archive", {}).get("md5"):
@@ -140,6 +140,8 @@ def _check_scans(data: dict[str, Any]) -> None:
             raise PresetError(f"scanLibrary.{scan_id}: 질감은 diff·nor_gl·rough·ao·disp와 실제 크기(sizeMeters)가 필요합니다.")
         if scan["kind"] == "model" and scan.get("gltf") not in scan["files"]:
             raise PresetError(f"scanLibrary.{scan_id}: 모델은 files 안의 gltf 파일 이름이 필요합니다.")
+        if scan["kind"] == "leaves" and set(scan["files"]) != {"diff", "alpha", "nor_gl", "rough", "ao"}:
+            raise PresetError(f"scanLibrary.{scan_id}: 잎은 diff·alpha·nor_gl·rough·ao가 필요합니다.")
     seen: set[str] = set()
     for preset in data.get("terrain", {}).get("presets", []):
         preset_id = preset.get("id")

@@ -183,8 +183,9 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
     add("kitMaterials", "건축 키트 CC0 재질", not gone, required=False, detail=", ".join(gone[:2]),
         hint="python -m local_assets_engine.materials fetch (약 50MB, 라이선스는 docs/DECISIONS.md)")
     library = presets.get("scanLibrary", {})
-    for key, label, kind, size in (("terrainScans", "지형 질감 CC0 스캔", "texture", "약 140MB"),
-                                   ("rockScans", "바위 CC0 스캔 모델", "model", "약 120MB")):
+    for key, label, kind, size in (("terrainScans", "지형·껍질 CC0 스캔 질감", "texture", "약 380MB"),
+                                   ("rockScans", "바위 CC0 스캔 모델", "model", "약 120MB"),
+                                   ("leafScans", "나무 잎·잔가지 CC0 스캔", "leaves", "약 27MB")):
         gone = missing_materials(presets, [scan_id for scan_id, scan in library.items() if scan["kind"] == kind])
         add(key, label, not gone, required=False, detail=", ".join(gone[:2]),
             hint=f"python -m local_assets_engine.materials fetch ({size}, 라이선스는 docs/DECISIONS.md)")
@@ -236,6 +237,7 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         "buildingKit": ready("bpy", "kitMaterials"),
         "terrain": ready("terrainScans"),
         "scanMesh": ready("bpy", "rockScans", "gltfpack"),
+        "tree": ready("bpy", "terrainScans", "leafScans", "kitMaterials"),
         # 가중치는 작업 안에서 내려받지 않으므로 받아 둔 것까지 갖춰야 만들 수 있다.
         "video": ready("appleSilicon", "videoEngine", "videoWeights", "mps") if "videoEngine" in checks else False,
     }
@@ -257,6 +259,7 @@ CAPABILITY_LABELS = {
     "buildingKit": "건축 키트",
     "terrain": "지형 질감",
     "scanMesh": "스캔 바위 → 게임용",
+    "tree": "나무(LOD·빌보드·그루터기)",
     "video": "영상 생성",
 }
 

@@ -11,8 +11,8 @@
 | `src/local_assets_engine/measure.py` | 단계 프로세스 실행, 출력 스트리밍, 진행률 해석, `/usr/bin/time -l` 측정 |
 | `src/local_assets_engine/jobs.py` | `job.json` 원자적 기록, 재시작 복구, 파일 경로 검증 |
 | `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`), 요청 스키마(`schemas.py`), 점검 레시피(`selftest.py`) |
-| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더, 지형 타일 합성(`terrain_tile`), 스캔 원본 준비(`scan_prepare`) |
-| `src/local_assets_engine/materials.py` | `presets.json`에 URL·md5로 고정한 CC0 스캔(건축 키트 재질, `scanLibrary`)의 내려받기와 확인 |
+| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더, 지형 타일 합성(`terrain_tile`), 스캔 원본 준비(`scan_prepare`), 나무 텍스처(`tree_textures`)·나무 만들기(`tree_build`) |
+| `src/local_assets_engine/materials.py` | `presets.json`에 URL·md5로 고정한 CC0 스캔(건축 키트 재질, `scanLibrary`의 질감·모델·잎)의 내려받기와 확인 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
 | `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
 | `src/local_assets_engine/workers/quality_*.py` | 원본 표면 재구성, 형상 오차 제한 감축, 최종 UV·PBR 굽기 |
@@ -142,6 +142,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `building-kit` | `name`(영문 소문자·숫자·`_`, 24자 이하), `pieces`(아래 부품 중 고름), `seed`, `atlasWidth` 1024·2048·4096, `cellMeters`, `storyMeters`, `wallThickness`, `referenceImage`(검수판용 경로) | `presets.json`의 `buildingKit`(`wood`, 10종 전부, 7, 2048, 4m, 3m, 0.25m) |
 | `terrain-texture` | `preset`(필수, `terrain.presets`), `name`, `layer`(질감 스캔 id), `roughness` [낮음, 높음], `patch` `{scan, coverage 0.02~0.9, noiseMeters, roughness}` 또는 null, `tileMeters` 0.25~32, `size` 1024·2048·4096, `seed`, `patchMeters`, `flatten` 0~1, `flattenMeters`, `grade` `{hueShift, saturation, value, maxSaturation}` | 프리셋 값, 2048, 시드 1, 조각 0.5m, 얼룩 0.5·0.6m |
 | `scan-mesh` | `scan`(필수, 모델 스캔 id), `heightMeters`(필수, 땅 위 높이) 0.02~50, `widthMeters`(가장 긴 가로), `bury` 0~0.6, `yaw`, `saturation` 0~2, `value` 0.5~1.5, `name` | 바닥 5% 자름, 돌리지 않음, 색 그대로 |
+| `tree` | `preset`(필수, `trees.presets`), `name`(영문 소문자·숫자·`_`, 24자 이하), `seed`, `heightMeters` 2~40, `dbhMeters` 0.05~2.5, `triangles`(LOD0 목표) 1,000~20,000 | 프리셋 값(참나무 13m·0.7m·5,200, 밝은 수피 11.7m·0.4m·3,800, 전나무 11.5m·0.6m·4,800) |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `1024`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
@@ -235,7 +236,7 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `assets[].kind` / `role` | `image`·`mesh`·`shot`·`video`, 점검 작업의 `text` / `candidate`(2D 후보·프리비즈 샷), `concept`(3D·영상용 컨셉), `final`(메시·영상) |
 | `assets[].favorite`·`tags`·`collection`·`note` | 사람이 정리한 값(없으면 필드 자체가 없다). `review`와 따로다. 자동 검사는 이 값을 바꾸지 않는다 |
 | 이미지 `meta` | `seed`, `preset`, `prompt`, `model`, `width`, `height`, `checks`(`objectFound`, `coverage`, `touchesEdge`), `error`, `raw` |
-| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`·`game-asset`), `label`, `name`·`files`·`compareFile`(`game-asset`), `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
+| 메시 `meta` | `seed`, `pipelineType`, `textureSize`, `targetFaces`, `sizeMeters`, `stats`, `variant`(`master`·`game`·`game-asset`·`building-kit`·`tree`), `label`, `name`·`files`·`compareFile`(`game-asset`), `sourceStateFile`, `inspectionFile`, `processingVersion`, `rawFile`, `optimizedFile`, `optimizedBytes`, `source`, `conceptAsset` |
 | 샷 `meta` | 아래 프리비즈 계약 참고 |
 | 영상 `meta` | 아래 영상 계약 참고 |
 
@@ -259,11 +260,12 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `mesh.game_bake_misses` (`warn`) | UV가 덮는 텍셀의 1%보다 많은 곳에서 굽기 광선이 품질본에 닿지 않았다(`game/bake-misses.png`) | `missFraction` |
 | `mesh.game_export_mismatch` (`fail`) | 내보낸 GLB·FBX를 다시 불러오니 면 수·크기·텍스처 수가 굽은 결과와 다르다 | `problems` |
 | `mesh.scan_stretched` (`warn`) | 스캔 원본의 높이:폭을 맞추느라 가로를 20%보다 더 늘리거나 줄였다 | `stretchXY` |
+| `mesh.tree_budget` (`warn`) | 나무가 `trees.budget`을 벗어났다: LOD0 삼각형, LOD0 줄기·가지 삼각형, LOD1·2 비율(±0.05), 그루터기 삼각형 | `outside`, `budget` |
 | `texture.wrap_seam` (`warn`) | 지형 타일 가장자리를 넘는 밝기·높이 변화가 이웃 픽셀 사이 평균 변화의 1.5배를 넘는다 | `ratio` |
-| `texture.neon_green` (`warn`) | 지형 색에서 형광 연두(색상 75~140°, 채도 0.55·밝기 0.45 초과) 픽셀이 2%를 넘는다 | `fraction` |
+| `texture.neon_green` (`warn`) | 지형 색이나 나무 잎 아틀라스에서 형광 연두(색상 75~140°, 채도 0.55·밝기 0.45 초과) 픽셀이 2%를 넘는다 | `fraction` |
 
-이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과와 스캔 원본에, `texture.*`는
-지형 레이어에 올린다. 사람이 직접 고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
+이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과와 스캔 원본·나무에, `texture.*`는
+지형 레이어와 나무 잎 아틀라스에 올린다. 사람이 직접 고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
 
 `errorCode`는 실패 원인의 분류다.
 
@@ -516,6 +518,54 @@ GLB +Z). 사진처럼 비스듬히 누운 도구·무기에 쓴다. 세운 뒤�
 
 결과는 `variant: master`인 메시 에셋이다(`meta.scan`에 출처·저자·라이선스). `game-asset`이 이를 받아 바깥 껍데기 → 감축 →
 굽기를 하며, 껍데기는 막힌 바닥을 땅으로 쳐서 평평한 바닥을 유지한다.
+
+## 나무 계약
+
+`tree`는 게임 나무 한 수종을 CC0 스캔으로 만든다. 생성 모델을 쓰지 않는다. 줄기·가지는 절차 생성이고, 껍질은 `scanLibrary`의
+질감 스캔, 잎은 `kind: leaves` 스캔(Poly Haven 나무 모델의 잎·잔가지 텍스처만, 형상 파일은 받지 않음), 그루터기 나이테는 건축 키트의
+`rough_wood`다. 레시피가 프리셋(`trees.presets`)과 요청을 합쳐 `tree/textures.json`·`build.json`을 쓰고 측정 단계 두 개가 만든다.
+
+1. `tree-textures`(`tools.tree_textures`):
+   - 껍질: 스캔 한 장 전체를 1024² 타일로 줄인다. 실제 크기는 스캔 크기 그대로(`barkTileMeters`, 예: 1.0 × 2.0m는 둘레 1,024px/m·
+     길이 512px/m)이고 U가 둘레, V가 줄기 길이다. 사진에 남은 해 방향을 나누고 큰 밝기 얼룩을 고르게 한 뒤 색을 보정한다.
+   - 잎: 알파의 연결 조각을 잎(또는 잔가지) 하나로 본다. 열림(`openPx`)으로 패딩 줄무늬를 끊고, 가장자리를 따라 길게 닿은 조각,
+     잎 없는 토막(길이가 폭의 6배 초과), 평균 색이 녹색~노랑(45~170°)이 아닌 조각, 중앙값 면적의 `areaRange` 밖 조각을 뺀다.
+     조각마다 붙는 쪽(`base` 힌트 쪽 끝)·끝·폭을 `leaves/elements.json`에 쓰고, 남긴 조각만의 알파와 보정한 색을 Blender에 넘긴다.
+   - 나이테: `rough_wood`의 결(세로)을 극좌표로 감아 동심원으로 만들고, 심재·변재 색과 어두운 수, 껍질 색 테두리를 입힌다.
+2. `tree-build`(`tools.tree_build`, Blender):
+   - 잎 아틀라스 2048²: 스캔 잎을 붙는 쪽부터 가는 줄기(껍질 재질)에 달아 작은 3D 잔가지를 짜고, 위에서 정사영으로 렌더해 칸에
+     넣는다. 칸은 `SLOTS`: 잔가지 7(512², LOD0), 가지 묶음 3(512×1024, LOD1), 잎 덩어리 2(512², LOD2), 나이테 1(512²).
+     렌더는 모두 발광 패스라 빛이 없다: 색, 월드 노멀(카드 평면이 곧 탄젠트 공간), R 거칠기·G 잎 투과·B AO. 덮인 비율로 나눠
+     미리 곱한 알파를 풀고, 잘린 밖은 가장 가까운 안쪽 값으로 채운다(밉맵 가장자리 번짐 방지). 카드는 칸 아래 가운데에서 위로 자란다.
+   - 뼈대: 줄기는 땅 아래 0.4m에서 시작하고, 가슴 높이(1.3m) 지름이 `dbhMeters`, 밑동이 `flare`만큼 퍼진다. 활엽 A는 `fork`에서
+     굵은 가지(`limbs`)로 갈라지고, 활엽 B와 침엽은 줄기가 꼭대기까지 간다. 가지는 수관 경계(타원체·원뿔)까지 거리의 비율로 자라며
+     단계마다 위·바깥·무작위로 조금씩 휜다. 가장 깊은 단(`virtual`)은 메시가 없고 잎 카드 자리만 준다. 침엽은 층(`whorls`)마다
+     5~6개 가지와 평평한 곁가지(`planar`)다.
+   - LOD: `lods[i]`가 단계별 둘레 면 수·남길 고리 비율·남길 최소 길이를 정한다. LOD0 카드는 잎 단의 가지를 따라 놓인 후보에서
+     수관 바깥쪽을 먼저 골라 `triangles`를 채운다. LOD1·2는 LOD0 카드를 k-평균으로 묶은 큰 카드(가지 묶음·잎 덩어리)이고,
+     카드 면적의 합을 LOD0과 같게 둔다. 삼각형은 LOD0의 40%·15%를 목표로 한다. 덩어리 카드는 군집 중심에서 크기의 18%만큼
+     안으로 넣는다.
+   - 노멀: 줄기·가지는 고리의 바깥 방향(굵기 변화만큼 기욺)이다. 카드 정점 노멀은 수관을 감싸는 껍데기의 바깥 방향이다:
+     LOD0 카드 점의 밀도를 흐린 장의 음의 기울기이고, 기울기가 약한 수관 깊은 곳은 수관 중심에서 바깥 방향으로 넘어간다. LOD1·2와
+     빌보드 렌더도 같은 장을 쓴다.
+   - 바람 정점색(RGBA, 선형 값 그대로): R = (땅 위 높이 ÷ 키)^1.5(땅 아래 0), G = 가지가 붙는 곳에서 끝으로 0→1(줄기 0. 2단
+     이하 가지는 붙는 자리의 부모 G에서 이어 간다), B = 카드의 붙는 쪽 0 → 자유 끝 1(줄기·가지 0), A = 1단 가지마다 0~1 무작위
+     위상(그 가지에 달린 가지·잎 모두 같은 값, 줄기 0). 카드의 G는 붙은 가지 지점 값이다. 그루터기·빌보드는 모두 0이다.
+   - 그루터기: 줄기 그 굵기로 땅 아래 0.4m부터 0.5m까지(둘레 20면), 껍질 테두리가 조금 안으로 꺾여 올라오고 윗면이 나이테
+     칸을 쓴다(재질 슬롯 1 = 잎 재질). 260면이다.
+   - 빌보드: LOD0을 앞(−Y에서)·옆(+X에서) 정사영으로 렌더해 2048×1024 왼쪽·오른쪽에 둔다. 색은 albedo × (0.3 + 0.7 AO)이고
+     노멀은 각 판의 탄젠트 공간(OpenGL +Y)이다. 판 두 장은 LOD0의 그 방향 폭·키(땅 아래 포함)와 같고 그림의 같은 자리를 쓴다.
+3. 출력(`tree/`): `SM_tree_<name>.fbx`(메시 `SM_tree_<name>_LOD0`·`_LOD1`·`_LOD2`, 재질 슬롯 0 `M_tree_<name>_bark`,
+   1 `M_tree_<name>_leaves`), `SM_tree_<name>_billboard.fbx`, `SM_tree_<name>_stump.fbx`, 앱 미리보기용 `SM_tree_<name>_LOD0.glb`,
+   `T_tree_<name>_leaves_{basecolor(RGBA, A 잘라내기),normal,mask}.png`, `T_tree_<name>_billboard_{basecolor,normal}.png`,
+   `textures/bark/T_tree_<name>_bark_{basecolor,normal,mask}.png`. 마스크는 R 금속 0, G AO, B 잎 투과(껍질·나이테 0), A 매끄러움이다.
+   FBX 설정은 건축 키트와 같아 Unity (x, y, z) = Blender (X, Z, Y), Y 위, 1단위 1m, 피벗은 줄기 밑동 가운데 땅 높이다. 정점색은
+   선형(`colors_type="LINEAR"`)으로 쓴다. 내보낸 FBX를 다시 읽어 이름·삼각형·크기와 정점색 범위(나무 R 최대 1 근처, 빌보드·
+   그루터기 0)를 확인한다(`exportProblems`).
+   검수: `hero.png`(LOD0), `lods.png`(LOD0·1·2·빌보드·그루터기 정사영), `wind.png`(R·G·B·A), `review.png`(모음과 아틀라스), `tree.json`.
+4. `variant: tree`인 `pending` 메시 에셋 하나를 등록한다. `meta.files`에 FBX와 맵, `meta.sources`에 껍질·잎·나이테 스캔의 페이지·
+   작가·라이선스가 있다. 파일이 다르면 `mesh.game_export_mismatch`(fail), 예산을 벗어나면 `mesh.tree_budget`, 잎 아틀라스가 형광
+   연두면 `texture.neon_green`이다.
 
 ## 영상 계약
 

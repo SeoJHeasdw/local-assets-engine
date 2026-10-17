@@ -97,6 +97,7 @@
         "source": "polyhaven",
         "id": "raw_plank_wall",
         "page": "https://polyhaven.com/a/raw_plank_wall",
+        "author": "Dimitrios Savva",
         "license": "CC0",
         "licenseUrl": "https://polyhaven.com/license",
         "sizeMeters": 1.87,
@@ -128,6 +129,7 @@
         "source": "polyhaven",
         "id": "rough_wood",
         "page": "https://polyhaven.com/a/rough_wood",
+        "author": "Rob Tuytel",
         "license": "CC0",
         "licenseUrl": "https://polyhaven.com/license",
         "sizeMeters": 0.5,
@@ -482,6 +484,212 @@
           "md5": "bf017995c81772934bdd730f40701e0c"
         }
       }
+    },
+    "jolcham_oak_bark_01": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "jolcham_oak_bark_01",
+      "page": "https://polyhaven.com/a/jolcham_oak_bark_01",
+      "author": "Charlotte Baglioni",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 1.0,
+      "dimensionsMeters": [
+        1.0,
+        2.0
+      ],
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_diff_4k.jpg",
+          "md5": "6eb170f2ae0c20040570522b3cbb2933"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_nor_gl_4k.jpg",
+          "md5": "f36904392858c5673e51b5215d2bdab2"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_rough_4k.jpg",
+          "md5": "02bdeb2e63c7a99f84f7ae7bc58a7f84"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_ao_4k.jpg",
+          "md5": "a248f75efa6dd4228bf733d6568004c3"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/jolcham_oak_bark_01/jolcham_oak_bark_01_disp_4k.jpg",
+          "md5": "3f161c3ff32887883fb43bb8168aef8c"
+        }
+      }
+    },
+    "japanese_sycamore": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "japanese_sycamore",
+      "page": "https://polyhaven.com/a/japanese_sycamore",
+      "author": "Charlotte Baglioni",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 1.1,
+      "dimensionsMeters": [
+        1.1,
+        2.2
+      ],
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/japanese_sycamore/japanese_sycamore_diff_4k.jpg",
+          "md5": "110bb7c534461c6927124cfd55ae33d9"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/japanese_sycamore/japanese_sycamore_nor_gl_4k.jpg",
+          "md5": "11fc19a08da0148130550fe9eb546f18"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/japanese_sycamore/japanese_sycamore_rough_4k.jpg",
+          "md5": "eb06c98ce5a3a7ca1a5da8e67a1a47fb"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/japanese_sycamore/japanese_sycamore_ao_4k.jpg",
+          "md5": "1fb96ba046d4b05a9a0261a09b54bde6"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/japanese_sycamore/japanese_sycamore_disp_4k.jpg",
+          "md5": "3d822b69a45ad9ef087519ce5421b459"
+        }
+      }
+    },
+    "knotted_pine_bark": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "knotted_pine_bark",
+      "page": "https://polyhaven.com/a/knotted_pine_bark",
+      "author": "Dimitrios Savva",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 1.7,
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/knotted_pine_bark/knotted_pine_bark_diff_4k.jpg",
+          "md5": "a11f0657d10c02fc407b847757ba5fee"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/knotted_pine_bark/knotted_pine_bark_nor_gl_4k.jpg",
+          "md5": "99813b2a07271a79adfa03e49b3a3cd5"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/knotted_pine_bark/knotted_pine_bark_rough_4k.jpg",
+          "md5": "8067385ad9c9cf1b0c9e2d4764a4bebd"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/knotted_pine_bark/knotted_pine_bark_ao_4k.jpg",
+          "md5": "46f5044d362f8928d6ecd216bea34172"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/knotted_pine_bark/knotted_pine_bark_disp_4k.jpg",
+          "md5": "366660717043391c1166c953db71ceab"
+        }
+      }
+    },
+    "island_tree_01_leaves": {
+      "source": "polyhaven",
+      "kind": "leaves",
+      "id": "island_tree_01_leaves",
+      "page": "https://polyhaven.com/a/island_tree_01",
+      "author": "Rob Tuytel, Rico Cilliers",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "resolution": "2k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/island_tree_01/island_tree_01_leaves_diff_2k.jpg",
+          "md5": "9898a7bf79fe6214f7ca8c3b139c4116"
+        },
+        "alpha": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/island_tree_01/island_tree_01_leaves_alpha_2k.jpg",
+          "md5": "38e12b7531d4c13ec9d3cf70342ccb6c"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/island_tree_01/island_tree_01_leaves_nor_gl_2k.jpg",
+          "md5": "b7d1e6306288a64119e1d17dae3c272d"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/island_tree_01/island_tree_01_leaves_rough_2k.jpg",
+          "md5": "d9938e98adbdb3a38f08fbca5270c1a7"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/island_tree_01/island_tree_01_leaves_ao_2k.jpg",
+          "md5": "86bfdc4c65e9e39ebf43819daef8b9fa"
+        }
+      }
+    },
+    "tree_small_02_leaves": {
+      "source": "polyhaven",
+      "kind": "leaves",
+      "id": "tree_small_02_leaves",
+      "page": "https://polyhaven.com/a/tree_small_02",
+      "author": "Rico Cilliers",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "resolution": "2k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/tree_small_02/tree_small_02_leaves_diff_2k.jpg",
+          "md5": "021ddc0cf1d94b99716a106cede576c7"
+        },
+        "alpha": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/tree_small_02/tree_small_02_leaves_alpha_2k.jpg",
+          "md5": "5e47ee2dd9f910dbfe05a46e57a0074a"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/tree_small_02/tree_small_02_leaves_nor_gl_2k.jpg",
+          "md5": "ab509e55b5d763f68195e0eb257bb5e3"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/tree_small_02/tree_small_02_leaves_rough_2k.jpg",
+          "md5": "d9e2a970e08ed0af96f360c964cc7bfe"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/tree_small_02/tree_small_02_leaves_ao_2k.jpg",
+          "md5": "c3f2a9ca848795c22c3393c458a5e16b"
+        }
+      }
+    },
+    "fir_tree_01_twig": {
+      "source": "polyhaven",
+      "kind": "leaves",
+      "id": "fir_tree_01_twig",
+      "page": "https://polyhaven.com/a/fir_tree_01",
+      "author": "Rob Tuytel, Rico Cilliers",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/fir_tree_01/fir_tree_01_twig_diff_4k.jpg",
+          "md5": "e9c1a9228649b57149615e14a6d188b1"
+        },
+        "alpha": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/fir_tree_01/fir_tree_01_twig_alpha_4k.jpg",
+          "md5": "88842285150a70909881a22fb81f3bf0"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/fir_tree_01/fir_tree_01_twig_nor_gl_4k.jpg",
+          "md5": "185d65b5d97373c1278f0b99d9ace9fe"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/fir_tree_01/fir_tree_01_twig_rough_4k.jpg",
+          "md5": "75fff1507f34aa9ba32dd67f5f291e31"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/fir_tree_01/fir_tree_01_twig_ao_4k.jpg",
+          "md5": "26675515ad7e20b1bd5de78e5ef8617b"
+        }
+      }
     }
   },
   "terrain": {
@@ -543,6 +751,374 @@
         "layer": "rock_face_03",
         "grade": {
           "saturation": 0.45
+        }
+      }
+    ]
+  },
+  "trees": {
+    "label": "나무",
+    "barkSize": 1024,
+    "rings": {
+      "material": "timber",
+      "heartColor": [0.55, 0.38, 0.24],
+      "sapColor": [0.8, 0.66, 0.47]
+    },
+    "budget": {
+      "lod0": [3000, 6000],
+      "wood": [600, 1500],
+      "lodRatios": [0.4, 0.15],
+      "ratioTolerance": 0.05,
+      "stump": [200, 400]
+    },
+    "presets": [
+      {
+        "id": "temperate-oak",
+        "label": "온대 활엽 A · 참나무",
+        "name": "oak",
+        "seed": 3,
+        "bark": {
+          "scan": "jolcham_oak_bark_01",
+          "flatten": 0.5,
+          "flattenMeters": 0.25,
+          "grade": {
+            "saturation": 0.75,
+            "value": 1.05
+          }
+        },
+        "leaves": {
+          "scan": "island_tree_01_leaves",
+          "base": "down",
+          "grade": {
+            "saturation": 1.0,
+            "value": 1.15,
+            "maxSaturation": 0.54
+          },
+          "openPx": 2
+        },
+        "build": {
+          "form": "broadleaf",
+          "heightMeters": 13.0,
+          "dbhMeters": 0.7,
+          "flare": 0.35,
+          "tipRadius": 0.06,
+          "trunk": {
+            "fork": 3.4,
+            "lean": 2.0
+          },
+          "crown": {
+            "base": 3.0,
+            "radius": 6.0,
+            "widest": 0.42
+          },
+          "limbs": {
+            "count": 5,
+            "leader": true,
+            "leaderSpread": [8, 20],
+            "spread": [40, 64],
+            "lengthFactor": 0.86,
+            "radiusRatio": 0.5,
+            "up": 0.1,
+            "out": 0.12,
+            "noise": 0.12,
+            "tipRadius": 0.02
+          },
+          "branches": [
+            {},
+            {
+              "spacing": 0.65,
+              "angle": [40, 70],
+              "lengthFactor": 0.85,
+              "maxLength": 4.2,
+              "minLength": 0.6,
+              "radiusRatio": 0.42,
+              "up": 0.06,
+              "noise": 0.14,
+              "start": 0.12,
+              "tipRadius": 0.008,
+              "step": 0.5
+            },
+            {
+              "spacing": 0.26,
+              "angle": [35, 70],
+              "lengthFactor": 0.6,
+              "maxLength": 1.0,
+              "minLength": 0.25,
+              "radiusRatio": 0.5,
+              "reachFloor": 0.6,
+              "up": 0.05,
+              "noise": 0.2,
+              "start": 0.15,
+              "tipRadius": 0.004,
+              "step": 0.3,
+              "virtual": true
+            }
+          ],
+          "cards": {
+            "levels": {
+              "1": [0.65, 1.0],
+              "2": [0.3, 1.0],
+              "3": [0.1, 1.0]
+            },
+            "spacing": 0.24,
+            "perPoint": 2,
+            "direction": "outward"
+          },
+          "lods": [
+            {
+              "sides": [10, 6, 4],
+              "rings": [0.6, 0.5, 0.2],
+              "minLength": [0, 1.2]
+            },
+            {
+              "sides": [8, 5, 3],
+              "rings": [0.4, 0.35, 0.3],
+              "minLength": [0, 1.9]
+            },
+            {
+              "sides": [6, 4, 0],
+              "rings": 0.25,
+              "minLength": [2.0, 99]
+            }
+          ],
+          "cardMeters": 1.15,
+          "twig": {
+            "leafLength": 0.13,
+            "leafSpacing": 0.22,
+            "leafAngle": [40, 72],
+            "leafStart": 0.25,
+            "rosette": 5,
+            "sideShoots": [3, 5],
+            "clusterTwigs": 7,
+            "massTwigs": 30,
+            "translucency": 1.0,
+            "fold": 0.12,
+            "curl": 0.1
+          },
+          "triangles": 5200
+        }
+      },
+      {
+        "id": "temperate-birch",
+        "label": "온대 활엽 B · 밝은 수피",
+        "name": "birch",
+        "seed": 5,
+        "bark": {
+          "scan": "japanese_sycamore",
+          "flatten": 0.5,
+          "flattenMeters": 0.25,
+          "grade": {
+            "value": 1.0
+          }
+        },
+        "leaves": {
+          "scan": "tree_small_02_leaves",
+          "base": "right",
+          "grade": {
+            "hueShift": 24,
+            "saturation": 1.15,
+            "value": 1.4,
+            "maxSaturation": 0.52
+          },
+          "openPx": 30,
+          "areaRange": [0.45, 4.0]
+        },
+        "build": {
+          "form": "broadleaf",
+          "heightMeters": 11.7,
+          "dbhMeters": 0.4,
+          "flare": 0.22,
+          "tipRadius": 0.015,
+          "taperPower": 0.9,
+          "trunk": {
+            "fork": null,
+            "lean": 1.2,
+            "leaderGap": 0.15
+          },
+          "crown": {
+            "base": 3.4,
+            "radius": 2.9,
+            "widest": 0.38
+          },
+          "branches": [
+            {
+              "spacing": 0.3,
+              "angle": [32, 52],
+              "lengthFactor": 0.92,
+              "maxLength": 3.2,
+              "minLength": 0.45,
+              "radiusRatio": 0.3,
+              "minRadius": 0.014,
+              "up": 0.08,
+              "droop": 0.55,
+              "noise": 0.1,
+              "tipRadius": 0.006,
+              "step": 0.4
+            },
+            {
+              "spacing": 0.38,
+              "angle": [30, 60],
+              "lengthFactor": 0.55,
+              "maxLength": 1.3,
+              "minLength": 0.3,
+              "radiusRatio": 0.5,
+              "reachFloor": 0.5,
+              "up": -0.05,
+              "droop": 0.6,
+              "noise": 0.15,
+              "start": 0.2,
+              "tipRadius": 0.004,
+              "step": 0.35,
+              "virtual": true
+            }
+          ],
+          "cards": {
+            "levels": {
+              "1": [0.35, 1.0],
+              "2": [0.05, 1.0]
+            },
+            "spacing": 0.24,
+            "perPoint": 2,
+            "direction": "hanging"
+          },
+          "lods": [
+            {
+              "sides": [9, 5, 0],
+              "rings": [0.6, 0.45, 0],
+              "minLength": [0.9, 99]
+            },
+            {
+              "sides": [7, 4, 0],
+              "rings": [0.4, 0.3, 0],
+              "minLength": [1.4, 99]
+            },
+            {
+              "sides": [5, 3, 0],
+              "rings": [0.25, 0.2, 0],
+              "minLength": [2.2, 99]
+            }
+          ],
+          "cardMeters": 0.85,
+          "twig": {
+            "leafLength": 0.065,
+            "leafSpacing": 0.3,
+            "leafAngle": [35, 65],
+            "leafStart": 0.15,
+            "rosette": 2,
+            "sideShoots": [4, 6],
+            "clusterTwigs": 7,
+            "massTwigs": 30,
+            "translucency": 1.0,
+            "fold": 0.1,
+            "curl": 0.08
+          },
+          "triangles": 3800
+        }
+      },
+      {
+        "id": "temperate-fir",
+        "label": "온대 침엽 · 전나무",
+        "name": "fir",
+        "seed": 7,
+        "bark": {
+          "scan": "knotted_pine_bark",
+          "flatten": 0.5,
+          "flattenMeters": 0.25,
+          "grade": {
+            "saturation": 0.85
+          }
+        },
+        "leaves": {
+          "scan": "fir_tree_01_twig",
+          "base": "down",
+          "grade": {
+            "hueShift": 6,
+            "value": 1.08,
+            "maxSaturation": 0.6
+          },
+          "axis": "hint",
+          "areaRange": [0.45, 6.0]
+        },
+        "build": {
+          "form": "conifer",
+          "heightMeters": 11.5,
+          "dbhMeters": 0.6,
+          "flare": 0.28,
+          "tipRadius": 0.015,
+          "trunk": {
+            "lean": 0.6
+          },
+          "crown": {
+            "base": 1.2,
+            "radius": 2.9
+          },
+          "whorls": {
+            "spacing": 0.48,
+            "count": [5, 6],
+            "pitchLow": -14,
+            "pitchHigh": 22,
+            "lengthFactor": 1.0,
+            "up": 0.12,
+            "droop": 0.3
+          },
+          "branches": [
+            {},
+            {
+              "spacing": 0.22,
+              "angle": [45, 70],
+              "lengthFactor": 0.45,
+              "maxLength": 0.8,
+              "minLength": 0.2,
+              "radiusRatio": 0.5,
+              "reachFloor": 0.6,
+              "up": 0.02,
+              "noise": 0.08,
+              "start": 0.15,
+              "tipRadius": 0.003,
+              "step": 0.3,
+              "virtual": true,
+              "planar": true
+            }
+          ],
+          "cards": {
+            "levels": {
+              "1": [0.1, 1.0],
+              "2": [0.2, 1.0]
+            },
+            "spacing": 0.2,
+            "perPoint": 1,
+            "direction": "spray"
+          },
+          "lods": [
+            {
+              "sides": [10, 3],
+              "rings": [0.6, 0.35],
+              "minLength": [1.4],
+              "meshFraction": 0.72
+            },
+            {
+              "sides": [7, 3],
+              "rings": [0.4, 0.25],
+              "minLength": [2.0],
+              "meshFraction": 0.65
+            },
+            {
+              "sides": [6, 0],
+              "rings": [0.25, 0],
+              "minLength": [99]
+            }
+          ],
+          "cardMeters": 0.85,
+          "twig": {
+            "leafLength": 0.2,
+            "sprigSpacing": 0.055,
+            "clusterTwigs": 7,
+            "massTwigs": 26,
+            "translucency": 0.6,
+            "fold": 0.06,
+            "curl": 0.05,
+            "sideShoots": [3, 4]
+          },
+          "triangles": 4800
         }
       }
     ]

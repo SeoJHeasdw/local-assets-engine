@@ -14,7 +14,7 @@ from PIL import Image
 
 from local_assets_engine.jobs import JobStore
 from local_assets_engine.presets import PresetError, load_presets
-from local_assets_engine.recipes import RECIPES, building_kit, describe_recipes, scan_mesh, terrain_texture
+from local_assets_engine.recipes import RECIPES, building_kit, describe_recipes, scan_mesh, terrain_texture, tree
 from local_assets_engine.recipes.schemas import SCHEMAS
 from local_assets_engine.uploads import save_upload
 
@@ -88,6 +88,7 @@ def world(tmp_path_factory):
                                        "roughness": [0.5, 0.9]},
                              "grade": {"hueShift": 8, "saturation": 0.9, "value": 1.0, "maxSaturation": 0.62}}],
         "scan-mesh": [{"scan": "boulder_01", "heightMeters": 1.7, "widthMeters": 3.0}],
+        "tree": [{"preset": "temperate-oak"}],
         "import-image": [{"uploadId": upload}],
         "edit-asset": [
             {"source": image, "plan": {"frame": {"crop": {}}, "layers": [color, stamp]}},
@@ -108,6 +109,8 @@ def world(tmp_path_factory):
     patch.setattr(building_kit, "missing", lambda _presets: [])
     patch.setattr(terrain_texture, "missing", lambda _presets, _scans=None: [])
     patch.setattr(scan_mesh, "missing", lambda _presets, _scans=None: [])
+    patch.setattr(tree, "missing", lambda _presets, _scans=None: [])
+    patch.setattr(tree, "missing_files", lambda _source: [])
     yield store, presets, bases, schemas
     patch.undo()
 

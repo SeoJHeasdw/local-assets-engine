@@ -69,14 +69,18 @@ def missing(presets: dict[str, Any], scans: Iterable[str] | None = None) -> list
 
     Without ``scans`` this is the building kit's materials; otherwise the named ``scanLibrary`` entries.
     """
+    return [item for _role, source in _sources(presets, scans) for item in missing_files(source)]
+
+
+def missing_files(source: dict[str, Any]) -> list[str]:
+    """One pinned source's absent or changed files, as ``id/name``."""
     gone = []
-    for _role, source in _sources(presets, scans):
-        if not (material_dir(source) / "material.json").is_file():
-            gone.append(f"{source['id']}/material.json")
-        for name, entry in source["files"].items():
-            path = file_path(source, name)
-            if not path.is_file() or _md5(path) != entry["md5"]:
-                gone.append(f"{source['id']}/{name}")
+    if not (material_dir(source) / "material.json").is_file():
+        gone.append(f"{source['id']}/material.json")
+    for name, entry in source["files"].items():
+        path = file_path(source, name)
+        if not path.is_file() or _md5(path) != entry["md5"]:
+            gone.append(f"{source['id']}/{name}")
     return gone
 
 

@@ -12,6 +12,7 @@ from .game_asset import GAME_ASSET
 from .building_kit import BUILDING_KIT
 from .scan_mesh import SCAN_MESH
 from .terrain_texture import TERRAIN_TEXTURE
+from .tree import TREE
 from .edit_asset import EDIT_ASSET, IMPORT_IMAGE
 from .video import IMAGE_TO_VIDEO, TEXT_TO_VIDEO
 from .selftest import SELFTEST
@@ -19,7 +20,7 @@ from .schemas import params_schema
 
 RECIPES: dict[str, Recipe] = {
     recipe.id: recipe for recipe in (IMAGE, IMAGE_TO_3D, TEXT_TO_3D, PREVIZ, REPAIR_MESH, REFINE_MESH, GAME_ASSET, BUILDING_KIT,
-                                     TERRAIN_TEXTURE, SCAN_MESH, EDIT_ASSET,
+                                     TERRAIN_TEXTURE, SCAN_MESH, TREE, EDIT_ASSET,
                                      IMPORT_IMAGE, TEXT_TO_VIDEO, IMAGE_TO_VIDEO, SELFTEST)
 }
 DIAGNOSTIC_RECIPES = frozenset(recipe.id for recipe in RECIPES.values() if recipe.diagnostic)

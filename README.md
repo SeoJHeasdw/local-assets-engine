@@ -27,6 +27,7 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `building-kit` | CC0 나무 스캔 → 트림 시트 한 장 → 게임 격자에 맞춘 바닥·벽·문·창·지붕·계단·난간·울타리 10종 | 부품별 FBX·GLB, 공용 PNG 맵, 조립한 집 렌더와 콘셉트 비교 |
 | `terrain-texture` | CC0 지면 스캔 → 실제 크기로 맞춤 → 조각 잇기로 새 주기 → (두 번째 스캔을 높이로 섞기) → 색·얼룩 정리 | 이음매 없는 Unity 지형 레이어 PNG(색·노멀·마스크)와 3×3 반복 미리보기 |
 | `scan-mesh` | CC0 스캔 모델 → 정렬·땅에 묻힐 바닥 자르기·크기·색 보정 | `game-asset`으로 구울 품질본 GLB, 여섯 방향 검수 |
+| `tree` | CC0 껍질·잎 스캔 → 잔가지 렌더로 잎 아틀라스 → 절차 줄기·가지 → LOD0·1·2 카드, 수관 노멀, 바람 정점색 → 빌보드·그루터기 | LOD FBX·빌보드 FBX·그루터기 FBX, 껍질·잎·빌보드 PNG, LOD 줄·바람 검수판 |
 | `edit-asset` | 색상·재질·로고·문구·2D 구성 편집 → 새 버전 저장 | 원본을 보존한 PNG·GLB |
 | `import-image` | 로컬 이미지 가져오기 | 편집하거나 3D로 만들 이미지 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
@@ -159,6 +160,14 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 .venv/bin/python -m local_assets_engine run scan-mesh --params '{"scan": "boulder_01", "heightMeters": 1.7, "widthMeters": 3.0, "saturation": 0.6, "name": "rock_large"}'
 .venv/bin/python -m local_assets_engine run game-asset \
   --params '{"source": {"jobId": "<scan-mesh 작업 ID>", "assetId": "a01"}, "targetFaces": 2000, "textureSize": 1024, "name": "rock_large"}'
+```
+
+나무는 `config/presets.json`의 `trees.presets`(온대 참나무·밝은 수피 활엽·전나무)로 만든다. 스캔을 받아 둔 뒤 다음 명령을 쓴다.
+결과는 `tree/`의 `SM_tree_<이름>.fbx`(LOD0·1·2), `_billboard.fbx`, `_stump.fbx`와 잎 아틀라스·빌보드 PNG, `tree/textures/bark/`의
+껍질 PNG이고 `tree/review.png`에서 LOD 줄·바람 정점색·아틀라스를 본다. `heightMeters`·`dbhMeters`·`triangles`·`seed`로 바꿀 수 있다.
+
+```bash
+.venv/bin/python -m local_assets_engine run tree --params '{"preset": "temperate-oak"}'
 ```
 
 풀·꽃 카드는 `image`의 `foliage-card` 종류로 만든다. 흰 배경에서 옆모습 한 포기를 그리고, 배경을 지운 뒤 흰 테두리를 걷고,

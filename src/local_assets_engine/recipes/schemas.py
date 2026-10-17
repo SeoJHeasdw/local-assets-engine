@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from ..presets import CAMERA_PARTS, image_models, video_models
 from ..uploads import ID_PATTERN as UPLOAD_ID
-from . import building_kit, edit_asset, game_asset, image, previz, scan_mesh, selftest, terrain_texture, video
+from . import building_kit, edit_asset, game_asset, image, previz, scan_mesh, selftest, terrain_texture, tree, video
 from .base import MAX_SEED
 
 Schema = dict[str, Any]
@@ -248,6 +248,19 @@ def _scan_mesh(presets: dict[str, Any]) -> Schema:
     }, required=["scan", "heightMeters"])
 
 
+def _tree(presets: dict[str, Any]) -> Schema:
+    defaults = tree.tree_defaults(presets)
+    return _object({
+        "preset": _choice([preset["id"] for preset in defaults["presets"]], description="수종 프리셋"),
+        "name": {"type": "string", "pattern": f"^{tree.NAME.pattern}$",
+                 "description": "파일 이름. SM_tree_<name>·T_tree_<name>_*. 비우면 프리셋 이름"},
+        "seed": _integer(0, 2**31 - 1, description="가지·잎 배치. 비우면 프리셋"),
+        "heightMeters": _number(2.0, 40.0, description="키(m). 수관과 갈라지는 높이가 같은 비율로 바뀐다. 비우면 프리셋"),
+        "dbhMeters": _number(0.05, 2.5, description="가슴 높이(1.3m) 줄기 지름(m). 비우면 프리셋"),
+        "triangles": _integer(1000, 20000, description="LOD0 삼각형 목표. LOD1·2는 그 40%·15%. 비우면 프리셋"),
+    }, required=["preset"])
+
+
 def _import_image(_presets: dict[str, Any]) -> Schema:
     return _object({"uploadId": _image_source()["uploadId"], "name": _text(description="120자까지 쓴다")},
                    required=["uploadId"])
@@ -413,6 +426,7 @@ SCHEMAS: dict[str, Callable[[dict[str, Any]], Schema]] = {
     "building-kit": _building_kit,
     "terrain-texture": _terrain_texture,
     "scan-mesh": _scan_mesh,
+    "tree": _tree,
     "import-image": _import_image,
     "edit-asset": _edit_asset,
     "previz": _previz,

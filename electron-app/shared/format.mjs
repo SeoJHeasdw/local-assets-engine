@@ -12,6 +12,7 @@ export const RECIPE_LABELS = {
   image: "2D 후보", "image-to-3d": "이미지 → 3D", "text-to-3d": "텍스트 → 3D", previz: "프리비즈 샷",
   "repair-mesh": "기존 3D 복구",
   "refine-mesh": "3D 원본 재구성", "game-asset": "게임용 에셋 굽기", "building-kit": "건축 키트", "edit-asset": "에셋 편집", "import-image": "가져온 이미지",
+  "terrain-texture": "지형 질감", "scan-mesh": "스캔 원본", tree: "나무",
   selftest: "엔진 자체 점검",
 };
 
