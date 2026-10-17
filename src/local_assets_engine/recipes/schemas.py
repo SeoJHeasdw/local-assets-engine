@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from ..presets import CAMERA_PARTS, image_models, video_models
 from ..uploads import ID_PATTERN as UPLOAD_ID
-from . import building_kit, edit_asset, game_asset, image, previz, selftest, video
+from . import building_kit, edit_asset, game_asset, image, previz, scan_mesh, selftest, terrain_texture, video
 from .base import MAX_SEED
 
 Schema = dict[str, Any]
@@ -208,6 +208,46 @@ def _building_kit(presets: dict[str, Any]) -> Schema:
     })
 
 
+def _terrain_texture(presets: dict[str, Any]) -> Schema:
+    defaults = terrain_texture.terrain_defaults(presets)
+    textures = [key for key, scan in presets.get("scanLibrary", {}).items() if scan["kind"] == "texture"]
+    roughness = _described({"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1},
+                            "minItems": 2, "maxItems": 2}, None, "스캔 거칠기의 5~95%를 옮길 [낮음, 높음]")
+    return _object({
+        "preset": _choice([preset["id"] for preset in defaults["presets"]], description="지형 프리셋"),
+        "name": {"type": "string", "pattern": f"^{terrain_texture.NAME.pattern}$",
+                 "description": "파일 이름. T_<name>_basecolor·normal·mask.png. 비우면 프리셋 이름"},
+        "layer": _choice(textures, description="바탕 스캔. 비우면 프리셋"),
+        "roughness": roughness,
+        "patch": {"type": ["object", "null"], "description": "바탕 사이로 드러나는 두 번째 스캔. null이면 쓰지 않는다",
+                  "properties": {"scan": _choice(textures), "coverage": _number(0.02, 0.9, 0.3, "드러나는 면적 비율"),
+                                 "noiseMeters": _number(0.05, 10.0, 0.3, "드러나는 무늬의 크기(m)"),
+                                 "roughness": roughness}},
+        "tileMeters": _number(0.25, 32.0, description="타일 한 변의 실제 크기(m). 비우면 프리셋"),
+        "size": _choice(defaults["sizes"], defaults["size"], "맵 한 변 픽셀"),
+        "seed": _integer(0, 2**31 - 1, description="조각 고르기·무늬. 비우면 프리셋(1)"),
+        "patchMeters": _number(0.1, 4.0, defaults["patchMeters"], "잇는 조각 한 변(m), 격자에 맞춰 조금 바뀐다"),
+        "flatten": _number(0.0, 1.0, defaults["flatten"], "큰 얼룩을 고르게 하는 정도"),
+        "flattenMeters": _number(0.1, 10.0, defaults["flattenMeters"], "고르게 할 얼룩의 크기(m)"),
+        "grade": _object({key: _number(low, high) for key, (low, high) in terrain_texture.GRADE_RANGES.items()},
+                         description="색 보정. hueShift는 녹색을 노랑 쪽으로 돌리는 각도"),
+    }, required=["preset"])
+
+
+def _scan_mesh(presets: dict[str, Any]) -> Schema:
+    models = [key for key, scan in presets.get("scanLibrary", {}).items() if scan["kind"] == "model"]
+    return _object({
+        "scan": _choice(models, description="scanLibrary의 스캔 모델"),
+        "name": {"type": "string", "pattern": f"^{scan_mesh.NAME.pattern}$", "description": "비우면 스캔 id"},
+        "heightMeters": _number(0.02, 50.0, description="땅 위 높이(m)"),
+        "widthMeters": _number(0.02, 100.0, description="가장 긴 가로(m). 주면 바닥 자르는 높이로 비율을 맞추고 남는 만큼 가로를 늘인다"),
+        "bury": _number(0.0, 0.6, 0.05, "최소로 잘라 낼 바닥(높이 비율)"),
+        "yaw": _number(-180.0, 180.0, 0.0, "긴 가로축을 X에 맞춘 뒤 더 돌릴 각도"),
+        "saturation": _number(0.0, 2.0, 1.0, "색 텍스처 채도 배율"),
+        "value": _number(0.5, 1.5, 1.0, "색 텍스처 밝기 배율"),
+    }, required=["scan", "heightMeters"])
+
+
 def _import_image(_presets: dict[str, Any]) -> Schema:
     return _object({"uploadId": _image_source()["uploadId"], "name": _text(description="120자까지 쓴다")},
                    required=["uploadId"])
@@ -371,6 +411,8 @@ SCHEMAS: dict[str, Callable[[dict[str, Any]], Schema]] = {
     "refine-mesh": _refine_mesh,
     "game-asset": _game_asset,
     "building-kit": _building_kit,
+    "terrain-texture": _terrain_texture,
+    "scan-mesh": _scan_mesh,
     "import-image": _import_image,
     "edit-asset": _edit_asset,
     "previz": _previz,

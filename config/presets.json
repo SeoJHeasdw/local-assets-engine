@@ -157,6 +157,396 @@
       }
     }
   },
+  "scanLibrary": {
+    "forest_leaves_02": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "forest_leaves_02",
+      "page": "https://polyhaven.com/a/forest_leaves_02",
+      "author": "Rob Tuytel",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 3.0,
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_leaves_02/forest_leaves_02_diffuse_4k.jpg",
+          "md5": "35672d38fea49e67f87e9fe794255e5a"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_leaves_02/forest_leaves_02_nor_gl_4k.jpg",
+          "md5": "717ee61381feed3e1d668a1c0c8cb528"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_leaves_02/forest_leaves_02_rough_4k.jpg",
+          "md5": "7b902cec17d431d42b9895ea610017e5"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_leaves_02/forest_leaves_02_ao_4k.jpg",
+          "md5": "91e19bb1717bb4f5d68e34900b48633d"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_leaves_02/forest_leaves_02_disp_4k.jpg",
+          "md5": "5f3ddaabfe694fbc9606ef3a040ceeb0"
+        }
+      }
+    },
+    "forest_ground_04": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "forest_ground_04",
+      "page": "https://polyhaven.com/a/forest_ground_04",
+      "author": "Rob Tuytel, Rico Cilliers",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 3.15,
+      "resolution": "4k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_ground_04/forest_ground_04_diff_4k.jpg",
+          "md5": "68d76337ff8aebe1853dd20783b26008"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_ground_04/forest_ground_04_nor_gl_4k.jpg",
+          "md5": "b0241bdb8f7a3cb6b9bfe9ccc01903a0"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_ground_04/forest_ground_04_rough_4k.jpg",
+          "md5": "2d411d592d68a1081fefe8eb6e453383"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_ground_04/forest_ground_04_ao_4k.jpg",
+          "md5": "98916cf2580deefe99bb8530c3835fe1"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/forest_ground_04/forest_ground_04_disp_4k.jpg",
+          "md5": "0bff37428785a95fcea9e8f5a379a25a"
+        }
+      }
+    },
+    "dense_sand": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "dense_sand",
+      "page": "https://polyhaven.com/a/dense_sand",
+      "author": "Dimitrios Savva",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 1.8,
+      "resolution": "2k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dense_sand/dense_sand_diff_2k.jpg",
+          "md5": "5855029eadd3f5064b76abe41790fd68"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dense_sand/dense_sand_nor_gl_2k.jpg",
+          "md5": "baba455bc9a3789e74d77e8bb1d58d9b"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dense_sand/dense_sand_rough_2k.jpg",
+          "md5": "55fb61579cc704c96a80d24ed5431a25"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dense_sand/dense_sand_ao_2k.jpg",
+          "md5": "8726b377a89f0a458e578599a9034e8d"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dense_sand/dense_sand_disp_2k.jpg",
+          "md5": "cfa55f95e9b2321e78f2d549ce7398e4"
+        }
+      }
+    },
+    "rock_face_03": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "rock_face_03",
+      "page": "https://polyhaven.com/a/rock_face_03",
+      "author": "Dario Barresi, Rico Cilliers",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 2.7,
+      "resolution": "2k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_diff_2k.jpg",
+          "md5": "657add9e8a8dffaeed19bdfc58078b59"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_nor_gl_2k.jpg",
+          "md5": "279b33e71ae6275cafa24e6597024c98"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_rough_2k.jpg",
+          "md5": "8895a8b199487fd6cfeed2fed1fb39b4"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_ao_2k.jpg",
+          "md5": "810c436dedec3e19b9a30e5d1db721f7"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_disp_2k.jpg",
+          "md5": "e7629af66fe9420fe3e73b937f3eba40"
+        }
+      }
+    },
+    "forrest_ground_01": {
+      "source": "polyhaven",
+      "kind": "texture",
+      "id": "forrest_ground_01",
+      "page": "https://polyhaven.com/a/forrest_ground_01",
+      "author": "Rob Tuytel",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "sizeMeters": 2.0,
+      "resolution": "2k",
+      "files": {
+        "diff": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_diff_2k.jpg",
+          "md5": "18fa30c294be21805159ca6e73a5e5fa"
+        },
+        "nor_gl": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_nor_gl_2k.jpg",
+          "md5": "7bb5186bd63bef99f6d21316718896f2"
+        },
+        "rough": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_rough_2k.jpg",
+          "md5": "a4c7ecc9cef47f5d097d4553e421ed6a"
+        },
+        "ao": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_ao_2k.jpg",
+          "md5": "be730523a039ab1171da81d43f1681c3"
+        },
+        "disp": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_disp_2k.jpg",
+          "md5": "50750c4535f53817d141412e819f7aea"
+        }
+      }
+    },
+    "Grass004": {
+      "source": "ambientcg",
+      "kind": "texture",
+      "id": "Grass004",
+      "page": "https://ambientcg.com/a/Grass004",
+      "author": "ambientCG",
+      "method": "procedural",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://docs.ambientcg.com/license/",
+      "sizeMeters": 1.4,
+      "resolution": "2K",
+      "archive": {
+        "url": "https://ambientcg.com/get?file=Grass004_2K-JPG.zip",
+        "md5": "993b8a03c77c3d0b6a7f08d59bd367a5"
+      },
+      "files": {
+        "diff": {
+          "member": "Grass004_2K-JPG_Color.jpg",
+          "md5": "45d027142dcbe7711855a1d93432b390"
+        },
+        "nor_gl": {
+          "member": "Grass004_2K-JPG_NormalGL.jpg",
+          "md5": "63f2966773a54255a4e932f794374e92"
+        },
+        "rough": {
+          "member": "Grass004_2K-JPG_Roughness.jpg",
+          "md5": "f2a5e8e54c54ce949c774cd772c838d6"
+        },
+        "ao": {
+          "member": "Grass004_2K-JPG_AmbientOcclusion.jpg",
+          "md5": "2ce9304a21ba5c71ff4e68667ec1f725"
+        },
+        "disp": {
+          "member": "Grass004_2K-JPG_Displacement.jpg",
+          "md5": "67ef7327fc7e6ad775d420dca0ea20ac"
+        }
+      }
+    },
+    "boulder_01": {
+      "source": "polyhaven",
+      "kind": "model",
+      "id": "boulder_01",
+      "page": "https://polyhaven.com/a/boulder_01",
+      "author": "Rico Cilliers",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "dimensionsMeters": [
+        1.273,
+        1.831,
+        1.004
+      ],
+      "resolution": "4k",
+      "gltf": "boulder_01_4k.gltf",
+      "files": {
+        "boulder_01_4k.gltf": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/boulder_01/boulder_01_4k.gltf",
+          "md5": "64a2ae2d9b1d8bc95f8334fd4cc9f72b"
+        },
+        "boulder_01.bin": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/boulder_01/boulder_01.bin",
+          "md5": "27a19fa031d8b4c3a09261f19c444dc5"
+        },
+        "textures/boulder_01_arm_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/boulder_01/boulder_01_arm_4k.jpg",
+          "md5": "f3bc62981f695346b621b545d4771417"
+        },
+        "textures/boulder_01_diff_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/boulder_01/boulder_01_diff_4k.jpg",
+          "md5": "0bceced14031539cff10d992df24be0e"
+        },
+        "textures/boulder_01_nor_gl_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/boulder_01/boulder_01_nor_gl_4k.jpg",
+          "md5": "c4d95f5c52d4552b10636c94cc54835e"
+        }
+      }
+    },
+    "namaqualand_boulder_05": {
+      "source": "polyhaven",
+      "kind": "model",
+      "id": "namaqualand_boulder_05",
+      "page": "https://polyhaven.com/a/namaqualand_boulder_05",
+      "author": "Jenelle van Heerden, Dario Barresi",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "dimensionsMeters": [
+        1.364,
+        0.749,
+        0.538
+      ],
+      "resolution": "4k",
+      "gltf": "namaqualand_boulder_05_4k.gltf",
+      "files": {
+        "namaqualand_boulder_05_4k.gltf": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/namaqualand_boulder_05/namaqualand_boulder_05_4k.gltf",
+          "md5": "adabb13e47f1b11de23d37203078a853"
+        },
+        "namaqualand_boulder_05.bin": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/namaqualand_boulder_05/namaqualand_boulder_05.bin",
+          "md5": "64bca194605dee7e361d43beabb3d4b7"
+        },
+        "textures/namaqualand_boulder_05_arm_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_05/namaqualand_boulder_05_arm_4k.jpg",
+          "md5": "fcd2b0542cad691f3381fb09c0785364"
+        },
+        "textures/namaqualand_boulder_05_diff_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_05/namaqualand_boulder_05_diff_4k.jpg",
+          "md5": "0ed3337284d2af59f35346b46227adf6"
+        },
+        "textures/namaqualand_boulder_05_nor_gl_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_05/namaqualand_boulder_05_nor_gl_4k.jpg",
+          "md5": "86ccc1ca4a16eb63f4b0df0e99632fb9"
+        }
+      }
+    },
+    "namaqualand_boulder_06": {
+      "source": "polyhaven",
+      "kind": "model",
+      "id": "namaqualand_boulder_06",
+      "page": "https://polyhaven.com/a/namaqualand_boulder_06",
+      "author": "Greg Zaal, Jenelle van Heerden",
+      "method": "photogrammetry",
+      "license": "CC0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "dimensionsMeters": [
+        0.675,
+        1.213,
+        0.652
+      ],
+      "resolution": "4k",
+      "gltf": "namaqualand_boulder_06_4k.gltf",
+      "files": {
+        "namaqualand_boulder_06_4k.gltf": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/namaqualand_boulder_06/namaqualand_boulder_06_4k.gltf",
+          "md5": "d5e9b54a6fb4f1447a848cf7ed984dd8"
+        },
+        "namaqualand_boulder_06.bin": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/namaqualand_boulder_06/namaqualand_boulder_06.bin",
+          "md5": "1643b528fa072dc3bf5bc5ad6add1933"
+        },
+        "textures/namaqualand_boulder_06_arm_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_06/namaqualand_boulder_06_arm_4k.jpg",
+          "md5": "1f3517156777175d7edfcc93c4d02e55"
+        },
+        "textures/namaqualand_boulder_06_diff_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_06/namaqualand_boulder_06_diff_4k.jpg",
+          "md5": "f41a9d6d09e7c9d598c88f3b9ed062ff"
+        },
+        "textures/namaqualand_boulder_06_nor_gl_4k.jpg": {
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/namaqualand_boulder_06/namaqualand_boulder_06_nor_gl_4k.jpg",
+          "md5": "bf017995c81772934bdd730f40701e0c"
+        }
+      }
+    }
+  },
+  "terrain": {
+    "label": "지형 질감",
+    "size": 2048,
+    "sizes": [
+      1024,
+      2048,
+      4096
+    ],
+    "patchMeters": 0.5,
+    "flatten": 0.5,
+    "flattenMeters": 0.6,
+    "presets": [
+      {
+        "id": "temperate-meadow",
+        "label": "온대 들판",
+        "name": "terrain_meadow",
+        "tileMeters": 3.0,
+        "layer": "Grass004",
+        "roughness": [0.6, 0.85],
+        "patch": {
+          "scan": "forrest_ground_01",
+          "coverage": 0.3,
+          "noiseMeters": 0.25
+        },
+        "grade": {
+          "hueShift": 8,
+          "saturation": 0.9,
+          "maxSaturation": 0.55
+        }
+      },
+      {
+        "id": "temperate-forest-floor",
+        "label": "온대 숲 바닥",
+        "name": "terrain_forest_floor",
+        "tileMeters": 3.0,
+        "layer": "forest_leaves_02"
+      },
+      {
+        "id": "packed-dirt",
+        "label": "다져진 흙길",
+        "name": "terrain_dirt",
+        "tileMeters": 2.0,
+        "layer": "forest_ground_04"
+      },
+      {
+        "id": "beach-sand",
+        "label": "고운 해변 모래",
+        "name": "terrain_sand",
+        "tileMeters": 3.0,
+        "layer": "dense_sand"
+      },
+      {
+        "id": "rock-face",
+        "label": "회갈색 바위 면",
+        "name": "terrain_rock",
+        "tileMeters": 4.0,
+        "layer": "rock_face_03",
+        "grade": {
+          "saturation": 0.45
+        }
+      }
+    ]
+  },
   "videoModel": {
     "id": "wan2.2-ti2v-5b",
     "label": "Wan2.2 TI2V 5B",
@@ -390,6 +780,15 @@
       "prompt": "Photorealistic product photograph of {subject}, physically realistic materials, carefully controlled studio lighting, clean composition, sharp product details, natural contact shadow",
       "example": "a green ceramic teapot and matching cup on a pale wooden table",
       "width": 1024, "height": 1024, "removeBackground": false
+    },
+    {
+      "id": "foliage-card", "kind": "2d", "label": "풀·꽃 카드",
+      "hint": "옆에서 본 한 포기를 투명 배경에, 밑동을 아래 가운데에 둔 식생 카드",
+      "prompt": "Photorealistic botanical studio photograph of {subject}, one isolated plant clump seen straight from the side at eye level, the whole plant visible from its base to its tips, stems ending cleanly at the base without roots or soil, soft even shadowless lighting, plain pure white background, no ground, no pot, no shadow, sharp focus, natural colors",
+      "example": "a clump of short wild meadow grass about 40 cm tall",
+      "width": 1024, "height": 1024, "removeBackground": true,
+      "canvas": {"width": 1024, "height": 1024, "anchor": "bottom", "fill": 0.9, "decontaminate": true,
+                 "grade": {"baseShade": 0.6, "tipWarmth": 0.12}}
     },
     {
       "id": "photo-landscape", "kind": "2d", "category": "photo", "label": "풍경 사진",

@@ -11,7 +11,8 @@
 | `src/local_assets_engine/measure.py` | 단계 프로세스 실행, 출력 스트리밍, 진행률 해석, `/usr/bin/time -l` 측정 |
 | `src/local_assets_engine/jobs.py` | `job.json` 원자적 기록, 재시작 복구, 파일 경로 검증 |
 | `src/local_assets_engine/recipes/` | 레시피별 입력 검증(`prepare`)과 단계 조립(`run`), 요청 스키마(`schemas.py`), 점검 레시피(`selftest.py`) |
-| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더 |
+| `src/local_assets_engine/tools/` | 엔진 환경에서 도는 단계 프로세스: BiRefNet, Blender 정리, 프리비즈 렌더, 지형 타일 합성(`terrain_tile`), 스캔 원본 준비(`scan_prepare`) |
+| `src/local_assets_engine/materials.py` | `presets.json`에 URL·md5로 고정한 CC0 스캔(건축 키트 재질, `scanLibrary`)의 내려받기와 확인 |
 | `src/local_assets_engine/workers/trellis_runner.py` | TRELLIS 환경에서 generate.py를 감싸 실행 |
 | `src/local_assets_engine/workers/trellis_infer.py`, `mesh_extract.py` | 감축 전 형상·복셀 PBR 저장, 동일 결과의 벡터화 연결 추출 |
 | `src/local_assets_engine/workers/quality_*.py` | 원본 표면 재구성, 형상 오차 제한 감축, 최종 UV·PBR 굽기 |
@@ -139,6 +140,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `refine-mesh` | `source: {jobId, assetId}`(감축 전 원본이 있는 완료된 메시), 3D 출력 설정 | 원래 시드·형상 해상도, 현재 품질 기본값 |
 | `game-asset` | `source: {jobId, assetId}`(완료된 품질본 메시), `targetFaces` 100~200,000, `textureSize` 512·1024·2048·4096, `ao`, `sizeMeters` 0.01~1,000(가장 긴 변), `upright`, `name`(영문 소문자·숫자·`_`, 40자 이하) | `presets.json`의 `mesh.gameAsset`(3,000, 1024, AO 켬, `asset`), 크기는 품질본의 `sizeMeters`, 세우지 않음 |
 | `building-kit` | `name`(영문 소문자·숫자·`_`, 24자 이하), `pieces`(아래 부품 중 고름), `seed`, `atlasWidth` 1024·2048·4096, `cellMeters`, `storyMeters`, `wallThickness`, `referenceImage`(검수판용 경로) | `presets.json`의 `buildingKit`(`wood`, 10종 전부, 7, 2048, 4m, 3m, 0.25m) |
+| `terrain-texture` | `preset`(필수, `terrain.presets`), `name`, `layer`(질감 스캔 id), `roughness` [낮음, 높음], `patch` `{scan, coverage 0.02~0.9, noiseMeters, roughness}` 또는 null, `tileMeters` 0.25~32, `size` 1024·2048·4096, `seed`, `patchMeters`, `flatten` 0~1, `flattenMeters`, `grade` `{hueShift, saturation, value, maxSaturation}` | 프리셋 값, 2048, 시드 1, 조각 0.5m, 얼룩 0.5·0.6m |
+| `scan-mesh` | `scan`(필수, 모델 스캔 id), `heightMeters`(필수, 땅 위 높이) 0.02~50, `widthMeters`(가장 긴 가로), `bury` 0~0.6, `yaw`, `saturation` 0~2, `value` 0.5~1.5, `name` | 바닥 5% 자름, 돌리지 않음, 색 그대로 |
 | 3D 입력 | `pipelineType` `512`·`1024`·`1024_cascade`, `textureSize` 512·1024·2048·4096, `targetFaces` 0~1,000,000(0은 줄이지 않음), `gameFaces` 0~1,000,000(0은 게임용 생략), `gameTextureSize`, `sizeMeters`, `meshSeed` | `1024`, 4096, 1,000,000, 게임용 생략(`gameFaces: 0`), 1.0m |
 | `import-image` | `uploadId`, `name` | 이미지를 새 에셋으로 등록 |
 | `edit-asset` | `source`, `name`, `plan`(아래 편집 계약), `replaceEdits` | 원본 보존, 새 버전 생성. 컬렉션·태그는 원본에서 이어받는다 |
@@ -170,6 +173,13 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 서버 설정에서 `imageModelConfig`를 복사해 저장하고 실행은 그 스냅샷을 쓴다. 클라이언트가 보낸 모델 설정은
 받지 않는다. `modelArg`는 mflux의 `--model`에 명시적으로 전달한다. 새 실사·애니 프리셋은 배경 제거를
 기본으로 끄며, 기존 게임·3D의 모델·스텝·해상도는 유지한다. 이미지 메타에 `category`도 기록한다.
+
+프리셋의 `canvas.anchor`가 `bottom`이면 식생 카드로 마감한다(`foliage-card`). `decontaminate`는 원본 테두리의 중앙값을
+배경색으로 보고 반투명 가장자리에서 걷어 낸다(색 = (관측 − (1 − α)·배경) / α). 투명도 24 넘는 픽셀의 아래 4% 줄에서 무게
+중심을 밑동으로 잡아 아래 가장자리 가운데에 두고, 식물 높이가 캔버스의 `fill`(0.9)이 되게 맞춘다. 밑동을 가운데에 둔 채
+옆으로 넘치면 더 작게 줄이고 실제 높이 비율을 `checks.card.fill`에 남긴다. `grade`는 선형 빛에서 밑동 쪽을 `baseGain`배로
+어둡게, 끝 쪽을 `tipWarmth`만큼 밝고 노랗게 바꾼다. 마지막으로 완전 투명 픽셀의 색을 가장 가까운 불투명 색으로 채워(push-pull)
+필터링·밉맵에서 테두리가 검거나 희게 번지지 않게 한다. 알파는 바꾸지 않는다.
 
 ## 작업 기록
 
@@ -248,9 +258,12 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `mesh.game_geometry_lost` (`warn`) | 품질본에서 보이던 면 표본의 0.1% 이상이 게임용에서 메워지거나 사라졌다(홈·틈·얇은 부분) | `lostFraction`, `lostMaxMeters` |
 | `mesh.game_bake_misses` (`warn`) | UV가 덮는 텍셀의 1%보다 많은 곳에서 굽기 광선이 품질본에 닿지 않았다(`game/bake-misses.png`) | `missFraction` |
 | `mesh.game_export_mismatch` (`fail`) | 내보낸 GLB·FBX를 다시 불러오니 면 수·크기·텍스처 수가 굽은 결과와 다르다 | `problems` |
+| `mesh.scan_stretched` (`warn`) | 스캔 원본의 높이:폭을 맞추느라 가로를 20%보다 더 늘리거나 줄였다 | `stretchXY` |
+| `texture.wrap_seam` (`warn`) | 지형 타일 가장자리를 넘는 밝기·높이 변화가 이웃 픽셀 사이 평균 변화의 1.5배를 넘는다 | `ratio` |
+| `texture.neon_green` (`warn`) | 지형 색에서 형광 연두(색상 75~140°, 채도 0.55·밝기 0.45 초과) 픽셀이 2%를 넘는다 | `fraction` |
 
-이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과에 올린다. 사람이 직접
-고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
+이미지는 `image`·`text-to-3d`·`text-to-video`가 만든 후보·컨셉에, 메시는 생성·재구성·복구 결과와 스캔 원본에, `texture.*`는
+지형 레이어에 올린다. 사람이 직접 고른 편집본·가져온 이미지와 영상·프리비즈에는 올리지 않는다(영상·프리비즈에는 자동 검사가 없다).
 
 `errorCode`는 실패 원인의 분류다.
 
@@ -291,6 +304,8 @@ Host가 `127.0.0.1`·`localhost`가 아니거나 Origin의 scheme·host·port가
 | `game-reduce` | `python -m local_assets_engine.tools.game_bake reduce` | 복셀 바깥 껍데기 → Collapse 감축 → 날카로운 모서리 → Smart UV·패킹 → 보이는 면 표면 거리 |
 | `game-bake` | `python -m local_assets_engine.tools.game_bake bake` | Cycles(가능하면 Metal) 맵별 굽기 → 머티리얼 → GLB·FBX·PNG |
 | `compare` | `python -m local_assets_engine.tools.game_bake compare` | 품질본·게임용 렌더를 나란히 붙인다 |
+| `terrain-tile` | `python -m local_assets_engine.tools.terrain_tile --spec terrain/spec.json` | `@@progress` JSON 줄(스캔 불러오기·조각 줄·색 보정·저장) |
+| `scan-prepare` | `python -m local_assets_engine.tools.scan_prepare` | `@@progress` JSON 줄(불러오기·자르기·크기·색·저장) |
 | `post`·`optimize` | Blender·gltfpack | 이전 `repair-mesh` 전용 |
 | `edit`·`import` | `python -m local_assets_engine.tools.asset_edit` + Node.js 픽셀 계산 | 원본을 새 작업에 복사하고 새 버전 저장 |
 | `step-<n>` | `python -m local_assets_engine.tools.selftest_step` | `@@progress` JSON 줄. `selftest` 전용, 모델 없음 |
@@ -453,6 +468,54 @@ GLB +Z). 사진처럼 비스듬히 누운 도구·무기에 쓴다. 세운 뒤�
      콘셉트 이미지와 나란한 `review.png`, 부품별 삼각형·Unity 경계를 담은 `kit.json`을 남긴다.
 3. 부품마다 `variant: building-kit`인 `pending` 메시 에셋을 등록한다. 내보낸 파일이 다르면 `mesh.game_export_mismatch`(fail),
    삼각형이 12,000을 넘으면 `mesh.kit_triangles`(warn)다. 현재 부품당 58~336개다.
+
+## 지형 질감 계약
+
+`terrain-texture`는 Unity 지형 레이어 한 장을 CC0 지면 스캔(`scanLibrary`의 `texture`)에서 만든다. 생성 모델을 쓰지 않는다.
+레시피가 프리셋과 요청을 합쳐 `terrain/spec.json`을 쓰고 측정 단계 `terrain-tile`이 합성한다.
+
+1. 스캔의 다섯 맵(diff·nor_gl·rough·ao·disp)을 실제 크기(`sizeMeters`) 기준으로 출력과 같은 m당 픽셀이 되게 줄인다. 스캔은
+   이음매가 없으므로 줄일 때 가장자리를 감아 계산한다(가우시안 → 3차 스플라인, `grid-wrap`). `roughness`가 있으면 거칠기의
+   5~95%를 그 범위로 옮긴다.
+2. 노멀 x·y를 따라가는 밝기(사진에 남은 해 방향)를 최소제곱으로 재서 색에서 나눈다. 세 번 다시 재며 나누고 한 번의 이득은
+   0.5~2.0이다. 전후 계수는 `layers[].directionalLight`·`directionalLightAfter`다.
+3. 조각 잇기(Efros–Freeman image quilting)로 타일 크기를 주기로 하는 새 타일을 만든다. 스캔이 타일과 같은 크기여도 잇는다.
+   그대로 쓰면 스캔의 튀는 곳이 타일마다 같은 자리에 반복된다. 한 변이 타일의 약수로 나뉘는 격자(`patchMeters`의 3/4 간격, 겹침은 간격의 1/3)를 모든 가장자리에서 감아 깔고,
+   조각마다 스캔 안쪽(가장자리를 넘지 않게, 4px 여백)에서 192개 후보를 뽑아 이미 깔린 겹침과의 차(선형 색·높이·노멀 x·y)가 가장 작은 쪽의 12% 안에서
+   고른다. 4cm로 흐린 밝기나 높이가 3σ를 넘는 곳(큰 돌 하나·웅덩이)이 든 후보는 쓰지 않는다. 이을 자리는 그래프 최소 컷
+   (Kwatra 2003)으로 정한다. 이웃 픽셀 사이를 자르는 값은 두 픽셀에서 기존과 새 조각의 차이의 합이다. 조각 가장자리에서 바깥의
+   채워진 픽셀과 맞닿은 픽셀은 기존을 지키고, 빈 픽셀과 그 옆의 채워진 픽셀은 새 조각을 받는다. 그래서 이음은 겹침 안쪽을
+   지나고, L자 모서리와 타일의 감긴 가장자리에서도 조각이 채워진 픽셀과 일자로 맞닿지 않는다. 겹침이 32px보다 넓으면 블록으로
+   묶어 풀고 제약은 원래 해상도에서 다시 맞춘다. 1.5px로 섞고 노멀은 다시 단위 길이로 만든다.
+   높이는 값이 아니라 기울기(앞쪽 차분)를 잇고, 타일 전체를 주기 경계 Poisson 방정식(FFT)으로 한 번에 적분해 되살린다. 값을
+   그대로 이으면 조각마다 높이 기준이 달라 마스크 B에 조각 크기의 네모 격자가 생긴다. 조각 고르기에 쓰는 높이는 조각 크기의
+   절반보다 큰 기복을 미리 뺀다.
+4. `patch`가 있으면 두 번째 스캔도 같은 방식으로 만든 뒤, 타일 주기의 노이즈(`noiseMeters` 둘레의 세 옥타브)와 두 높이 차로
+   점수를 내어 두 번째 스캔이 정확히 `coverage`만큼 드러나게 섞는다. 높이가 높은 쪽이 경계에서 이긴다(풀잎이 흙 위로 나옴).
+5. `flattenMeters`보다 큰 밝기 얼룩을 `flatten`만큼 고르게 한다. 반복이 티 나는 원인이기 때문이다(`blotchBefore`·`After`).
+   높이에서는 그보다 큰 기복을 모두 뺀다. 마스크의 높이는 레이어 섞기에 쓰는 가까운 요철이고 큰 기복은 지형 형상이 맡는다.
+6. `grade`: sRGB HSV에서 녹색(색상 100° 중심, ±55°)을 `hueShift`°만큼 노랑 쪽으로, 채도에 `saturation`을 곱하고
+   `maxSaturation` 위는 부드럽게 누른다.
+
+출력은 `terrain/T_<name>_basecolor.png`(sRGB), `normal.png`(탄젠트, OpenGL +Y), `mask.png`(R 금속 0, G AO, B 높이(0.5~99.5%를
+0~1로), A 1−거칠기), `preview.png`(왼쪽 위 빛의 3×3 반복과 각 맵), `tile.json`(출처·조각·얼룩·색 수치, `wrapSeamRatio`,
+`neonFraction`)이다. `kind: image`, `variant: terrain-layer`인 `pending` 에셋이며 `meta.unity.tileSize`가 Unity 레이어의 타일 크기다.
+
+## 스캔 원본 계약
+
+`scan-mesh`는 CC0 스캔 모델(`scanLibrary`의 `model`, glTF)을 `game-asset`의 품질본으로 만든다. 측정 단계 `scan-prepare`(Blender)가:
+
+1. 메시를 합치고 가로 점들의 주축을 X에 맞춘 뒤 `yaw`만큼 더 돌린다.
+2. 같은 자리의 정점을 잇는다(glTF는 UV 이음매에서 정점을 나눠, 그대로 자르면 이음매마다 구멍으로 보고 막는다. UV는 면 모서리마다
+   따로 있어 그대로다). 수평면 아래를 잘라 내고 단면을 평평한 면으로 막는다(땅에 묻히는 바닥). 막은 면의 UV는 옆면에서 가져온다. 높이의 `bury` 이상을 자르고, `widthMeters`를 주면
+   높이 70%까지 자르는 높이를 옮겨 남은 높이:폭이 요청에 가장 가까운 곳을 고른다. 남는 차이는 X·Y를 늘여 맞추고
+   `stretchXY`로 남긴다(20% 넘으면 `mesh.scan_stretched`).
+3. 땅 위 높이를 `heightMeters`로 맞추고 바닥 가운데를 원점에 둔다. Blender X = 가장 긴 가로, Z = 위다(GLB는 Y 위).
+4. 색 텍스처의 HSV 채도·밝기에 `saturation`·`value`를 곱한다(주황 얼룩 낀 바위를 회갈색으로).
+5. `scan/master.glb`(JPEG 92 텍스처)와 `prepare.json`을 쓴다. 이어서 `inspect`가 여섯 방향을 렌더한다.
+
+결과는 `variant: master`인 메시 에셋이다(`meta.scan`에 출처·저자·라이선스). `game-asset`이 이를 받아 바깥 껍데기 → 감축 →
+굽기를 하며, 껍데기는 막힌 바닥을 땅으로 쳐서 평평한 바닥을 유지한다.
 
 ## 영상 계약
 

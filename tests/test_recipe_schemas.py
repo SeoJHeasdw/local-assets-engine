@@ -14,7 +14,7 @@ from PIL import Image
 
 from local_assets_engine.jobs import JobStore
 from local_assets_engine.presets import PresetError, load_presets
-from local_assets_engine.recipes import RECIPES, building_kit, describe_recipes
+from local_assets_engine.recipes import RECIPES, building_kit, describe_recipes, scan_mesh, terrain_texture
 from local_assets_engine.recipes.schemas import SCHEMAS
 from local_assets_engine.uploads import save_upload
 
@@ -83,6 +83,11 @@ def world(tmp_path_factory):
         "refine-mesh": [{"source": mesh}],
         "game-asset": [{"source": mesh}],
         "building-kit": [{"pieces": ["wall", "floor"]}],
+        "terrain-texture": [{"preset": "temperate-meadow", "roughness": [0.6, 0.85],
+                             "patch": {"scan": "forrest_ground_01", "coverage": 0.3, "noiseMeters": 0.25,
+                                       "roughness": [0.5, 0.9]},
+                             "grade": {"hueShift": 8, "saturation": 0.9, "value": 1.0, "maxSaturation": 0.62}}],
+        "scan-mesh": [{"scan": "boulder_01", "heightMeters": 1.7, "widthMeters": 3.0}],
         "import-image": [{"uploadId": upload}],
         "edit-asset": [
             {"source": image, "plan": {"frame": {"crop": {}}, "layers": [color, stamp]}},
@@ -101,6 +106,8 @@ def world(tmp_path_factory):
     # 건축 키트 재질은 기기에 받아 두는 파일이라, 스키마 검사에서는 받아 둔 것으로 친다.
     patch = pytest.MonkeyPatch()
     patch.setattr(building_kit, "missing", lambda _presets: [])
+    patch.setattr(terrain_texture, "missing", lambda _presets, _scans=None: [])
+    patch.setattr(scan_mesh, "missing", lambda _presets, _scans=None: [])
     yield store, presets, bases, schemas
     patch.undo()
 

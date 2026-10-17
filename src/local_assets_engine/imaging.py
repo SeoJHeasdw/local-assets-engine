@@ -125,3 +125,116 @@ def pixelate(image: Image.Image, size: int, colors: int) -> Image.Image:
 
 def upscale_nearest(image: Image.Image, factor: int) -> Image.Image:
     return image.resize((image.width * factor, image.height * factor), Image.Resampling.NEAREST)
+
+
+def border_color(image: Image.Image) -> tuple[float, float, float]:
+    """The median of the outermost pixels: the plain studio background an image model painted."""
+    rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    border = np.concatenate((rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]))
+    return tuple(float(v) for v in np.median(border, axis=0))
+
+
+def decontaminate(image: Image.Image, background: tuple[float, float, float]) -> Image.Image:
+    """Take the known background out of soft edges: color = (observed - (1 - alpha) * background) / alpha.
+
+    Thin grass blades cut from a white backdrop otherwise keep a pale rim that shows on dark ground.
+    """
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+    alpha = rgba[..., 3:4]
+    soft = (alpha > 0.02) & (alpha < 0.98)
+    pure = (rgba[..., :3] - (1 - alpha) * np.asarray(background, dtype=np.float32)) / np.maximum(alpha, 0.02)
+    rgba[..., :3] = np.where(soft, np.clip(pure, 0, 1), rgba[..., :3])
+    return Image.fromarray((rgba * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
+def fill_transparent(image: Image.Image) -> Image.Image:
+    """Give fully transparent pixels the color of the nearest opaque ones (push-pull), keeping alpha.
+
+    Texture filtering and mipmaps blend in the color of transparent texels; black or white there makes
+    a dark or light rim around alpha-tested foliage.
+    """
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+    weight = (rgba[..., 3] > 0.5).astype(np.float32)
+    if not weight.any():
+        return image.convert("RGBA")
+    levels = [(rgba[..., :3] * weight[..., None], weight)]
+    while min(levels[-1][1].shape) > 1:
+        color, w = levels[-1]
+        h, wd = (color.shape[0] + 1) // 2 * 2, (color.shape[1] + 1) // 2 * 2
+        color = np.pad(color, ((0, h - color.shape[0]), (0, wd - color.shape[1]), (0, 0)))
+        w = np.pad(w, ((0, h - w.shape[0]), (0, wd - w.shape[1])))
+        levels.append((color.reshape(h // 2, 2, wd // 2, 2, 3).sum(axis=(1, 3)), w.reshape(h // 2, 2, wd // 2, 2).sum(axis=(1, 3))))
+    filled = levels[-1][0] / np.maximum(levels[-1][1], 1e-6)[..., None]
+    for color, w in reversed(levels[:-1]):
+        up = np.repeat(np.repeat(filled, 2, axis=0), 2, axis=1)[: color.shape[0], : color.shape[1]]
+        mean = color / np.maximum(w, 1e-6)[..., None]
+        filled = np.where((w > 0)[..., None], mean, up)
+    out = rgba.copy()
+    clear = rgba[..., 3] <= 0.02
+    out[clear, :3] = filled[clear]
+    return Image.fromarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
+def fit_card(image: Image.Image, width: int, height: int, fill: float = 0.9,
+             base_share: float = 0.04) -> tuple[Image.Image, dict[str, float]]:
+    """A foliage card: the plant's base at the bottom edge's center, its height ``fill`` of the canvas.
+
+    The base is the middle of the opaque pixels in the lowest ``base_share`` of the plant. If the plant
+    is too wide to keep its base centered, it is made smaller and ``fill`` reports the height it got.
+    """
+    rgba = image.convert("RGBA")
+    box = alpha_bbox(rgba, threshold=24)
+    if box is None:
+        raise ValueError("배경을 지우고 나니 남은 물체가 없습니다.")
+    alpha = np.asarray(rgba, dtype=np.float32)[:, :, 3]
+    left, top, right, bottom = box
+    rows = max(1, round((bottom - top) * base_share))
+    foot = alpha[bottom - rows:bottom, left:right]
+    columns = np.arange(left, right, dtype=np.float32)
+    base_x = float((foot.sum(axis=0) * columns).sum() / max(float(foot.sum()), 1e-6)) + 0.5
+    scale = fill * height / (bottom - top)
+    half = max(base_x - left, right - base_x)
+    scale = min(scale, (width / 2 - 1) / half)
+    size = (max(1, round(rgba.width * scale)), max(1, round(rgba.height * scale)))
+    resized = rgba.resize(size, Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    canvas.alpha_composite(resized, (round(width / 2 - base_x * scale), round(height - bottom * scale)))
+    return canvas, {"fill": round((bottom - top) * scale / height, 4), "scale": round(scale, 4),
+                    "baseX": round(base_x / rgba.width, 4)}
+
+
+def grade_card(image: Image.Image, base_shade: float = 0.6, tip_warmth: float = 0.12) -> Image.Image:
+    """Darker toward the base, lighter and yellower toward the tips, whatever shading the picture came with.
+
+    Each row's median brightness (linear light, opaque pixels) is pulled toward a profile that rises from
+    ``base_shade`` times the tips' brightness at the base to the tips' own brightness at the top. Image models
+    paint grass stems pale, which reads lighter at the base than at the tips. Gains stay within 0.45–1.15 so a
+    white flower head does not brighten the leaves below it.
+    """
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+    box = alpha_bbox(image, threshold=24)
+    if box is None:
+        return image.convert("RGBA")
+    _, top, _, bottom = box
+    height = max(bottom - top, 1)
+    linear = np.where(rgba[..., :3] <= 0.04045, rgba[..., :3] / 12.92, ((rgba[..., :3] + 0.055) / 1.055) ** 2.4)
+    lum = linear @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    rows = np.arange(rgba.shape[0], dtype=np.float32)
+    t = np.clip((bottom - rows) / height, 0, 1)
+    ease = t * t * (3 - 2 * t)
+    solid = rgba[..., 3] > 0.5
+    median = np.array([np.median(lum[row][solid[row]]) if solid[row].any() else np.nan for row in range(lum.shape[0])])
+    known = ~np.isnan(median)
+    tips = known & (t >= 0.6)
+    gain = np.ones_like(t)
+    if known.sum() >= 2 and tips.any():
+        target = float(np.median(median[tips])) * (base_shade + (1 - base_shade) * ease)
+        raw = np.clip(target[known] / np.maximum(median[known], 1e-4), 0.45, 1.15)
+        gain = np.interp(rows, rows[known], raw)
+        width = max(1, int(0.03 * height))
+        kernel = np.exp(-0.5 * (np.arange(-3 * width, 3 * width + 1) / width) ** 2)
+        gain = np.convolve(np.pad(gain, 3 * width, mode="edge"), kernel / kernel.sum(), mode="valid")
+    warm = 1 + tip_warmth * ease[:, None, None] * np.array([0.6, 0.35, -0.9], dtype=np.float32)
+    linear = np.clip(linear * gain[:, None, None] * warm, 0, 1)
+    rgba[..., :3] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    return Image.fromarray((np.clip(rgba, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")

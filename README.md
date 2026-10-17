@@ -25,6 +25,8 @@ npm run bench     # 단계별 소요 시간과 최대 메모리 요약
 | `refine-mesh` | 저장된 생성 원본 → 출력 설정을 바꿔 표면·PBR 재구성 | 모델 추론 없이 새 품질본 |
 | `game-asset` | 완성된 품질본 → 삼각형 예산까지 줄이기·UV → 품질본에서 노멀·색·거칠기·금속성·AO 굽기 | 게임용 GLB·FBX와 PNG 맵, 품질본과 나란히 비교·검수판·화면 크기별 비교 |
 | `building-kit` | CC0 나무 스캔 → 트림 시트 한 장 → 게임 격자에 맞춘 바닥·벽·문·창·지붕·계단·난간·울타리 10종 | 부품별 FBX·GLB, 공용 PNG 맵, 조립한 집 렌더와 콘셉트 비교 |
+| `terrain-texture` | CC0 지면 스캔 → 실제 크기로 맞춤 → 조각 잇기로 새 주기 → (두 번째 스캔을 높이로 섞기) → 색·얼룩 정리 | 이음매 없는 Unity 지형 레이어 PNG(색·노멀·마스크)와 3×3 반복 미리보기 |
+| `scan-mesh` | CC0 스캔 모델 → 정렬·땅에 묻힐 바닥 자르기·크기·색 보정 | `game-asset`으로 구울 품질본 GLB, 여섯 방향 검수 |
 | `edit-asset` | 색상·재질·로고·문구·2D 구성 편집 → 새 버전 저장 | 원본을 보존한 PNG·GLB |
 | `import-image` | 로컬 이미지 가져오기 | 편집하거나 3D로 만들 이미지 |
 | `repair-mesh` | 이전 KDTree 원본의 UV·위쪽 축·양면 표시 보정 → Blender 정리 → gltfpack | 새 작업의 복구 GLB |
@@ -139,6 +141,31 @@ curl -s localhost:47831/api/jobs/<작업 ID>
 
 ```bash
 .venv/bin/python -m local_assets_engine run building-kit --params '{"name": "wood", "referenceImage": "/절대/경로/concept.png"}'
+```
+
+지형 질감과 바위도 CC0 스캔에서 만든다. 스캔을 한 번 받은 뒤(`python -m local_assets_engine.materials fetch`, 약 260MB)
+`config/presets.json`의 `terrain.presets`(들판·숲 바닥·흙길·모래·바위 면)로 지형 레이어를 만든다. 결과는 `terrain/`의
+`T_<이름>_basecolor.png`·`normal.png`(OpenGL)·`mask.png`(Unity 지형 마스크: R 금속 0, G AO, B 높이, A 매끄러움)이고
+`preview.png`에서 3×3 반복을 본다. Unity 레이어의 타일 크기는 결과의 `tileMeters`다.
+
+```bash
+.venv/bin/python -m local_assets_engine run terrain-texture --params '{"preset": "temperate-meadow"}'
+```
+
+바위는 스캔 모델을 품질본으로 등록한 뒤 `game-asset`으로 굽는다. 땅 위 높이와 가장 긴 가로를 주면 바닥을 자르는 높이로
+비율을 맞추고, 바닥은 평평한 면으로 막는다.
+
+```bash
+.venv/bin/python -m local_assets_engine run scan-mesh --params '{"scan": "boulder_01", "heightMeters": 1.7, "widthMeters": 3.0, "saturation": 0.6, "name": "rock_large"}'
+.venv/bin/python -m local_assets_engine run game-asset \
+  --params '{"source": {"jobId": "<scan-mesh 작업 ID>", "assetId": "a01"}, "targetFaces": 2000, "textureSize": 1024, "name": "rock_large"}'
+```
+
+풀·꽃 카드는 `image`의 `foliage-card` 종류로 만든다. 흰 배경에서 옆모습 한 포기를 그리고, 배경을 지운 뒤 흰 테두리를 걷고,
+밑동을 아래 가장자리 가운데에 두어 높이 90%를 채우며 밑동은 어둡게·끝은 밝고 노랗게 한다.
+
+```bash
+.venv/bin/python -m local_assets_engine run image --params '{"preset": "foliage-card", "subject": "a clump of short wild meadow grass about 35 cm tall, no seed heads", "count": 4}'
 ```
 
 예전 에셋 중 원본 NPZ가 없는 것은 입력 이미지로 새로 생성해야 전체 개선이 적용된다.

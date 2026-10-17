@@ -121,7 +121,34 @@ def load_presets(path: Path = PRESETS_PATH) -> dict[str, Any]:
             raise PresetError(f"대역 id가 비었거나 중복됩니다: {standin_id!r}")
         seen.add(standin_id)
         _check_standin(standin)
+    _check_scans(data)
     return data
+
+
+def _check_scans(data: dict[str, Any]) -> None:
+    """Every pinned scan has a checksum per file, and terrain presets only name texture scans."""
+    library = data.get("scanLibrary", {})
+    for scan_id, scan in library.items():
+        if scan.get("kind") not in ("texture", "model") or not scan.get("files"):
+            raise PresetError(f"scanLibrary.{scan_id}: kind(texture·model)와 files가 필요합니다.")
+        if any(not entry.get("md5") or not (entry.get("url") or entry.get("member")) for entry in scan["files"].values()):
+            raise PresetError(f"scanLibrary.{scan_id}: 파일마다 url(또는 압축 안 member)과 md5를 고정해야 합니다.")
+        if any(entry.get("member") for entry in scan["files"].values()) and not scan.get("archive", {}).get("md5"):
+            raise PresetError(f"scanLibrary.{scan_id}: 압축 파일의 url과 md5를 고정해야 합니다.")
+        if scan["kind"] == "texture" and (set(scan["files"]) != {"diff", "nor_gl", "rough", "ao", "disp"}
+                                          or not float(scan.get("sizeMeters") or 0) > 0):
+            raise PresetError(f"scanLibrary.{scan_id}: 질감은 diff·nor_gl·rough·ao·disp와 실제 크기(sizeMeters)가 필요합니다.")
+        if scan["kind"] == "model" and scan.get("gltf") not in scan["files"]:
+            raise PresetError(f"scanLibrary.{scan_id}: 모델은 files 안의 gltf 파일 이름이 필요합니다.")
+    seen: set[str] = set()
+    for preset in data.get("terrain", {}).get("presets", []):
+        preset_id = preset.get("id")
+        if not preset_id or preset_id in seen:
+            raise PresetError(f"지형 프리셋 id가 비었거나 중복됩니다: {preset_id!r}")
+        seen.add(preset_id)
+        for scan_id in (preset.get("layer"), (preset.get("patch") or {}).get("scan", preset.get("layer"))):
+            if library.get(scan_id, {}).get("kind") != "texture":
+                raise PresetError(f"{preset_id}: scanLibrary에 없는 질감입니다: {scan_id!r}")
 
 
 def image_models(data: dict[str, Any]) -> list[dict[str, Any]]:

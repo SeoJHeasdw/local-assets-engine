@@ -233,7 +233,19 @@ def _finish_cutout(record: dict[str, Any], image: Image.Image, p: dict[str, Any]
     seed = record["seed"]
     try:
         fitted = image
-        if canvas := p.get("canvas"):
+        canvas = p.get("canvas")
+        if canvas and canvas.get("anchor") == "bottom":
+            # 식생 카드: 흰 배경이 남긴 테두리를 걷고, 밑동을 아래 가운데에 두고, 밑동→끝 색 변화를 준다.
+            if canvas.get("decontaminate"):
+                with Image.open(record["raw"]) as raw:
+                    image = imaging.decontaminate(image, imaging.border_color(raw))
+            fitted, card = imaging.fit_card(image, canvas["width"], canvas["height"], canvas.get("fill", 0.9))
+            record["checks"]["canvasScale"] = card["scale"]
+            record["checks"]["card"] = card
+            if grade := canvas.get("grade"):
+                fitted = imaging.grade_card(fitted, grade.get("baseShade", 0.6), grade.get("tipWarmth", 0.12))
+            fitted = imaging.fill_transparent(fitted)
+        elif canvas:
             padding = canvas.get("padding", 0.06)
             scale = imaging.canvas_scale(image, canvas["width"], canvas["height"], padding)
             record["checks"]["canvasScale"] = round(scale, 3) if scale is not None else None

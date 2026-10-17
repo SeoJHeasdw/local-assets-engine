@@ -182,6 +182,12 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
     gone = missing_materials(presets)
     add("kitMaterials", "건축 키트 CC0 재질", not gone, required=False, detail=", ".join(gone[:2]),
         hint="python -m local_assets_engine.materials fetch (약 50MB, 라이선스는 docs/DECISIONS.md)")
+    library = presets.get("scanLibrary", {})
+    for key, label, kind, size in (("terrainScans", "지형 질감 CC0 스캔", "texture", "약 140MB"),
+                                   ("rockScans", "바위 CC0 스캔 모델", "model", "약 120MB")):
+        gone = missing_materials(presets, [scan_id for scan_id, scan in library.items() if scan["kind"] == kind])
+        add(key, label, not gone, required=False, detail=", ".join(gone[:2]),
+            hint=f"python -m local_assets_engine.materials fetch ({size}, 라이선스는 docs/DECISIONS.md)")
     add("modelViewer", "앱 3D 미리보기 (model-viewer)", MODEL_VIEWER_JS.exists(), required=False,
         hint="npm install")
     ok, detail = _run_python(trellis_python(),
@@ -228,6 +234,8 @@ def build_report(*, deep: bool = True) -> dict[str, Any]:
         # 프리비즈는 Blender만 쓴다. 이미지·3D 모델이 없어도 샷을 잡을 수 있다.
         "previz": ready("bpy"),
         "buildingKit": ready("bpy", "kitMaterials"),
+        "terrain": ready("terrainScans"),
+        "scanMesh": ready("bpy", "rockScans", "gltfpack"),
         # 가중치는 작업 안에서 내려받지 않으므로 받아 둔 것까지 갖춰야 만들 수 있다.
         "video": ready("appleSilicon", "videoEngine", "videoWeights", "mps") if "videoEngine" in checks else False,
     }
@@ -247,6 +255,8 @@ CAPABILITY_LABELS = {
     "gameReady": "게임용 GLB 최적화",
     "previz": "프리비즈 샷 렌더",
     "buildingKit": "건축 키트",
+    "terrain": "지형 질감",
+    "scanMesh": "스캔 바위 → 게임용",
     "video": "영상 생성",
 }
 
